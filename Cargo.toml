@@ -1,0 +1,6 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[patch.crates-io]
+dvbv5-sys = { git = "https://gitlab.com/kazuki08241/rust-libdvbv5-sys.git", rev = "7cab8db" }

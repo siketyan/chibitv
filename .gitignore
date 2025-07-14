@@ -1,0 +1,16 @@
+node_modules/
+target/
+
+# Config file
+config.toml
+
+# Media files
+*.h264
+*.hevc
+*.aac
+*.ts
+*.m2ts
+*.mmts
+
+# ... except TypeScript files ;)
+!gui/**/*.ts

@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@plugin "daisyui";
+
+:root {
+  font-family: "Noto Sans Symbols", sans-serif;
+}
