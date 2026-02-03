@@ -10,7 +10,7 @@ chibitv_b61 = { path = "../chibitv_b61" }
 anyhow = "1.0.97"
 axum = { version = "0.8.3", features = ["macros"] }
 bpaf = { version = "0.9.19", features = ["derive", "dull-color"] }
-bytes = "1.10.1"
+bytes = "1.11.1"
 chrono = { version = "0.4.40", features = ["serde"] }
 hex = "0.4.3"
 http-body = "1.0.1"
