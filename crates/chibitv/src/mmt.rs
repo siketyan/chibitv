@@ -64,10 +64,10 @@ pub struct MmtDemuxer<R: BufRead> {
 }
 
 impl<R: BufRead> MmtDemuxer<R> {
-    pub fn new(reader: R, descrambler: Arc<Mutex<Descrambler>>) -> Self {
+    pub fn new(reader: R, descrambler: Descrambler) -> Self {
         Self {
             reader,
-            descrambler,
+            descrambler: Arc::new(Mutex::new(descrambler)),
             streams: BTreeMap::new(),
         }
     }

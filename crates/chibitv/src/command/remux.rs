@@ -2,12 +2,11 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write, stdin, stdout};
 use std::sync::{Arc, Mutex};
 
-use chibitv_b61::CasModule;
 use clap::{Parser, ValueEnum};
 use mpeg2ts::ts::TsPacketWriter;
 
 use crate::config::Config;
-use crate::descrambler::Descrambler;
+use crate::descrambler::{CasModule, Descrambler};
 use crate::m2ts::M2tsMuxer;
 use crate::mmt::MmtDemuxer;
 use crate::mp4::Mp4Muxer;
@@ -40,10 +39,10 @@ pub async fn remux(options: &Options, config: &Config) -> anyhow::Result<()> {
         Some(path) => Box::new(File::open(path)?),
     };
 
-    let cas_module = CasModule::open()?;
-    let descrambler = Descrambler::init(cas_module, config.cas.master_key.into())?;
+    let cas_module = Arc::new(Mutex::new(CasModule::open(config.cas.master_key.into())?));
+    let descrambler = Descrambler::init(cas_module, false)?;
     let reader = BufReader::new(input);
-    let demux = MmtDemuxer::new(reader, Arc::new(Mutex::new(descrambler)));
+    let demux = MmtDemuxer::new(reader, descrambler);
 
     match options.format.unwrap_or_default() {
         OutputFormat::M2ts => {

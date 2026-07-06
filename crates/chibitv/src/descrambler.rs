@@ -1,18 +1,18 @@
 use aes::Aes128;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use bytes::{Buf, Bytes};
 use ctr::Ctr128BE;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use tracing::{debug, info};
+use std::sync::{Arc, Mutex, mpsc};
+use tracing::{debug, error, info};
 
 use chibitv_b60::mmtp::MmtpPacket;
-use chibitv_b61::{CasModule, EncryptionFlag};
+use chibitv_b61::{CasModule as CasModuleInner, EncryptionFlag};
 
 #[derive(Copy, Clone, Debug)]
 pub struct NoDecryptionKeyError;
@@ -31,40 +31,30 @@ struct DecryptionKey {
     even: [u8; 16],
 }
 
-/// High-level decoder implementation for descrambling payloads.
 #[derive(Debug)]
-pub struct Descrambler {
-    cas: CasModule,
+pub struct CasModule {
+    inner: CasModuleInner,
     master_key: [u8; 32],
     rng: StdRng,
-    key: Option<DecryptionKey>,
-    key_cache: HashMap<[u8; 148], DecryptionKey>,
 }
 
-impl Descrambler {
-    /// Initialize a decoder using the CAS module and the master key.
-    pub fn init(mut cas: CasModule, master_key: [u8; 32]) -> Result<Self> {
-        let response = cas.initial_setting_condition()?;
+impl CasModule {
+    pub fn open(master_key: [u8; 32]) -> Result<Self> {
+        Self::init(CasModuleInner::open()?, master_key)
+    }
+
+    fn init(mut inner: CasModuleInner, master_key: [u8; 32]) -> Result<Self> {
+        let response = inner.initial_setting_condition()?;
         debug!("CAS module initialized: {:?}", response.cas_module_id);
 
         Ok(Self {
-            cas,
+            inner,
             master_key,
             rng: StdRng::from_rng(&mut rand::rng()),
-            key: None,
-            key_cache: HashMap::new(),
         })
     }
 
-    /// Push an encrypted ECM to the decoder.
-    /// The decoder attempts to decrypt the ECM using the CAS module.
-    /// At least one ECM must be pushed before decrypting payloads.
-    pub fn push_ecm(&mut self, ecm: [u8; 148]) -> Result<()> {
-        if let Some(ecm) = self.key_cache.get(&ecm) {
-            self.key = Some(ecm.clone());
-            return Ok(());
-        }
-
+    fn decrypt_ecm(&mut self, ecm: [u8; 148]) -> Result<DecryptionKey> {
         let mut a0_init = [0u8; 8];
         self.rng.fill_bytes(&mut a0_init);
 
@@ -74,13 +64,15 @@ impl Descrambler {
         ]
         .concat();
 
-        let response = self.cas.scrambling_key_protection_setting(&setting_data)?;
+        let response = self
+            .inner
+            .scrambling_key_protection_setting(&setting_data)?;
         let (a0_response, a0_hash) = response.setting_response_data.split_at(8);
         let kcl = Sha256::digest([&self.master_key[..], &a0_init[..], a0_response].concat());
         let hash = Sha256::digest([&kcl, &a0_init[..]].concat());
         assert_eq!(hash.as_slice(), a0_hash);
 
-        let response = self.cas.ecm_reception(&ecm)?;
+        let response = self.inner.ecm_reception(&ecm)?;
         let ecm_init = &ecm[0x04..0x1B];
         let mut hash = Sha256::digest([&kcl, ecm_init].concat()).to_vec();
         for (i, byte) in hash.iter_mut().enumerate() {
@@ -94,18 +86,83 @@ impl Descrambler {
             hex::encode(even),
         );
 
-        let key = DecryptionKey {
+        Ok(DecryptionKey {
             odd: odd.try_into()?,
             even: even.try_into()?,
-        };
+        })
+    }
+}
 
-        self.key = Some(key.clone());
-        self.key_cache.insert(ecm, key);
+pub type SharedCasModule = Arc<Mutex<CasModule>>;
 
-        Ok(())
+type EcmSender = mpsc::SyncSender<[u8; 148]>;
+type KeyReceiver = mpsc::Receiver<([u8; 148], Result<DecryptionKey>)>;
+
+/// High-level decoder implementation for descrambling payloads.
+#[derive(Clone, Debug)]
+pub struct Descrambler {
+    ecm_tx: EcmSender,
+    key_rx: Arc<Mutex<KeyReceiver>>,
+    key: Option<([u8; 148], DecryptionKey)>,
+    is_async: bool,
+}
+
+impl Descrambler {
+    /// Initialize a decoder using the CAS module and the master key.
+    pub fn init(cas: SharedCasModule, is_async: bool) -> Result<Self> {
+        let (ecm_tx, ecm_rx) = mpsc::sync_channel(16);
+        let (key_tx, key_rx) = mpsc::sync_channel(16);
+
+        std::thread::spawn(move || {
+            for ecm in ecm_rx {
+                let key = cas.lock().unwrap().decrypt_ecm(ecm);
+                if key_tx.send((ecm, key)).is_err() {
+                    break;
+                }
+            }
+        });
+
+        Ok(Self {
+            ecm_tx,
+            key_rx: Arc::new(Mutex::new(key_rx)),
+            key: None,
+            is_async,
+        })
     }
 
-    pub fn descramble(&self, mmtp_packet: &MmtpPacket, data: &mut [u8]) -> Result<()> {
+    /// Push an encrypted ECM to the decoder.
+    /// The decoder attempts to decrypt the ECM using the CAS module.
+    /// At least one ECM must be pushed before decrypting payloads.
+    pub fn push_ecm(&mut self, ecm: [u8; 148]) -> Result<()> {
+        if let Some((e, _)) = self.key.as_ref()
+            && *e == ecm
+        {
+            return Ok(());
+        }
+
+        if self.is_async {
+            match self.ecm_tx.try_send(ecm) {
+                Ok(()) | Err(mpsc::TrySendError::Full(_)) => {}
+                Err(mpsc::TrySendError::Disconnected(_)) => {
+                    return Err(anyhow!("CAS worker is not running"));
+                }
+            }
+
+            return Ok(());
+        }
+
+        self.ecm_tx
+            .send(ecm)
+            .map_err(|_| anyhow!("CAS worker is not running"))?;
+
+        self.recv_key(true)
+    }
+
+    pub fn descramble(&mut self, mmtp_packet: &MmtpPacket, data: &mut [u8]) -> Result<()> {
+        if self.is_async {
+            self.recv_key(false)?;
+        }
+
         let encryption_flag = mmtp_packet
             .extension_header
             .as_ref()
@@ -131,13 +188,13 @@ impl Descrambler {
 
         let key = match encryption_flag {
             EncryptionFlag::Even | EncryptionFlag::Odd => {
-                let Some(ecm) = &self.key else {
+                let Some((_, key)) = self.key.clone() else {
                     return Err(NoDecryptionKeyError.into());
                 };
 
                 match encryption_flag {
-                    EncryptionFlag::Even => &ecm.even[..],
-                    EncryptionFlag::Odd => &ecm.odd[..],
+                    EncryptionFlag::Even => key.even,
+                    EncryptionFlag::Odd => key.odd,
                     _ => unreachable!(),
                 }
             }
@@ -151,10 +208,46 @@ impl Descrambler {
         ]
         .concat();
 
-        let mut ctr = Ctr128BE::<Aes128>::new_from_slices(key, &iv)?;
+        let mut ctr = Ctr128BE::<Aes128>::new_from_slices(&key, &iv)?;
 
         ctr.apply_keystream(data);
 
         Ok(())
+    }
+
+    fn recv_key(&mut self, wait: bool) -> Result<()> {
+        loop {
+            let (ecm, result) = match wait {
+                true => self
+                    .key_rx
+                    .lock()
+                    .unwrap()
+                    .recv()
+                    .map_err(|_| anyhow!("CAS worker is not running"))?,
+                false => match self.key_rx.lock().unwrap().try_recv() {
+                    Ok(result) => result,
+                    Err(mpsc::TryRecvError::Empty) => return Ok(()),
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        return Err(anyhow!("CAS worker is not running"));
+                    }
+                },
+            };
+
+            match result {
+                Ok(key) => {
+                    self.key = Some((ecm, key));
+                }
+                Err(error) => {
+                    error!(%error, "Could not decrypt ECM");
+                    if wait {
+                        return Err(error);
+                    }
+                }
+            }
+
+            if wait {
+                return Ok(());
+            }
+        }
     }
 }

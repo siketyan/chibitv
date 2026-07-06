@@ -18,6 +18,7 @@ use crate::remux::{Remux, Remuxer, Signal};
 use crate::tuner::Tuner;
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
+const BROADCAST_CAPACITY: usize = 8192;
 
 struct ChannelWriter(Sender<Bytes>);
 
@@ -46,11 +47,10 @@ pub struct StreamState {
 pub struct Stream {
     registry: Arc<Registry>,
     tuner: Arc<dyn Tuner>,
-    descrambler: Arc<Mutex<Descrambler>>,
+    descrambler: Descrambler,
     state: Arc<RwLock<StreamState>>,
     tx: Sender<Bytes>,
     signal_tx: Sender<Signal>,
-    rx: Receiver<Bytes>,
 }
 
 impl Stream {
@@ -59,7 +59,7 @@ impl Stream {
         tuner: Arc<dyn Tuner>,
         descrambler: Descrambler,
     ) -> anyhow::Result<Self> {
-        let (tx, rx) = channel::<Bytes>(1024 * 1024);
+        let (tx, _) = channel::<Bytes>(BROADCAST_CAPACITY);
         let (signal_tx, mut signal_rx) = channel::<Signal>(1);
         let state = Arc::new(RwLock::new(StreamState::default()));
 
@@ -85,17 +85,16 @@ impl Stream {
         Ok(Self {
             registry,
             tuner,
-            descrambler: Arc::new(Mutex::new(descrambler)),
+            descrambler,
             state,
             tx,
             signal_tx,
-            rx,
         })
     }
 
     fn start_remuxer(&self) -> anyhow::Result<()> {
         let reader = BufReader::with_capacity(READ_BUFFER_SIZE, self.tuner.open()?);
-        let demux = MmtDemuxer::new(reader, Arc::clone(&self.descrambler));
+        let demux = MmtDemuxer::new(reader, self.descrambler.clone());
         let writer = BufWriter::new(ChannelWriter(self.tx.clone()));
         let mux = M2tsMuxer::new(TsPacketWriter::new(writer));
         let mut remuxer = Remuxer::new(
@@ -114,7 +113,12 @@ impl Stream {
     }
 
     pub fn subscribe(&self) -> Receiver<Bytes> {
-        self.rx.resubscribe()
+        let rx = self.tx.subscribe();
+        info!(
+            receivers = self.tx.receiver_count(),
+            "M2TS stream client subscribed"
+        );
+        rx
     }
 
     pub fn set_channel(&self, service_id: u16, channel: &Channel) -> anyhow::Result<()> {

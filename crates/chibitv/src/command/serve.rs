@@ -1,13 +1,11 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use anyhow::bail;
 use clap::Parser;
 
-use chibitv_b61::CasModule;
-
 use crate::channel::Channel;
 use crate::config::Config;
-use crate::descrambler::Descrambler;
+use crate::descrambler::{CasModule, Descrambler};
 use crate::registry::Registry;
 use crate::stream::{Stream, Streams};
 use crate::tuner::Tuners;
@@ -17,8 +15,8 @@ use crate::workspace::Workspace;
 pub struct Options {}
 
 pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
-    let cas = CasModule::open()?;
-    let descrambler = Descrambler::init(cas, config.cas.master_key.into())?;
+    let cas = Arc::new(Mutex::new(CasModule::open(config.cas.master_key.into())?));
+    let descrambler = Descrambler::init(cas, true)?;
 
     let registry = Arc::new(Registry::default());
 
