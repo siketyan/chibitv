@@ -52,9 +52,11 @@ function Navbar({
 
 function Channels({
   serviceId,
+  disabled,
   onChangeService,
 }: {
   serviceId: number | undefined;
+  disabled: boolean;
   onChangeService: (serviceId: number) => void;
 }): JSX.Element {
   const { data: services = [] } = $api.useQuery("get", "/services");
@@ -67,6 +69,7 @@ function Channels({
           type="button"
           role="tab"
           className={clsx("tab", service.id === serviceId && "tab-active")}
+          disabled={disabled}
           onClick={() => {
             onChangeService(service.id);
           }}
@@ -123,7 +126,7 @@ function Events({ serviceId }: { serviceId: number }): JSX.Element {
   const now = new Date();
 
   return (
-    <div className="w-[480px] overflow-y-auto flex flex-col">
+    <div className="min-h-0 w-[480px] overflow-y-auto flex flex-col">
       {events.map((event) => (
         <div
           key={event.id}
@@ -143,7 +146,7 @@ function Events({ serviceId }: { serviceId: number }): JSX.Element {
   );
 }
 
-function Player(): JSX.Element {
+function Player({ streamVersion }: { streamVersion: number }): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
@@ -199,7 +202,10 @@ function Player(): JSX.Element {
     };
 
     const readStream = async () => {
-      const response = await fetch(new URL("/api/streams/0/stream.mp4", location.href), {
+      const streamUrl = new URL("/api/streams/0/stream.mp4", location.href);
+      streamUrl.searchParams.set("v", streamVersion.toString());
+
+      const response = await fetch(streamUrl, {
         signal: abortController.signal,
       });
       if (!response.ok || !response.body) {
@@ -248,12 +254,19 @@ function Player(): JSX.Element {
       video.load();
       URL.revokeObjectURL(objectUrl);
     };
-  }, []);
+  }, [streamVersion]);
 
-  return <video ref={ref} controls muted autoPlay playsInline className="w-full h-full object-contain" />;
+  return (
+    <div className="min-h-0 min-w-0 overflow-hidden bg-black">
+      <video ref={ref} controls muted autoPlay playsInline className="block h-full max-h-full w-full object-contain" />
+    </div>
+  );
 }
 
 function Page() {
+  const [streamVersion, setStreamVersion] = useState(0);
+  const [isMenuOpen, setIsMenuOpen] = useState(false);
+
   const { data: stream = {}, refetch } = $api.useQuery(
     "get",
     "/streams/{id}",
@@ -265,8 +278,9 @@ function Page() {
   );
 
   const { mutate, isPending } = $api.useMutation("patch", "/streams/{id}", {
-    onSuccess: () => {
-      void refetch();
+    onSuccess: async () => {
+      await refetch();
+      setStreamVersion((version) => version + 1);
     },
   });
 
@@ -275,14 +289,14 @@ function Page() {
     mutate({ params: { path: { id: 0 } }, body: { service_id: serviceId } });
   };
 
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-
   return (
-    <div className="h-[100vh] flex flex-col">
+    <div className="h-dvh overflow-hidden flex flex-col">
       <Navbar event={stream.event ?? undefined} isMenuOpen={isMenuOpen} onChangeMenuOpen={setIsMenuOpen} />
-      <Channels serviceId={serviceId} onChangeService={handleChangeService} />
-      <div className="min-h-[0] flex-1 grid grid-cols-[1fr_max-content]">
-        {!isPending && <Player />}
+      <div className="shrink-0 overflow-x-auto">
+        <Channels serviceId={serviceId} disabled={isPending} onChangeService={handleChangeService} />
+      </div>
+      <div className="min-h-0 flex-1 overflow-hidden grid grid-cols-[minmax(0,1fr)_max-content]">
+        <Player streamVersion={streamVersion} />
         {isMenuOpen && serviceId && <Events serviceId={serviceId} />}
       </div>
     </div>
