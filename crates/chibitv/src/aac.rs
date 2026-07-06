@@ -199,7 +199,7 @@ fn find_sync_word(data: &[u8], mut offset: usize) -> Option<usize> {
             return None; // EOF
         }
 
-        let sync_word = u16::from(data[offset + 0]) << 3 | u16::from(data[offset + 1]) >> 5;
+        let sync_word = u16::from(data[offset]) << 3 | u16::from(data[offset + 1]) >> 5;
         if sync_word == 0x2B7 {
             return Some(offset);
         }

@@ -223,38 +223,37 @@ impl<R: BufRead> MmtDemuxer<R> {
             .filter_map(|data| {
                 let mut bytes = Bytes::from(data);
 
-                if stream.dts_pts.is_none() {
-                    if let (Some(presentation_time), Some(ext_timestamp), Some(timescale)) =
+                if stream.dts_pts.is_none()
+                    && let (Some(presentation_time), Some(ext_timestamp), Some(timescale)) =
                         (&timestamp, &ext_timestamp, stream.timescale)
-                    {
-                        // See page 208 of the STD-B60 for this calculation.
+                {
+                    // See page 208 of the STD-B60 for this calculation.
 
-                        let timescale = timescale as f64;
+                    let timescale = timescale as f64;
 
-                        // presentation_time is a NTP timestamp, so let's convert to a normal float number.
-                        let presentation_time = ((presentation_time >> 32) as f64)
-                            + ((presentation_time & 0xFFFFFFFF) as f64) / (2u64.pow(32) as f64);
+                    // presentation_time is a NTP timestamp, so let's convert to a normal float number.
+                    let presentation_time = ((presentation_time >> 32) as f64)
+                        + ((presentation_time & 0xFFFFFFFF) as f64) / (2u64.pow(32) as f64);
 
-                        // DTS(m) = mpu_presentation_time
-                        //            - mpu_decoding_time_offset / timescale
-                        //            + \sum_{l=1}^{m-1} pts_offset(l) / timescale
-                        let mut dts_sec = presentation_time
-                            - (ext_timestamp.mpu_decoding_time_offset as f64) / timescale;
+                    // DTS(m) = mpu_presentation_time
+                    //            - mpu_decoding_time_offset / timescale
+                    //            + \sum_{l=1}^{m-1} pts_offset(l) / timescale
+                    let mut dts_sec = presentation_time
+                        - (ext_timestamp.mpu_decoding_time_offset as f64) / timescale;
 
-                        assert!(stream.au_count < ext_timestamp.num_of_au as usize);
+                    assert!(stream.au_count < ext_timestamp.num_of_au as usize);
 
-                        for i in 0..stream.au_count {
-                            dts_sec += (ext_timestamp.offsets[i].pts_offset as f64) / timescale;
-                        }
-
-                        // PTS(m) = DTS(m) + dts_pts_offset(m) / timescale
-                        let pts_sec = dts_sec
-                            + (ext_timestamp.offsets[stream.au_count].pts_dts_offset as f64)
-                                / timescale;
-
-                        stream.dts_pts = Some((dts_sec, pts_sec));
-                        stream.au_count += 1;
+                    for i in 0..stream.au_count {
+                        dts_sec += (ext_timestamp.offsets[i].pts_offset as f64) / timescale;
                     }
+
+                    // PTS(m) = DTS(m) + dts_pts_offset(m) / timescale
+                    let pts_sec = dts_sec
+                        + (ext_timestamp.offsets[stream.au_count].pts_dts_offset as f64)
+                            / timescale;
+
+                    stream.dts_pts = Some((dts_sec, pts_sec));
+                    stream.au_count += 1;
                 }
 
                 let data = match &stream.asset_type? {

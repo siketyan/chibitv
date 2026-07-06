@@ -21,9 +21,9 @@ pub(super) enum Command {
 impl Command {
     pub(crate) async fn run(&self, config: &Config) -> anyhow::Result<()> {
         match self {
-            Self::Record(options) => record::record(&options, config).await,
-            Self::Remux(options) => remux::remux(&options, config).await,
-            Self::Serve(options) => serve::serve(&options, config).await,
+            Self::Record(options) => record::record(options, config).await,
+            Self::Remux(options) => remux::remux(options, config).await,
+            Self::Serve(options) => serve::serve(options, config).await,
         }
     }
 }

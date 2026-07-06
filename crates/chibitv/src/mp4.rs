@@ -250,7 +250,7 @@ impl Track for AacLatmTrack {
     }
 }
 
-//// ISOBMFF/MP4 muxer
+/// ISOBMFF/MP4 muxer
 pub struct Mp4Muxer<W> {
     muxer: Mp4FileMuxer,
     writer: W,

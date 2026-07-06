@@ -95,11 +95,11 @@ impl<W: WriteTsPacket + Send + Sync> M2tsMuxer<W> {
         pts: Option<f64>,
     ) -> anyhow::Result<()> {
         // Emit PAT + PMT for each 100 ms
-        if let Some(dts) = dts {
-            if self.last_pat_pmt_ts.is_none_or(|ts| dts - ts < 0.1_f64) {
-                self.emit_pat_pmt()?;
-                self.last_pat_pmt_ts = Some(dts);
-            }
+        if let Some(dts) = dts
+            && self.last_pat_pmt_ts.is_none_or(|ts| dts - ts < 0.1_f64)
+        {
+            self.emit_pat_pmt()?;
+            self.last_pat_pmt_ts = Some(dts);
         }
 
         let mut stream = self.streams.get(&pid).unwrap().write().unwrap();
@@ -168,8 +168,8 @@ impl<W: WriteTsPacket + Send + Sync> M2tsMuxer<W> {
     fn emit_pat_pmt(&mut self) -> mpeg2ts::Result<()> {
         let es_info = self
             .streams
-            .iter()
-            .filter_map(|(_, stream)| stream.read().ok()?.es_info.as_ref().cloned())
+            .values()
+            .filter_map(|stream| stream.read().ok()?.es_info.as_ref().cloned())
             .collect::<Vec<_>>();
 
         let mut pat_stream = self.streams.get(&pat_pid()).unwrap().write().unwrap();
