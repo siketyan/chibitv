@@ -377,6 +377,9 @@ impl<W: Write + Seek> Mux for Mp4Muxer<W> {
         }
 
         match ty {
+            TrackType::Mpeg2Video | TrackType::AacAdts => {
+                return;
+            }
             TrackType::H265 => {
                 self.track_map.insert(track_id, Box::new(H265Track::new()));
                 info!(track_id, "Added a H265 video track");
@@ -484,6 +487,9 @@ impl<W: WriteMp4Fragment> Mux for FragmentedMp4Muxer<W> {
         }
 
         match ty {
+            TrackType::Mpeg2Video | TrackType::AacAdts => {
+                return;
+            }
             TrackType::H265 => {
                 self.track_map.insert(track_id, Box::new(H265Track::new()));
                 self.track_states.entry(track_id).or_default();

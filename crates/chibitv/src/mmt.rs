@@ -20,27 +20,12 @@ use chibitv_b60::tlv::{TlvPacket, TlvPacketType};
 
 use crate::descrambler::Descrambler;
 use crate::hevc::HevcParser;
+use crate::remux::{Demux, Packet, TrackType};
 
 // TODO: parse the MMTP packet to get the ECM header
 const ECM_HEADER: [u8; 6] = [0x00, 0x00, 0x93, 0x2D, 0x1E, 0x01];
 
 const MAX_TIMESTAMP_DESCRIPTOR: usize = 64;
-
-#[derive(Clone, Debug)]
-pub enum Payload {
-    Mfu {
-        pts: Option<f64>,
-        dts: Option<f64>,
-        data: Vec<u8>,
-    },
-    Message(Message),
-}
-
-#[derive(Clone, Debug)]
-pub struct Packet {
-    pub packet_id: u16,
-    pub payload: Payload,
-}
 
 #[derive(Clone, Debug)]
 pub struct MmtStream {
@@ -72,7 +57,7 @@ impl<R: BufRead> MmtDemuxer<R> {
         }
     }
 
-    pub fn read(&mut self) -> anyhow::Result<Option<Vec<Packet>>> {
+    fn read_packets(&mut self) -> anyhow::Result<Option<Vec<Packet>>> {
         let len = self.reader.skip_until(0x7F)?;
         if len == 0 {
             // EOF.
@@ -287,20 +272,17 @@ impl<R: BufRead> MmtDemuxer<R> {
 
                 let (dts, pts) = std::mem::take(&mut stream.dts_pts).unzip();
 
-                Some(Packet {
-                    packet_id,
-                    payload: Payload::Mfu {
-                        dts,
-                        pts,
-                        data: data.to_vec(),
-                    },
+                Some(Packet::Sample {
+                    track_id: packet_id,
+                    data,
+                    dts,
+                    pts,
                 })
             })
             .collect())
     }
 
     fn read_message(&self, stream: &mut MmtStream, message: SignalingMessage) -> Vec<Packet> {
-        let packet_id = stream.packet_id;
         let messages: Vec<_> = match message.payload {
             SignalingMessagePayload::Aggregated(payloads) => payloads
                 .into_iter()
@@ -319,68 +301,104 @@ impl<R: BufRead> MmtDemuxer<R> {
                 .collect(),
         };
 
-        messages
-            .into_iter()
-            .map(|message| {
-                if let Message::Pa(message) = &message {
-                    for table in &message.tables {
-                        let Table::Mpt(mpt) = table else {
+        let mut packets = Vec::new();
+
+        for message in messages {
+            if let Message::Pa(message) = &message {
+                for table in &message.tables {
+                    let Table::Mpt(mpt) = table else {
+                        continue;
+                    };
+
+                    let mut has_video = false;
+                    let mut has_audio = false;
+
+                    for asset in &mpt.assets {
+                        let packet_id = asset.locations.last().unwrap().packet_id().unwrap();
+
+                        let Some(stream) = self.streams.get(&packet_id) else {
                             continue;
                         };
 
-                        for asset in &mpt.assets {
-                            let packet_id = asset.locations.last().unwrap().packet_id().unwrap();
+                        let mut stream = stream.lock().unwrap();
 
-                            let Some(stream) = self.streams.get(&packet_id) else {
-                                continue;
-                            };
+                        stream.asset_type = Some(asset.asset_type);
 
-                            let mut stream = stream.lock().unwrap();
-
-                            stream.asset_type = Some(asset.asset_type);
-
-                            for descriptor in &asset.asset_descriptors {
-                                match descriptor {
-                                    Descriptor::MpuTimestamp(descriptor) => {
-                                        for ts in &descriptor.timestamps {
-                                            stream.timestamps.insert(
-                                                ts.mpu_sequence_number,
-                                                ts.mpu_presentation_time,
-                                            );
-                                        }
-                                    }
-                                    Descriptor::MpuExtendedTimestamp(descriptor) => {
-                                        if let Some(scale) = descriptor.timescale {
-                                            stream.timescale = Some(scale);
-                                        }
-
-                                        for ts in &descriptor.timestamps {
-                                            stream
-                                                .ext_timestamps
-                                                .insert(ts.mpu_sequence_number, ts.clone());
-                                        }
-                                    }
-                                    _ => {}
+                        match &asset.asset_type {
+                            b"hev1" => {
+                                if has_video {
+                                    warn!("Multiple video streams are not supported yet.");
+                                    continue;
                                 }
-                            }
 
-                            // Evict the oldest descriptors from the buffer.
-                            while stream.timestamps.len() > MAX_TIMESTAMP_DESCRIPTOR {
-                                _ = stream.timestamps.pop_first();
-                            }
+                                packets.push(Packet::Track {
+                                    track_id: packet_id,
+                                    ty: TrackType::H265,
+                                });
 
-                            while stream.ext_timestamps.len() > MAX_TIMESTAMP_DESCRIPTOR {
-                                _ = stream.ext_timestamps.pop_first();
+                                has_video = true;
                             }
+                            b"mp4a" => {
+                                if has_audio {
+                                    continue;
+                                }
+
+                                packets.push(Packet::Track {
+                                    track_id: packet_id,
+                                    ty: TrackType::AacLatm,
+                                });
+
+                                has_audio = true;
+                            }
+                            _ => {}
+                        }
+
+                        for descriptor in &asset.asset_descriptors {
+                            match descriptor {
+                                Descriptor::MpuTimestamp(descriptor) => {
+                                    for ts in &descriptor.timestamps {
+                                        stream.timestamps.insert(
+                                            ts.mpu_sequence_number,
+                                            ts.mpu_presentation_time,
+                                        );
+                                    }
+                                }
+                                Descriptor::MpuExtendedTimestamp(descriptor) => {
+                                    if let Some(scale) = descriptor.timescale {
+                                        stream.timescale = Some(scale);
+                                    }
+
+                                    for ts in &descriptor.timestamps {
+                                        stream
+                                            .ext_timestamps
+                                            .insert(ts.mpu_sequence_number, ts.clone());
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // Evict the oldest descriptors from the buffer.
+                        while stream.timestamps.len() > MAX_TIMESTAMP_DESCRIPTOR {
+                            _ = stream.timestamps.pop_first();
+                        }
+
+                        while stream.ext_timestamps.len() > MAX_TIMESTAMP_DESCRIPTOR {
+                            _ = stream.ext_timestamps.pop_first();
                         }
                     }
                 }
+            }
 
-                Packet {
-                    packet_id,
-                    payload: Payload::Message(message),
-                }
-            })
-            .collect()
+            packets.push(Packet::Message(message));
+        }
+
+        packets
+    }
+}
+
+impl<R: BufRead> Demux for MmtDemuxer<R> {
+    fn read(&mut self) -> anyhow::Result<Option<Vec<Packet>>> {
+        self.read_packets()
     }
 }

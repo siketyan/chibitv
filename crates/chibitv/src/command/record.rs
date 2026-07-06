@@ -1,10 +1,10 @@
 use std::fs::File;
-use std::io::{BufReader, Read, Write, stdout};
+use std::io::{BufReader, Write, stdout};
 
 use clap::Parser;
 use tracing::info;
 
-use crate::channel::{Channel, ChannelInner};
+use crate::channel::Channel;
 use crate::config::Config;
 use crate::tuner::Tuners;
 
@@ -28,12 +28,6 @@ pub async fn record(options: &Options, config: &Config) -> anyhow::Result<()> {
         anyhow::bail!("No tuners are configured");
     };
 
-    let mut input = BufReader::new(tuner.open()?);
-    let mut output: Box<dyn Write> = match options.output.as_deref() {
-        Some("-") | None => Box::new(stdout()),
-        Some(path) => Box::new(File::create(path)?),
-    };
-
     let Some(channel) = config.channels.get(options.channel).map(|channel| Channel {
         id: options.channel,
         name: channel.name.to_string(),
@@ -45,6 +39,12 @@ pub async fn record(options: &Options, config: &Config) -> anyhow::Result<()> {
     info!("Tuning to the channel: {:?}", channel);
 
     tuner.tune(channel)?;
+
+    let mut input = BufReader::new(tuner.open()?);
+    let mut output: Box<dyn Write> = match options.output.as_deref() {
+        Some("-") | None => Box::new(stdout()),
+        Some(path) => Box::new(File::create(path)?),
+    };
 
     info!("Starting to record. Press Ctrl+C to stop.");
 

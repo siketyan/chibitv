@@ -7,10 +7,19 @@ use mpeg2ts::ts::TsPacketWriter;
 
 use crate::config::Config;
 use crate::descrambler::{CasModule, Descrambler};
-use crate::m2ts::M2tsMuxer;
+use crate::m2ts::{M2tsDemuxer, M2tsMuxer};
 use crate::mmt::MmtDemuxer;
 use crate::mp4::{FragmentedMp4Muxer, Mp4Muxer};
 use crate::remux::{Remux, Remuxer};
+
+#[derive(Copy, Clone, Debug, Default, ValueEnum)]
+pub enum InputFormat {
+    /// MMT/TLV stream
+    #[default]
+    Mmts,
+    /// MPEG-2 Transport Stream
+    M2ts,
+}
 
 #[derive(Copy, Clone, Debug, Default, ValueEnum)]
 pub enum OutputFormat {
@@ -32,17 +41,43 @@ pub struct Options {
     #[clap(short, long)]
     output: Option<String>,
 
+    /// Format of the input stream.
+    #[clap(long)]
+    input_format: Option<InputFormat>,
+
     /// Format of the output stream.
     #[clap(short, long)]
     format: Option<OutputFormat>,
 }
 
 pub async fn remux(options: &Options, config: &Config) -> anyhow::Result<()> {
-    let input: Box<dyn Read + Send + Sync> = match options.input.as_deref() {
+    let input = open_input(options)?;
+
+    match options.input_format.unwrap_or_default() {
+        InputFormat::Mmts => remux_mmts(input, options, config),
+        InputFormat::M2ts => remux_m2ts(input, options),
+    }
+}
+
+fn open_input(options: &Options) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+    Ok(match options.input.as_deref() {
         Some("-") | None => Box::new(stdin()),
         Some(path) => Box::new(File::open(path)?),
-    };
+    })
+}
 
+fn open_output(options: &Options) -> anyhow::Result<Box<dyn Write + Send + Sync>> {
+    Ok(match options.output.as_deref() {
+        Some("-") | None => Box::new(stdout()),
+        Some(path) => Box::new(File::create(path)?),
+    })
+}
+
+fn remux_mmts(
+    input: Box<dyn Read + Send + Sync>,
+    options: &Options,
+    config: &Config,
+) -> anyhow::Result<()> {
     let cas_module = Arc::new(Mutex::new(CasModule::open(config.cas.master_key.into())?));
     let descrambler = Descrambler::init(cas_module, false)?;
     let reader = BufReader::new(input);
@@ -50,11 +85,7 @@ pub async fn remux(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     match options.format.unwrap_or_default() {
         OutputFormat::M2ts => {
-            let output: Box<dyn Write + Send + Sync> = match options.output.as_deref() {
-                Some("-") | None => Box::new(stdout()),
-                Some(path) => Box::new(File::create(path)?),
-            };
-
+            let output = open_output(options)?;
             let writer = TsPacketWriter::new(BufWriter::new(output));
             let mux = M2tsMuxer::new(writer);
             let mut remux = Remuxer::new(demux, mux, None, None);
@@ -72,15 +103,30 @@ pub async fn remux(options: &Options, config: &Config) -> anyhow::Result<()> {
             remux.run(None)
         }
         OutputFormat::Fmp4 => {
-            let output: Box<dyn Write + Send + Sync> = match options.output.as_deref() {
-                Some("-") | None => Box::new(stdout()),
-                Some(path) => Box::new(File::create(path)?),
-            };
-
+            let output = open_output(options)?;
             let mux = FragmentedMp4Muxer::new(BufWriter::new(output));
             let mut remux = Remuxer::new(demux, mux, None, None);
 
             remux.run(None)
+        }
+    }
+}
+
+fn remux_m2ts(input: Box<dyn Read + Send + Sync>, options: &Options) -> anyhow::Result<()> {
+    match options.format.unwrap_or_default() {
+        OutputFormat::M2ts => {
+            let output = open_output(options)?;
+            let writer = TsPacketWriter::new(BufWriter::new(output));
+            let mux = M2tsMuxer::new(writer);
+            let mut remux = Remuxer::new(M2tsDemuxer::new(input), mux, None, None);
+
+            remux.run(None)
+        }
+        OutputFormat::Mp4 => {
+            todo!("MP4 remux from ISDB-T MPEG-TS is not supported yet");
+        }
+        OutputFormat::Fmp4 => {
+            todo!("fragmented MP4 remux from ISDB-T MPEG-TS is not supported yet");
         }
     }
 }
