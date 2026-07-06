@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write, stdin, stdout};
+use std::sync::{Arc, Mutex};
 
 use chibitv_b61::CasModule;
 use clap::{Parser, ValueEnum};
@@ -42,7 +43,7 @@ pub async fn remux(options: &Options, config: &Config) -> anyhow::Result<()> {
     let cas_module = CasModule::open()?;
     let descrambler = Descrambler::init(cas_module, config.cas.master_key.into())?;
     let reader = BufReader::new(input);
-    let demux = MmtDemuxer::new(reader, descrambler);
+    let demux = MmtDemuxer::new(reader, Arc::new(Mutex::new(descrambler)));
 
     match options.format.unwrap_or_default() {
         OutputFormat::M2ts => {

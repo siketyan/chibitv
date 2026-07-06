@@ -7,15 +7,17 @@ use dvbv5_sys::dvb_dev_type::{DVB_DEVICE_DEMUX, DVB_DEVICE_DVR, DVB_DEVICE_FRONT
 use dvbv5_sys::{
     DTV_FREQUENCY, DTV_STREAM_ID, dmx_output, dmx_ts_pes, dvb_dev_alloc, dvb_dev_close,
     dvb_dev_dmx_set_pesfilter, dvb_dev_find, dvb_dev_free, dvb_dev_list, dvb_dev_open,
-    dvb_dev_read, dvb_dev_seek_by_adapter, dvb_dev_set_log, dvb_device, dvb_fe_set_parms,
-    dvb_fe_store_parm, dvb_open_descriptor, dvb_set_compat_delivery_system, dvb_v5_fe_parms,
-    fe_delivery_system,
+    dvb_dev_read, dvb_dev_seek_by_adapter, dvb_dev_set_bufsize, dvb_dev_set_log, dvb_device,
+    dvb_fe_set_parms, dvb_fe_store_parm, dvb_open_descriptor, dvb_set_compat_delivery_system,
+    dvb_v5_fe_parms, fe_delivery_system,
 };
 use libc::{EOVERFLOW, O_RDONLY, O_RDWR};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 use crate::channel::ChannelInner;
 use crate::tuner::{Channel, Tuner};
+
+const DVR_BUFFER_SIZE: i32 = 32 * 1024 * 1024;
 
 struct DvbDevice {
     dvb: *mut dvb_device,
@@ -77,6 +79,10 @@ impl DvbDevice {
             let fd = dvb_dev_open(self.dvb, (*self.dvr_dev).sysname, O_RDONLY);
             if fd.is_null() {
                 bail!("Couldn't open the dvr device");
+            }
+
+            if dvb_dev_set_bufsize(fd, DVR_BUFFER_SIZE) < 0 {
+                warn!("Couldn't set DVR buffer size.");
             }
 
             Ok(DvbDvr { fd })
@@ -187,13 +193,16 @@ impl Tuner for DvbTuner {
 
             dvb_fe_set_parms(p);
 
-            dvb_dev_dmx_set_pesfilter(
+            if dvb_dev_dmx_set_pesfilter(
                 self.demux.fd,
                 0x2000, // select all PIDs
                 dmx_ts_pes::DMX_PES_OTHER,
                 dmx_output::DMX_OUT_TS_TAP,
-                0,
-            );
+                DVR_BUFFER_SIZE,
+            ) < 0
+            {
+                bail!("Couldn't set the PES filter");
+            }
         }
 
         Ok(())

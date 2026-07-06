@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, Cursor, ErrorKind, Read};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::anyhow;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
@@ -59,12 +59,12 @@ pub struct MmtStream {
 #[derive(Debug)]
 pub struct MmtDemuxer<R: BufRead> {
     reader: R,
-    descrambler: Descrambler,
+    descrambler: Arc<Mutex<Descrambler>>,
     streams: BTreeMap<u16, Mutex<MmtStream>>,
 }
 
 impl<R: BufRead> MmtDemuxer<R> {
-    pub fn new(reader: R, descrambler: Descrambler) -> Self {
+    pub fn new(reader: R, descrambler: Arc<Mutex<Descrambler>>) -> Self {
         Self {
             reader,
             descrambler,
@@ -96,7 +96,7 @@ impl<R: BufRead> MmtDemuxer<R> {
             .windows(size_of_val(&ECM_HEADER))
             .position(|b| b == ECM_HEADER)
         {
-            self.descrambler.push_ecm(
+            self.descrambler.lock().unwrap().push_ecm(
                 (&tlv_packet.data[ecm_index + 2..ecm_index + 150])
                     .try_into()
                     .unwrap(),
@@ -175,6 +175,8 @@ impl<R: BufRead> MmtDemuxer<R> {
                 stream.deflagmenter.sync(mmtp_packet.packet_sequence_number);
 
                 self.descrambler
+                    .lock()
+                    .unwrap()
                     .descramble(&mmtp_packet, mpu_fragment.payload.as_mut_slice())
                     .map_err(|e| anyhow!("Could not descramble the payload: {}", e))?;
 

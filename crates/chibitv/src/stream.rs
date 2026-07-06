@@ -17,14 +17,14 @@ use crate::registry::Registry;
 use crate::remux::{Remux, Remuxer, Signal};
 use crate::tuner::Tuner;
 
+const READ_BUFFER_SIZE: usize = 188 * 8192;
+
 struct ChannelWriter(Sender<Bytes>);
 
 impl std::io::Write for ChannelWriter {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
-        match self.0.send(Bytes::copy_from_slice(buf)) {
-            Ok(_) => Ok(buf.len()),
-            _ => Ok(0),
-        }
+        let _ = self.0.send(Bytes::copy_from_slice(buf));
+        Ok(buf.len())
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
@@ -44,8 +44,12 @@ pub struct StreamState {
 }
 
 pub struct Stream {
+    registry: Arc<Registry>,
     tuner: Arc<dyn Tuner>,
+    descrambler: Arc<Mutex<Descrambler>>,
     state: Arc<RwLock<StreamState>>,
+    tx: Sender<Bytes>,
+    signal_tx: Sender<Signal>,
     rx: Receiver<Bytes>,
 }
 
@@ -57,13 +61,6 @@ impl Stream {
     ) -> anyhow::Result<Self> {
         let (tx, rx) = channel::<Bytes>(1024 * 1024);
         let (signal_tx, mut signal_rx) = channel::<Signal>(1);
-
-        let reader = BufReader::new(tuner.open()?);
-        let demux = MmtDemuxer::new(reader, descrambler);
-        let writer = BufWriter::new(ChannelWriter(tx));
-        let mux = M2tsMuxer::new(TsPacketWriter::new(writer));
-        let mut remuxer = Remuxer::new(demux, mux, Some(signal_tx.clone()), Some(registry));
-
         let state = Arc::new(RwLock::new(StreamState::default()));
 
         {
@@ -85,12 +82,35 @@ impl Stream {
             });
         }
 
+        Ok(Self {
+            registry,
+            tuner,
+            descrambler: Arc::new(Mutex::new(descrambler)),
+            state,
+            tx,
+            signal_tx,
+            rx,
+        })
+    }
+
+    fn start_remuxer(&self) -> anyhow::Result<()> {
+        let reader = BufReader::with_capacity(READ_BUFFER_SIZE, self.tuner.open()?);
+        let demux = MmtDemuxer::new(reader, Arc::clone(&self.descrambler));
+        let writer = BufWriter::new(ChannelWriter(self.tx.clone()));
+        let mux = M2tsMuxer::new(TsPacketWriter::new(writer));
+        let mut remuxer = Remuxer::new(
+            demux,
+            mux,
+            Some(self.signal_tx.clone()),
+            Some(Arc::clone(&self.registry)),
+        );
+
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel();
         let handle = std::thread::spawn(move || remuxer.run(Some(kill_rx)));
 
-        state.write().unwrap().handle = Some((handle, kill_tx));
+        self.state.write().unwrap().handle = Some((handle, kill_tx));
 
-        Ok(Self { tuner, state, rx })
+        Ok(())
     }
 
     pub fn subscribe(&self) -> Receiver<Bytes> {
@@ -102,13 +122,18 @@ impl Stream {
 
         if let Some((handle, kill_tx)) = state.handle {
             // Kill the current session.
-            kill_tx.send(()).unwrap();
+            let _ = kill_tx.send(());
             handle.join().unwrap()?;
         };
 
         // Tune to the channel.
         self.tuner.tune(channel.clone())?;
-        self.state.write().unwrap().service_id = Some(service_id);
+
+        self.start_remuxer()?;
+
+        let mut state = self.state.write().unwrap();
+        state.service_id = Some(service_id);
+        state.event_id = None;
 
         Ok(())
     }
