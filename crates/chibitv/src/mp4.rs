@@ -128,6 +128,7 @@ impl Track for H265Track {
             keyframe,
             timescale: NonZeroU32::new(1000).unwrap(),
             duration: metadata.sample_duration,
+            composition_time_offset: None,
             data_offset: 0,
             data_size: bytes.len(),
         };
@@ -237,6 +238,7 @@ impl Track for AacLatmTrack {
                 keyframe: false,
                 timescale: NonZeroU32::new(1000).unwrap(),
                 duration: sample_duration,
+                composition_time_offset: None,
                 data_offset: 0,
                 data_size: data.len(),
             };

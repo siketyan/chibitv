@@ -3,30 +3,30 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": "22"
+    "node": "24"
   },
-  "packageManager": "pnpm@10.29.3",
+  "packageManager": "pnpm@11.10.0+sha512.0b7f8b98060031904c017e3a41eb187a16d40eeb829b95c4f8cb03681761fc4ab53dd219115b9b447f4dce1a05a214764461e7d3703392a9f32f9511ce8c86c8",
   "dependencies": {
     "@heroicons/react": "2.2.0",
     "clsx": "2.1.1",
     "openapi-fetch": "0.17.0"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.3.15",
-    "@rsbuild/core": "1.7.3",
-    "@rsbuild/plugin-react": "1.4.5",
-    "@tailwindcss/postcss": "4.1.18",
-    "@tanstack/react-query": "5.90.21",
-    "@types/react": "19.2.14",
+    "@biomejs/biome": "2.5.2",
+    "@rsbuild/core": "1.7.6",
+    "@rsbuild/plugin-react": "1.4.6",
+    "@tailwindcss/postcss": "4.3.2",
+    "@tanstack/react-query": "5.101.2",
+    "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
-    "daisyui": "5.5.18",
+    "daisyui": "5.6.13",
     "mpegts.js": "1.8.0",
     "openapi-react-query": "0.5.4",
     "openapi-typescript": "7.13.0",
-    "react": "19.2.4",
-    "react-dom": "19.2.4",
-    "tailwindcss": "4.1.18",
-    "typescript": "5.9.3"
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
+    "tailwindcss": "4.3.2",
+    "typescript": "6.0.3"
   },
   "scripts": {
     "check": "biome check .",

@@ -2,10 +2,9 @@ use aes::Aes128;
 use anyhow::Result;
 use bytes::{Buf, Bytes};
 use ctr::Ctr128BE;
-use ctr::cipher::generic_array::GenericArray;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use rand::rngs::StdRng;
-use rand::{RngCore, SeedableRng};
+use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::error::Error;
@@ -51,7 +50,7 @@ impl Descrambler {
         Ok(Self {
             cas,
             master_key,
-            rng: StdRng::from_os_rng(),
+            rng: StdRng::from_rng(&mut rand::rng()),
             key: None,
             key_cache: HashMap::new(),
         })
@@ -152,10 +151,7 @@ impl Descrambler {
         ]
         .concat();
 
-        let mut ctr = Ctr128BE::<Aes128>::new(
-            GenericArray::from_slice(&key),
-            GenericArray::from_slice(&iv),
-        );
+        let mut ctr = Ctr128BE::<Aes128>::new_from_slices(key, &iv)?;
 
         ctr.apply_keystream(data);
 

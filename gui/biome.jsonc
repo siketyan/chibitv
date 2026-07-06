@@ -6,6 +6,9 @@
     "root": "..",
     "useIgnoreFile": true
   },
+  "files": {
+    "includes": ["**", "!src/api/schema.d.ts"]
+  },
   "formatter": {
     "enabled": true,
     "useEditorconfig": true,
@@ -15,7 +18,7 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "recommended": true,
+      "preset": "recommended",
       "style": {
         "useExportType": "error",
         "useImportType": "error"
@@ -34,6 +37,11 @@
           }
         }
       }
+    }
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
     }
   }
 }

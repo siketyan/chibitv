@@ -126,7 +126,7 @@ impl<W: WriteTsPacket + Send + Sync> M2tsMuxer<W> {
                 transport_priority: false,
                 transport_scrambling_control: TransportScramblingControl::NotScrambled,
             },
-            payload: Some(TsPayload::Pes(Pes {
+            payload: Some(TsPayload::PesStart(Pes {
                 header: PesHeader {
                     stream_id: stream.stream_id.unwrap(),
                     priority: false,
