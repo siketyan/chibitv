@@ -56,6 +56,18 @@ pub enum TunerConfig {
 pub enum ChannelConfigInner {
     #[serde(rename = "ISDB-S")]
     IsdbS { frequency: u32, stream_id: u32 },
+
+    #[serde(rename = "ISDB-T")]
+    IsdbT {
+        frequency: u32,
+
+        #[serde(default = "default_isdb_t_bandwidth_hz")]
+        bandwidth_hz: u32,
+    },
+}
+
+fn default_isdb_t_bandwidth_hz() -> u32 {
+    6_000_000
 }
 
 #[derive(Clone, Debug, Deserialize)]

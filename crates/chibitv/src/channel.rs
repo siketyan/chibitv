@@ -3,6 +3,7 @@ use crate::config::ChannelConfigInner;
 #[derive(Clone, Debug)]
 pub enum ChannelInner {
     IsdbS { frequency: u32, stream_id: u32 },
+    IsdbT { frequency: u32, bandwidth_hz: u32 },
 }
 
 impl From<&ChannelConfigInner> for ChannelInner {
@@ -14,6 +15,13 @@ impl From<&ChannelConfigInner> for ChannelInner {
             } => Self::IsdbS {
                 frequency: *frequency,
                 stream_id: *stream_id,
+            },
+            ChannelConfigInner::IsdbT {
+                frequency,
+                bandwidth_hz,
+            } => Self::IsdbT {
+                frequency: *frequency,
+                bandwidth_hz: *bandwidth_hz,
             },
         }
     }

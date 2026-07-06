@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use anyhow::bail;
 use clap::Parser;
 
-use crate::channel::Channel;
+use crate::channel::{Channel, ChannelInner};
 use crate::config::Config;
 use crate::descrambler::{CasModule, Descrambler};
 use crate::registry::Registry;
@@ -34,6 +34,9 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let Some(default_channel) = channels.first() else {
         bail!("No channels are defined in the config. At least one channel is required.");
     };
+    if matches!(default_channel.inner, ChannelInner::IsdbT { .. }) {
+        todo!("serve command does not support ISDB-T yet");
+    }
 
     let tuners = {
         let mut tuners = Tuners::default();

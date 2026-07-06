@@ -5,11 +5,12 @@ use std::ptr::{null, null_mut};
 use anyhow::bail;
 use dvbv5_sys::dvb_dev_type::{DVB_DEVICE_DEMUX, DVB_DEVICE_DVR, DVB_DEVICE_FRONTEND};
 use dvbv5_sys::{
-    DTV_FREQUENCY, DTV_STREAM_ID, dmx_output, dmx_ts_pes, dvb_dev_alloc, dvb_dev_close,
+    DTV_BANDWIDTH_HZ, DTV_FREQUENCY, DTV_GUARD_INTERVAL, DTV_ISDBT_LAYER_ENABLED, DTV_STREAM_ID,
+    DTV_TRANSMISSION_MODE, dmx_output, dmx_ts_pes, dvb_dev_alloc, dvb_dev_close,
     dvb_dev_dmx_set_pesfilter, dvb_dev_find, dvb_dev_free, dvb_dev_list, dvb_dev_open,
     dvb_dev_read, dvb_dev_seek_by_adapter, dvb_dev_set_bufsize, dvb_dev_set_log, dvb_device,
     dvb_fe_set_parms, dvb_fe_store_parm, dvb_open_descriptor, dvb_set_compat_delivery_system,
-    dvb_v5_fe_parms, fe_delivery_system,
+    dvb_v5_fe_parms, fe_delivery_system, fe_guard_interval, fe_transmit_mode,
 };
 use libc::{EOVERFLOW, O_RDONLY, O_RDWR};
 use tracing::{error, info, warn};
@@ -188,6 +189,27 @@ impl Tuner for DvbTuner {
                     dvb_set_compat_delivery_system(p, fe_delivery_system::SYS_ISDBS as u32);
                     dvb_fe_store_parm(p, DTV_FREQUENCY, frequency);
                     dvb_fe_store_parm(p, DTV_STREAM_ID, stream_id);
+                }
+                ChannelInner::IsdbT {
+                    frequency,
+                    bandwidth_hz,
+                } => {
+                    info!("Tuning to {}, bandwidth {} Hz", frequency, bandwidth_hz);
+
+                    dvb_set_compat_delivery_system(p, fe_delivery_system::SYS_ISDBT as u32);
+                    dvb_fe_store_parm(p, DTV_FREQUENCY, frequency);
+                    dvb_fe_store_parm(p, DTV_BANDWIDTH_HZ, bandwidth_hz);
+                    dvb_fe_store_parm(
+                        p,
+                        DTV_TRANSMISSION_MODE,
+                        fe_transmit_mode::TRANSMISSION_MODE_AUTO as u32,
+                    );
+                    dvb_fe_store_parm(
+                        p,
+                        DTV_GUARD_INTERVAL,
+                        fe_guard_interval::GUARD_INTERVAL_AUTO as u32,
+                    );
+                    dvb_fe_store_parm(p, DTV_ISDBT_LAYER_ENABLED, 0b111);
                 }
             }
 

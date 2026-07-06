@@ -1,2 +1,20 @@
 [cas]
 master_key = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
+
+[[tuners]]
+type = "dvb"
+adapter_num = 0
+frontend_num = 0
+
+[[channels]]
+name = "BS Example"
+delivery_system = "ISDB-S"
+frequency = 1318000
+stream_id = 0x40F1
+
+[[channels]]
+name = "Terrestrial Example"
+delivery_system = "ISDB-T"
+frequency = 473142857
+# Optional. Defaults to 6000000.
+bandwidth_hz = 6000000

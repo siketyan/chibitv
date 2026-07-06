@@ -1,10 +1,10 @@
 use std::fs::File;
-use std::io::{BufReader, Write, stdout};
+use std::io::{BufReader, Read, Write, stdout};
 
 use clap::Parser;
 use tracing::info;
 
-use crate::channel::Channel;
+use crate::channel::{Channel, ChannelInner};
 use crate::config::Config;
 use crate::tuner::Tuners;
 

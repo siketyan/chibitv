@@ -63,9 +63,15 @@ impl Workspace {
             .get_service_by_id(service_id)
             .ok_or_else(|| WorkspaceError::ServiceNotFound)?;
 
-        let channel = self.channels
-                .iter()
-                .find(|channel| matches!(&channel.inner, ChannelInner::IsdbS {stream_id, ..} if *stream_id == (service.tlv_stream_id as u32)))
+        let channel = self
+            .channels
+            .iter()
+            .find(|channel| match &channel.inner {
+                ChannelInner::IsdbS { stream_id, .. } => {
+                    *stream_id == (service.tlv_stream_id as u32)
+                }
+                ChannelInner::IsdbT { .. } => false,
+            })
             .ok_or_else(|| WorkspaceError::ChannelNotFound)?;
 
         stream
