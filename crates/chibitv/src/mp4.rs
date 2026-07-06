@@ -2,8 +2,6 @@ use std::collections::BTreeMap;
 use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::num::{NonZeroU16, NonZeroU32};
 
-use crate::aac::LoasFrame;
-use crate::remux::{Mux, TrackType};
 use bytes::{BufMut, Bytes, BytesMut};
 use cros_codecs::codec::h265::parser::{
     Nalu, NaluType, Parser as H265Parser, Pps, ProfileTierLevel, Sps, Vps,
@@ -15,13 +13,74 @@ use shiguredo_mp4::boxes::{
 use shiguredo_mp4::descriptors::{
     DecoderConfigDescriptor, DecoderSpecificInfo, EsDescriptor, SlConfigDescriptor,
 };
-use shiguredo_mp4::mux::{Mp4FileMuxer, Sample};
+use shiguredo_mp4::mux::{Fmp4SegmentMuxer, Mp4FileMuxer, Sample};
 use shiguredo_mp4::{FixedPointNumber, TrackKind, Uint};
 use tracing::{debug, error, info};
+
+use crate::aac::LoasFrame;
+use crate::remux::{Mux, TrackType};
+
+const VIDEO_TIMESCALE: u32 = 90_000;
 
 #[derive(Clone, Debug)]
 struct TrackMetadata {
     sample_duration: u32,
+    timescale: u32,
+}
+
+struct PendingSample {
+    sample: Sample,
+    data: Bytes,
+    dts: f64,
+}
+
+struct TrackSample {
+    sample: Sample,
+    data: Bytes,
+    dts: Option<f64>,
+}
+
+struct MediaFragment {
+    metadata: Bytes,
+    payload: Bytes,
+}
+
+#[derive(Default)]
+struct FragmentedTrackState {
+    first_dts: Option<f64>,
+    sample_entry: Option<SampleEntry>,
+    ready: bool,
+}
+
+impl FragmentedTrackState {
+    fn observe_samples(&mut self, samples: &[TrackSample]) {
+        for sample in samples {
+            if self.first_dts.is_none() {
+                self.first_dts = sample.dts;
+            }
+
+            if let Some(sample_entry) = &sample.sample.sample_entry {
+                self.sample_entry = Some(sample_entry.clone());
+            }
+        }
+    }
+
+    fn attach_sample_entry_if_needed(&self, sample: &mut Sample) {
+        if sample.sample_entry.is_none()
+            && !self.ready
+            && let Some(sample_entry) = &self.sample_entry
+        {
+            sample.sample_entry = Some(sample_entry.clone());
+        }
+    }
+
+    fn observe_fragment_samples(&mut self, samples: &[Sample]) {
+        for sample in samples {
+            if sample.sample_entry.is_some() {
+                self.ready = true;
+            }
+        }
+    }
 }
 
 trait Track {
@@ -30,7 +89,7 @@ trait Track {
         data: Bytes,
         dts: Option<f64>,
         pts: Option<f64>,
-    ) -> anyhow::Result<Vec<(Sample, Bytes)>>;
+    ) -> anyhow::Result<Vec<TrackSample>>;
 }
 
 struct H265Track {
@@ -39,6 +98,7 @@ struct H265Track {
     pps: Option<(Bytes, Pps)>,
     sps: Option<(Bytes, Sps)>,
     metadata: Option<TrackMetadata>,
+    pending: Option<PendingSample>,
 }
 
 impl H265Track {
@@ -49,6 +109,7 @@ impl H265Track {
             pps: None,
             sps: None,
             metadata: None,
+            pending: None,
         }
     }
 }
@@ -57,9 +118,9 @@ impl Track for H265Track {
     fn write_sample(
         &mut self,
         data: Bytes,
-        _dts: Option<f64>,
-        _pts: Option<f64>,
-    ) -> anyhow::Result<Vec<(Sample, Bytes)>> {
+        dts: Option<f64>,
+        pts: Option<f64>,
+    ) -> anyhow::Result<Vec<TrackSample>> {
         let mut keyframe = false;
         let mut sample_entry = None::<SampleEntry>;
         let mut nalus = Vec::<Nalu>::new();
@@ -103,11 +164,12 @@ impl Track for H265Track {
             sample_entry = Some(build_hev1_sample_entry(vps, pps, sps));
 
             self.metadata = Some(TrackMetadata {
-                sample_duration: sps.1.vui_parameters.num_units_in_tick * 1000
+                sample_duration: sps.1.vui_parameters.num_units_in_tick * VIDEO_TIMESCALE
                     / sps.1.vui_parameters.time_scale,
+                timescale: VIDEO_TIMESCALE,
             });
 
-            debug!("Stream is ready: {:?}", &self.metadata);
+            debug!("H265 track is ready: {:?}", &self.metadata);
         }
 
         let Some(metadata) = &self.metadata else {
@@ -126,14 +188,38 @@ impl Track for H265Track {
             track_kind: TrackKind::Video,
             sample_entry,
             keyframe,
-            timescale: NonZeroU32::new(1000).unwrap(),
+            timescale: NonZeroU32::new(metadata.timescale).unwrap(),
             duration: metadata.sample_duration,
-            composition_time_offset: None,
+            composition_time_offset: pts
+                .zip(dts)
+                .map(|(pts, dts)| seconds_to_timescale_units(pts - dts, metadata.timescale)),
             data_offset: 0,
             data_size: bytes.len(),
         };
 
-        Ok(vec![(sample, bytes.freeze())])
+        let data = bytes.freeze();
+        let Some(dts) = dts else {
+            return Ok(vec![TrackSample {
+                sample,
+                data,
+                dts: None,
+            }]);
+        };
+
+        let Some(mut pending) = self.pending.replace(PendingSample { sample, data, dts }) else {
+            return Ok(vec![]);
+        };
+
+        let duration = seconds_to_timescale_units(dts - pending.dts, metadata.timescale);
+        if duration > 0 {
+            pending.sample.duration = duration as u32;
+        }
+
+        Ok(vec![TrackSample {
+            sample: pending.sample,
+            data: pending.data,
+            dts: Some(pending.dts),
+        }])
     }
 }
 
@@ -151,10 +237,10 @@ impl Track for AacLatmTrack {
     fn write_sample(
         &mut self,
         data: Bytes,
-        _dts: Option<f64>,
+        dts: Option<f64>,
         _pts: Option<f64>,
-    ) -> anyhow::Result<Vec<(Sample, Bytes)>> {
-        let mut samples = Vec::<(Sample, Bytes)>::new();
+    ) -> anyhow::Result<Vec<TrackSample>> {
+        let mut samples = Vec::<TrackSample>::new();
 
         let mut cursor = Cursor::new(data.as_ref());
         let mut previous = None::<LoasFrame>;
@@ -162,7 +248,8 @@ impl Track for AacLatmTrack {
         while let Ok(sample) = LoasFrame::next(&mut cursor, previous.as_ref()) {
             previous = Some(sample.clone());
 
-            let sample_duration = 1024 * 1000 / (sample.sampling_frequency as u32);
+            let sample_duration = 1024;
+            let timescale = sample.sampling_frequency as u32;
             let sample_entry = self.metadata.is_none().then(|| {
                 let audio = AudioSampleEntryFields {
                     data_reference_index: NonZeroU16::new(1).unwrap(),
@@ -174,13 +261,8 @@ impl Track for AacLatmTrack {
                 let dec_specific_info = DecoderSpecificInfo {
                     payload: {
                         let sampling_index = sample.sampling_frequency_index;
-                        let mut extension_sampling_index = sampling_index;
-                        let mut audio_object_type = 5; // HE-AAC
-                        if sampling_index >= 6 {
-                            extension_sampling_index = sampling_index - 3;
-                        } else if sample.channel_configuration == 1 {
-                            audio_object_type = 2; // LC-AAC
-                        }
+                        let audio_object_type = sample.audio_object_type;
+                        let extension_sampling_index = sampling_index.saturating_sub(3);
 
                         let mut config = vec![0; 4];
 
@@ -219,7 +301,17 @@ impl Track for AacLatmTrack {
                     },
                 };
 
-                self.metadata = Some(TrackMetadata { sample_duration });
+                self.metadata = Some(TrackMetadata {
+                    sample_duration,
+                    timescale,
+                });
+
+                info!(
+                    audio_object_type = sample.audio_object_type,
+                    sampling_frequency = sample.sampling_frequency as u32,
+                    channel_configuration = sample.channel_configuration,
+                    "AAC-LATM track is ready"
+                );
 
                 SampleEntry::Mp4a(Mp4aBox {
                     audio,
@@ -232,18 +324,27 @@ impl Track for AacLatmTrack {
                 continue;
             };
 
+            let metadata = self.metadata.as_ref().expect("metadata must be set");
             let sample = Sample {
                 track_kind: TrackKind::Audio,
                 sample_entry,
                 keyframe: false,
-                timescale: NonZeroU32::new(1000).unwrap(),
-                duration: sample_duration,
+                timescale: NonZeroU32::new(metadata.timescale).unwrap(),
+                duration: metadata.sample_duration,
                 composition_time_offset: None,
                 data_offset: 0,
                 data_size: data.len(),
             };
 
-            samples.push((sample, data));
+            let sample_index = samples.len() as f64;
+            let sample_dts =
+                dts.map(|dts| dts + sample_index * 1024_f64 / f64::from(metadata.timescale));
+
+            samples.push(TrackSample {
+                sample,
+                data,
+                dts: sample_dts,
+            });
         }
 
         Ok(samples)
@@ -269,7 +370,7 @@ impl<W: Write + Seek> Mp4Muxer<W> {
     }
 }
 
-impl<W: Write + Seek + Send + Sync> Mux for Mp4Muxer<W> {
+impl<W: Write + Seek> Mux for Mp4Muxer<W> {
     fn add_track(&mut self, track_id: u16, ty: TrackType) {
         if self.track_map.contains_key(&track_id) {
             return;
@@ -308,10 +409,13 @@ impl<W: Write + Seek + Send + Sync> Mux for Mp4Muxer<W> {
             return Ok(());
         };
 
-        for (mut sample, bytes) in track.write_sample(data, dts, pts)? {
+        for TrackSample {
+            mut sample, data, ..
+        } in track.write_sample(data, dts, pts)?
+        {
             sample.data_offset = self.data_offset;
 
-            self.writer.write_all(&bytes)?;
+            self.writer.write_all(&data)?;
             self.muxer.append_sample(&sample)?;
 
             self.data_offset += sample.data_size as u64;
@@ -328,6 +432,168 @@ impl<W: Write + Seek + Send + Sync> Mux for Mp4Muxer<W> {
 
         Ok(())
     }
+}
+
+pub trait WriteMp4Fragment {
+    fn write_fragment(&mut self, data: Bytes) -> anyhow::Result<()>;
+}
+
+impl<T> WriteMp4Fragment for T
+where
+    T: Write,
+{
+    fn write_fragment(&mut self, data: Bytes) -> anyhow::Result<()> {
+        self.write_all(&data)?;
+        Ok(())
+    }
+}
+
+pub struct FragmentedMp4Muxer<W> {
+    writer: W,
+    muxer: Fmp4SegmentMuxer,
+    track_map: BTreeMap<u16, Box<dyn Track>>,
+    track_states: BTreeMap<u16, FragmentedTrackState>,
+    sync_start_dts: Option<f64>,
+    pending_fragments: Vec<MediaFragment>,
+    init_segment_written: bool,
+}
+
+// FragmentedMp4Muxer is moved into a single remuxer thread and is not shared
+// between threads. H265Track contains cros-codecs parser state with Rc internals,
+// which prevents auto Send even though this usage does not cross-share it.
+unsafe impl<W: Send> Send for FragmentedMp4Muxer<W> {}
+
+impl<W: WriteMp4Fragment> FragmentedMp4Muxer<W> {
+    pub fn new(writer: W) -> Self {
+        Self {
+            writer,
+            muxer: Fmp4SegmentMuxer::new().expect("failed to create fMP4 muxer"),
+            track_map: BTreeMap::new(),
+            track_states: BTreeMap::new(),
+            sync_start_dts: None,
+            pending_fragments: Vec::new(),
+            init_segment_written: false,
+        }
+    }
+}
+
+impl<W: WriteMp4Fragment> Mux for FragmentedMp4Muxer<W> {
+    fn add_track(&mut self, track_id: u16, ty: TrackType) {
+        if self.track_map.contains_key(&track_id) {
+            return;
+        }
+
+        match ty {
+            TrackType::H265 => {
+                self.track_map.insert(track_id, Box::new(H265Track::new()));
+                self.track_states.entry(track_id).or_default();
+                info!(track_id, "Added a H265 video track");
+            }
+            TrackType::AacLatm => {
+                self.track_map
+                    .insert(track_id, Box::new(AacLatmTrack::new()));
+                self.track_states.entry(track_id).or_default();
+                info!(track_id, "Added an AAC-LATM audio track");
+            }
+        }
+    }
+
+    fn write_sample(
+        &mut self,
+        track_id: u16,
+        data: Bytes,
+        dts: Option<f64>,
+        pts: Option<f64>,
+    ) -> anyhow::Result<()> {
+        let Some(track) = self.track_map.get_mut(&track_id) else {
+            return Ok(());
+        };
+
+        let mut samples = track.write_sample(data, dts, pts)?;
+        if samples.is_empty() {
+            return Ok(());
+        }
+
+        {
+            let track_state = self.track_states.entry(track_id).or_default();
+            track_state.observe_samples(&samples);
+        }
+
+        if self.sync_start_dts.is_none()
+            && self
+                .track_states
+                .values()
+                .all(|track_state| track_state.first_dts.is_some())
+        {
+            self.sync_start_dts = self
+                .track_states
+                .values()
+                .filter_map(|track_state| track_state.first_dts)
+                .max_by(f64::total_cmp);
+        }
+
+        if self.track_states.len() > 1 && self.sync_start_dts.is_none() {
+            return Ok(());
+        }
+
+        if let Some(sync_start_dts) = self.sync_start_dts {
+            samples.retain(|sample| sample.dts.is_none_or(|dts| dts >= sync_start_dts));
+        }
+        if samples.is_empty() {
+            return Ok(());
+        }
+
+        let track_state = self.track_states.entry(track_id).or_default();
+        let mut payload = BytesMut::new();
+        let mut segment_samples = Vec::with_capacity(samples.len());
+        for TrackSample {
+            mut sample, data, ..
+        } in samples
+        {
+            track_state.attach_sample_entry_if_needed(&mut sample);
+            sample.data_offset = payload.len() as u64;
+            payload.extend_from_slice(&data);
+            segment_samples.push(sample);
+        }
+
+        track_state.observe_fragment_samples(&segment_samples);
+
+        let metadata = Bytes::from(self.muxer.create_media_segment_metadata(&segment_samples)?);
+        let payload = payload.freeze();
+
+        if !self.init_segment_written {
+            self.pending_fragments
+                .push(MediaFragment { metadata, payload });
+
+            if !self
+                .track_states
+                .values()
+                .all(|track_state| track_state.ready)
+            {
+                return Ok(());
+            }
+
+            let init_segment = self.muxer.init_segment_bytes()?;
+            self.writer.write_fragment(Bytes::from(init_segment))?;
+            self.init_segment_written = true;
+
+            for fragment in self.pending_fragments.drain(..) {
+                self.writer.write_fragment(fragment.metadata)?;
+                self.writer.write_fragment(fragment.payload)?;
+            }
+
+            return Ok(());
+        }
+
+        self.writer.write_fragment(metadata)?;
+        self.writer.write_fragment(payload)?;
+
+        Ok(())
+    }
+}
+
+fn seconds_to_timescale_units(seconds: f64, timescale: u32) -> i64 {
+    (seconds * f64::from(timescale)).round() as i64
 }
 
 fn build_hev1_sample_entry(

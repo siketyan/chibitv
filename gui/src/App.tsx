@@ -1,7 +1,6 @@
 import { Bars3Icon, InformationCircleIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import clsx from "clsx";
-import mpegts from "mpegts.js";
 import { type JSX, useEffect, useRef, useState } from "react";
 
 import { $api } from "./api";
@@ -148,34 +147,106 @@ function Player(): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    if (!ref.current) {
+    const video = ref.current;
+    if (!video) {
       return;
     }
 
-    const player = mpegts.createPlayer(
-      {
-        type: "mse",
-        isLive: true,
-        url: new URL("/api/streams/0/stream.ts", location.href).toString(),
-      },
-      {
-        enableWorker: true,
-        enableWorkerForMSE: true,
-        enableStashBuffer: true,
-        stashInitialSize: 2048 * 1024,
-        isLive: true,
-        liveBufferLatencyChasing: true,
-      },
-    );
+    const mimeTypes = [
+      'video/mp4; codecs="hev1.2.4.L153.0, mp4a.40.2"',
+      'video/mp4; codecs="hev1.2.4.L153.0, mp4a.40.5"',
+    ];
+    const mimeType = mimeTypes.find((type) => MediaSource.isTypeSupported(type));
+    if (!mimeType) {
+      console.error("MSE codecs are not supported", mimeTypes);
+      return;
+    }
 
-    player.attachMediaElement(ref.current);
-    player.load();
+    const abortController = new AbortController();
+    const mediaSource = new MediaSource();
+    const objectUrl = URL.createObjectURL(mediaSource);
+    const queue: ArrayBuffer[] = [];
+    let sourceBuffer: SourceBuffer | undefined;
+    let initialSeekDone = false;
+
+    const seekToBufferedStart = () => {
+      if (initialSeekDone || !sourceBuffer || sourceBuffer.buffered.length === 0) {
+        return;
+      }
+
+      video.currentTime = sourceBuffer.buffered.start(0);
+      initialSeekDone = true;
+      void video.play().catch(() => {});
+    };
+
+    const appendNext = () => {
+      if (!sourceBuffer || sourceBuffer.updating || queue.length === 0 || mediaSource.readyState !== "open") {
+        seekToBufferedStart();
+        return;
+      }
+
+      const chunk = queue.shift();
+      if (!chunk) {
+        return;
+      }
+
+      try {
+        sourceBuffer.appendBuffer(chunk);
+      } catch (error) {
+        console.error("appendBuffer failed", error);
+        abortController.abort();
+      }
+    };
+
+    const readStream = async () => {
+      const response = await fetch(new URL("/api/streams/0/stream.mp4", location.href), {
+        signal: abortController.signal,
+      });
+      if (!response.ok || !response.body) {
+        throw new Error(`Stream request failed: ${response.status}`);
+      }
+
+      const reader = response.body.getReader();
+      while (!abortController.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) {
+          break;
+        }
+
+        if (value) {
+          queue.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer);
+          appendNext();
+        }
+      }
+    };
+
+    const handleSourceOpen = () => {
+      sourceBuffer = mediaSource.addSourceBuffer(mimeType);
+      sourceBuffer.mode = "segments";
+      sourceBuffer.addEventListener("updateend", appendNext);
+      sourceBuffer.addEventListener("error", () => {
+        console.error("SourceBuffer error", mediaSource.readyState);
+        abortController.abort();
+      });
+
+      void readStream().catch((error) => {
+        if (!abortController.signal.aborted) {
+          console.error("Failed to read stream", error);
+        }
+      });
+    };
+
+    mediaSource.addEventListener("sourceopen", handleSourceOpen, { once: true });
+    video.src = objectUrl;
+    void video.play().catch(() => {});
 
     return () => {
-      player.pause();
-      player.unload();
-      player.detachMediaElement();
-      player.destroy();
+      abortController.abort();
+      mediaSource.removeEventListener("sourceopen", handleSourceOpen);
+      sourceBuffer?.removeEventListener("updateend", appendNext);
+      video.removeAttribute("src");
+      video.load();
+      URL.revokeObjectURL(objectUrl);
     };
   }, []);
 

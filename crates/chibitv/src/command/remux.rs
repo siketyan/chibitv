@@ -9,14 +9,18 @@ use crate::config::Config;
 use crate::descrambler::{CasModule, Descrambler};
 use crate::m2ts::M2tsMuxer;
 use crate::mmt::MmtDemuxer;
-use crate::mp4::Mp4Muxer;
+use crate::mp4::{FragmentedMp4Muxer, Mp4Muxer};
 use crate::remux::{Remux, Remuxer};
 
 #[derive(Copy, Clone, Debug, Default, ValueEnum)]
 pub enum OutputFormat {
+    /// MPEG-2 Transport Stream
     #[default]
     M2ts,
+    /// MPEG-4 / ISO BMFF
     Mp4,
+    /// Fragmented MP4
+    Fmp4,
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -63,6 +67,17 @@ pub async fn remux(options: &Options, config: &Config) -> anyhow::Result<()> {
             };
 
             let mux = Mp4Muxer::new(BufWriter::new(File::create(path)?));
+            let mut remux = Remuxer::new(demux, mux, None, None);
+
+            remux.run(None)
+        }
+        OutputFormat::Fmp4 => {
+            let output: Box<dyn Write + Send + Sync> = match options.output.as_deref() {
+                Some("-") | None => Box::new(stdout()),
+                Some(path) => Box::new(File::create(path)?),
+            };
+
+            let mux = FragmentedMp4Muxer::new(BufWriter::new(output));
             let mut remux = Remuxer::new(demux, mux, None, None);
 
             remux.run(None)

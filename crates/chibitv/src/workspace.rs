@@ -76,8 +76,19 @@ impl Workspace {
     pub fn get_m2ts_stream(&self, stream_id: u32) -> Option<BroadcastStream<Bytes>> {
         let streams = self.streams.read().unwrap();
         let stream = streams.get_stream(stream_id)?;
-        let rx = stream.subscribe();
+        let rx = stream.subscribe_m2ts();
 
         Some(BroadcastStream::new(rx))
+    }
+
+    pub fn get_fmp4_stream(
+        &self,
+        stream_id: u32,
+    ) -> Option<(Option<Bytes>, BroadcastStream<Bytes>)> {
+        let streams = self.streams.read().unwrap();
+        let stream = streams.get_stream(stream_id)?;
+        let (init_segment, rx) = stream.subscribe_fmp4();
+
+        Some((init_segment, BroadcastStream::new(rx)))
     }
 }

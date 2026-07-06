@@ -13,12 +13,18 @@ use crate::channel::Channel;
 use crate::descrambler::Descrambler;
 use crate::m2ts::M2tsMuxer;
 use crate::mmt::MmtDemuxer;
+use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
 use crate::registry::Registry;
-use crate::remux::{Remux, Remuxer, Signal};
+use crate::remux::{Mux, Remux, Remuxer, Signal, TrackType};
 use crate::tuner::Tuner;
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
 const BROADCAST_CAPACITY: usize = 8192;
+
+type RemuxerHandle = (
+    JoinHandle<anyhow::Result<()>>,
+    tokio::sync::oneshot::Sender<()>,
+);
 
 struct ChannelWriter(Sender<Bytes>);
 
@@ -34,12 +40,59 @@ impl std::io::Write for ChannelWriter {
     }
 }
 
+struct Fmp4ChannelWriter {
+    tx: Sender<Bytes>,
+    init_segment: Arc<Mutex<Option<Bytes>>>,
+}
+
+impl WriteMp4Fragment for Fmp4ChannelWriter {
+    fn write_fragment(&mut self, data: Bytes) -> anyhow::Result<()> {
+        let mut init_segment = self.init_segment.lock().unwrap();
+        if init_segment.is_none() {
+            *init_segment = Some(data.clone());
+        }
+
+        let _ = self.tx.send(data);
+        Ok(())
+    }
+}
+
+struct TeeMux<A, B> {
+    first: A,
+    second: B,
+}
+
+impl<A: Mux, B: Mux> Mux for TeeMux<A, B> {
+    fn add_track(&mut self, track_id: u16, ty: TrackType) {
+        self.first.add_track(track_id, ty);
+        self.second.add_track(track_id, ty);
+    }
+
+    fn begin(&mut self) -> anyhow::Result<()> {
+        self.first.begin()?;
+        self.second.begin()
+    }
+
+    fn write_sample(
+        &mut self,
+        track_id: u16,
+        data: Bytes,
+        dts: Option<f64>,
+        pts: Option<f64>,
+    ) -> anyhow::Result<()> {
+        self.first.write_sample(track_id, data.clone(), dts, pts)?;
+        self.second.write_sample(track_id, data, dts, pts)
+    }
+
+    fn finalize(&mut self) -> anyhow::Result<()> {
+        self.first.finalize()?;
+        self.second.finalize()
+    }
+}
+
 #[derive(Default)]
 pub struct StreamState {
-    handle: Option<(
-        JoinHandle<anyhow::Result<()>>,
-        tokio::sync::oneshot::Sender<()>,
-    )>,
+    handle: Option<RemuxerHandle>,
     service_id: Option<u16>,
     event_id: Option<u16>,
 }
@@ -49,7 +102,9 @@ pub struct Stream {
     tuner: Arc<dyn Tuner>,
     descrambler: Descrambler,
     state: Arc<RwLock<StreamState>>,
-    tx: Sender<Bytes>,
+    m2ts_tx: Sender<Bytes>,
+    fmp4_tx: Sender<Bytes>,
+    fmp4_init_segment: Arc<Mutex<Option<Bytes>>>,
     signal_tx: Sender<Signal>,
 }
 
@@ -59,7 +114,9 @@ impl Stream {
         tuner: Arc<dyn Tuner>,
         descrambler: Descrambler,
     ) -> anyhow::Result<Self> {
-        let (tx, _) = channel::<Bytes>(BROADCAST_CAPACITY);
+        let (m2ts_tx, _) = channel::<Bytes>(BROADCAST_CAPACITY);
+        let (fmp4_tx, _) = channel::<Bytes>(BROADCAST_CAPACITY);
+        let fmp4_init_segment = Arc::new(Mutex::new(None));
         let (signal_tx, mut signal_rx) = channel::<Signal>(1);
         let state = Arc::new(RwLock::new(StreamState::default()));
 
@@ -87,7 +144,9 @@ impl Stream {
             tuner,
             descrambler,
             state,
-            tx,
+            m2ts_tx,
+            fmp4_tx,
+            fmp4_init_segment,
             signal_tx,
         })
     }
@@ -95,8 +154,15 @@ impl Stream {
     fn start_remuxer(&self) -> anyhow::Result<()> {
         let reader = BufReader::with_capacity(READ_BUFFER_SIZE, self.tuner.open()?);
         let demux = MmtDemuxer::new(reader, self.descrambler.clone());
-        let writer = BufWriter::new(ChannelWriter(self.tx.clone()));
-        let mux = M2tsMuxer::new(TsPacketWriter::new(writer));
+        let m2ts_writer = BufWriter::new(ChannelWriter(self.m2ts_tx.clone()));
+        let fmp4_writer = Fmp4ChannelWriter {
+            tx: self.fmp4_tx.clone(),
+            init_segment: Arc::clone(&self.fmp4_init_segment),
+        };
+        let mux = TeeMux {
+            first: M2tsMuxer::new(TsPacketWriter::new(m2ts_writer)),
+            second: FragmentedMp4Muxer::new(fmp4_writer),
+        };
         let mut remuxer = Remuxer::new(
             demux,
             mux,
@@ -112,13 +178,23 @@ impl Stream {
         Ok(())
     }
 
-    pub fn subscribe(&self) -> Receiver<Bytes> {
-        let rx = self.tx.subscribe();
+    pub fn subscribe_m2ts(&self) -> Receiver<Bytes> {
+        let rx = self.m2ts_tx.subscribe();
         info!(
-            receivers = self.tx.receiver_count(),
+            receivers = self.m2ts_tx.receiver_count(),
             "M2TS stream client subscribed"
         );
         rx
+    }
+
+    pub fn subscribe_fmp4(&self) -> (Option<Bytes>, Receiver<Bytes>) {
+        let init_segment = self.fmp4_init_segment.lock().unwrap();
+        let rx = self.fmp4_tx.subscribe();
+        info!(
+            receivers = self.fmp4_tx.receiver_count(),
+            "fMP4 stream client subscribed"
+        );
+        (init_segment.clone(), rx)
     }
 
     pub fn set_channel(&self, service_id: u16, channel: &Channel) -> anyhow::Result<()> {
@@ -132,6 +208,7 @@ impl Stream {
 
         // Tune to the channel.
         self.tuner.tune(channel.clone())?;
+        *self.fmp4_init_segment.lock().unwrap() = None;
 
         self.start_remuxer()?;
 

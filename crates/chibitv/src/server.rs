@@ -27,6 +27,7 @@ use crate::workspace::{Workspace, WorkspaceError};
         get_stream,
         update_stream,
         get_m2ts_stream,
+        get_fmp4_stream,
     )
 )]
 pub struct ApiDoc;
@@ -38,6 +39,7 @@ pub async fn serve(addr: SocketAddr, state: Arc<Workspace>) -> anyhow::Result<()
         .route("/services/{id}/events", get(get_events))
         .route("/streams/{id}", get(get_stream).patch(update_stream))
         .route("/streams/{id}/stream.ts", get(get_m2ts_stream))
+        .route("/streams/{id}/stream.mp4", get(get_fmp4_stream))
         .route("/openapi.json", get(async || Json(ApiDoc::openapi())))
         .with_state(state);
 
@@ -250,5 +252,33 @@ async fn get_m2ts_stream(
     Ok(Response::builder()
         .header("Content-Type", "video/mp2t")
         .body(Body::new(StreamBody::new(stream)))
+        .unwrap())
+}
+
+#[utoipa::path(
+    get,
+    path = "/streams/{id}/stream.mp4",
+    responses((status = 200, content_type = "video/mp4"), (status = NOT_FOUND)),
+    params(("id" = u32, Path)),
+)]
+async fn get_fmp4_stream(
+    State(workspace): State<Arc<Workspace>>,
+    Path(stream_id): Path<u32>,
+) -> Result<Response, StatusCode> {
+    let (init_segment, stream) = workspace
+        .get_fmp4_stream(stream_id)
+        .ok_or(StatusCode::NOT_FOUND)?;
+    let init_segment = tokio_stream::iter(
+        init_segment
+            .into_iter()
+            .map(|data| Ok::<_, Infallible>(Frame::data(data))),
+    );
+    let stream = stream
+        .filter_map(|data| data.ok().map(Frame::data))
+        .map(Ok::<_, Infallible>);
+
+    Ok(Response::builder()
+        .header("Content-Type", "video/mp4")
+        .body(Body::new(StreamBody::new(init_segment.chain(stream))))
         .unwrap())
 }
