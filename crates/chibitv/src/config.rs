@@ -4,7 +4,7 @@ use std::path::Path;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 
-#[derive(Clone, Debug)]
+#[derive(Copy, Clone, Debug)]
 pub struct CasMasterKey([u8; 32]);
 
 impl From<CasMasterKey> for [u8; 32] {

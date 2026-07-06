@@ -4,9 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0"
+anyhow = "1.0.101"
 apdu-core = "0.4.0"
-byteorder = "1.5"
-pcsc = "2.9"
-strum = { version = "0.27.1", features = ["derive"] }
-tracing = "0.1.41"
+byteorder = "1.5.0"
+pcsc = "2.9.0"
+strum = { version = "0.27.2", features = ["derive"] }
+tracing = "0.1.44"

@@ -382,9 +382,4 @@ impl<R: BufRead> MmtDemuxer<R> {
             })
             .collect()
     }
-
-    pub fn clear(&mut self) {
-        self.streams.clear();
-        self.descrambler.clear();
-    }
 }

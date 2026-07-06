@@ -11,6 +11,7 @@ config.toml
 *.ts
 *.m2ts
 *.mmts
+*.mp4
 
 # ... except TypeScript files ;)
 !gui/**/*.ts

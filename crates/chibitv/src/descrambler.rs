@@ -1,13 +1,15 @@
-use std::collections::HashMap;
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-
+use aes::Aes128;
 use anyhow::Result;
 use bytes::{Buf, Bytes};
-use openssl::symm::{Cipher, decrypt};
+use ctr::Ctr128BE;
+use ctr::cipher::generic_array::GenericArray;
+use ctr::cipher::{KeyIvInit, StreamCipher};
 use rand::rngs::StdRng;
 use rand::{RngCore, SeedableRng};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::error::Error;
+use std::fmt::{Display, Formatter};
 use tracing::{debug, info};
 
 use chibitv_b60::mmtp::MmtpPacket;
@@ -87,7 +89,11 @@ impl Descrambler {
         }
 
         let (odd, even) = hash.split_at(0x10);
-        info!("Decrypted ECM, Odd: {:?}, Even: {:?}", odd, even);
+        info!(
+            "Decrypted ECM, Odd: {}, Even: {}",
+            hex::encode(odd),
+            hex::encode(even),
+        );
 
         let key = DecryptionKey {
             odd: odd.try_into()?,
@@ -146,16 +152,13 @@ impl Descrambler {
         ]
         .concat();
 
-        let cipher = Cipher::aes_128_ctr();
-        let plaintext = decrypt(cipher, key, Some(&iv), data)?;
+        let mut ctr = Ctr128BE::<Aes128>::new(
+            GenericArray::from_slice(&key),
+            GenericArray::from_slice(&iv),
+        );
 
-        data.copy_from_slice(&plaintext);
+        ctr.apply_keystream(data);
 
         Ok(())
-    }
-
-    pub fn clear(&mut self) {
-        self.key = None;
-        self.key_cache.clear();
     }
 }

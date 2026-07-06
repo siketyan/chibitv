@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
-use std::io::{BufReader, Cursor};
+use std::io::{BufReader, BufWriter};
 use std::ops::DerefMut;
 use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::thread::JoinHandle;
 
-use bytes::{Bytes, BytesMut};
-use mpeg2ts::ts::{TsPacket, TsPacketWriter, WriteTsPacket};
+use bytes::Bytes;
+use mpeg2ts::ts::TsPacketWriter;
 use tokio::sync::broadcast::{Receiver, Sender, channel};
 use tracing::info;
 
@@ -19,12 +19,16 @@ use crate::tuner::Tuner;
 
 struct ChannelWriter(Sender<Bytes>);
 
-impl WriteTsPacket for ChannelWriter {
-    fn write_ts_packet(&mut self, packet: &TsPacket) -> mpeg2ts::Result<()> {
-        let mut buf = BytesMut::zeroed(TsPacket::SIZE);
-        let mut writer = TsPacketWriter::new(Cursor::new(buf.as_mut()));
-        writer.write_ts_packet(packet)?;
-        self.0.send(buf.freeze()).ok();
+impl std::io::Write for ChannelWriter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self.0.send(Bytes::copy_from_slice(buf)) {
+            Ok(_) => Ok(buf.len()),
+            _ => Ok(0),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        // do nothing
         Ok(())
     }
 }
@@ -41,10 +45,8 @@ pub struct StreamState {
 
 pub struct Stream {
     tuner: Arc<dyn Tuner>,
-    remuxer: Arc<Mutex<Box<dyn Remux>>>,
     state: Arc<RwLock<StreamState>>,
     rx: Receiver<Bytes>,
-    signal_rx: Receiver<Signal>,
 }
 
 impl Stream {
@@ -54,46 +56,41 @@ impl Stream {
         descrambler: Descrambler,
     ) -> anyhow::Result<Self> {
         let (tx, rx) = channel::<Bytes>(1024 * 1024);
-        let (signal_tx, signal_rx) = channel::<Signal>(1);
+        let (signal_tx, mut signal_rx) = channel::<Signal>(1);
 
         let reader = BufReader::new(tuner.open()?);
         let demux = MmtDemuxer::new(reader, descrambler);
-        let mux = M2tsMuxer::new(ChannelWriter(tx));
-        let remuxer = Remuxer::new(demux, mux, signal_tx, registry);
+        let writer = BufWriter::new(ChannelWriter(tx));
+        let mux = M2tsMuxer::new(TsPacketWriter::new(writer));
+        let mut remuxer = Remuxer::new(demux, mux, Some(signal_tx.clone()), Some(registry));
 
-        Ok(Self {
-            tuner,
-            remuxer: Arc::new(Mutex::new(Box::new(remuxer))),
-            state: Arc::new(RwLock::new(StreamState::default())),
-            rx,
-            signal_rx,
-        })
-    }
+        let state = Arc::new(RwLock::new(StreamState::default()));
 
-    pub fn run(&self) {
-        let remuxer = self.remuxer.clone();
-        let state = self.state.clone();
-        let mut signal_rx = self.signal_rx.resubscribe();
+        {
+            let state = Arc::clone(&state);
 
-        tokio::spawn(async move {
-            loop {
-                let Ok(signal) = signal_rx.recv().await else {
-                    continue;
-                };
+            tokio::spawn(async move {
+                loop {
+                    let Ok(signal) = signal_rx.recv().await else {
+                        continue;
+                    };
 
-                match signal {
-                    Signal::EventChanged { event_id, .. } => {
-                        info!(event_id, "Event changed");
-                        state.write().unwrap().event_id = Some(event_id);
+                    match signal {
+                        Signal::EventChanged { event_id, .. } => {
+                            info!(event_id, "Event changed");
+                            state.write().unwrap().event_id = Some(event_id);
+                        }
                     }
                 }
-            }
-        });
+            });
+        }
 
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel();
-        let handle = std::thread::spawn(move || remuxer.lock().unwrap().run(kill_rx));
+        let handle = std::thread::spawn(move || remuxer.run(Some(kill_rx)));
 
-        self.state.write().unwrap().handle = Some((handle, kill_tx));
+        state.write().unwrap().handle = Some((handle, kill_tx));
+
+        Ok(Self { tuner, state, rx })
     }
 
     pub fn subscribe(&self) -> Receiver<Bytes> {
@@ -107,12 +104,6 @@ impl Stream {
             // Kill the current session.
             kill_tx.send(()).unwrap();
             handle.join().unwrap()?;
-
-            // Clear the remuxer state.
-            self.remuxer.lock().unwrap().clear();
-
-            // Restart a new session.
-            self.run();
         };
 
         // Tune to the channel.

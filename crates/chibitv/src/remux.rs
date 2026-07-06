@@ -1,18 +1,14 @@
-use std::collections::BTreeMap;
 use std::io::BufRead;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use mpeg2ts::es::{StreamId, StreamType};
-use mpeg2ts::ts::{Descriptor as TsDescriptor, EsInfo, Pid, WriteTsPacket};
 use tokio::sync::broadcast::Sender;
 use tokio::sync::oneshot::Receiver;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 use chibitv_b60::message::{M2SectionMessage, Message, PaMessage};
 use chibitv_b60::table::{MhBit, MhEit, MhSdt, Table};
 
-use crate::m2ts::M2tsMuxer;
 use crate::mmt::{MmtDemuxer, Packet, Payload};
 use crate::registry::Registry;
 
@@ -22,25 +18,56 @@ pub enum Signal {
     EventChanged { event_id: u16 },
 }
 
-pub trait Remux: Send + Sync {
-    fn run(&mut self, kill_rx: Receiver<()>) -> anyhow::Result<()>;
-
-    fn clear(&mut self);
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum TrackType {
+    H265,
+    AacLatm,
 }
 
-pub struct Remuxer<R: BufRead, W: WriteTsPacket> {
+pub trait Mux {
+    /// Adds a track to the stream.
+    fn add_track(&mut self, track_id: u16, ty: TrackType);
+
+    /// Starts the stream.
+    fn begin(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    /// Writes media data to the stream.
+    fn write_sample(
+        &mut self,
+        track_id: u16,
+        data: Bytes,
+        dts: Option<f64>,
+        pts: Option<f64>,
+    ) -> anyhow::Result<()>;
+
+    /// Finalises the stream.
+    fn finalize(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+pub trait Remux {
+    fn run(&mut self, kill_rx: Option<Receiver<()>>) -> anyhow::Result<()>;
+}
+
+pub struct Remuxer<R: BufRead, M: Mux> {
     demux: MmtDemuxer<R>,
-    mux: M2tsMuxer<W>,
-    signal_tx: Sender<Signal>,
-    registry: Arc<Registry>,
-    map: BTreeMap<u16, Pid>,
+    mux: M,
+    signal_tx: Option<Sender<Signal>>,
+    registry: Option<Arc<Registry>>,
     current_event_id: Option<u16>,
 }
 
-impl<R: BufRead + Send + Sync, W: WriteTsPacket + Send + Sync> Remux for Remuxer<R, W> {
-    fn run(&mut self, mut kill_rx: Receiver<()>) -> anyhow::Result<()> {
+impl<R: BufRead + Send + Sync, M: Mux> Remux for Remuxer<R, M> {
+    fn run(&mut self, mut kill_rx: Option<Receiver<()>>) -> anyhow::Result<()> {
+        self.mux.begin()?;
+
         loop {
-            if kill_rx.try_recv().is_ok() {
+            if let Some(kill_rx) = kill_rx.as_mut()
+                && kill_rx.try_recv().is_ok()
+            {
                 break;
             }
 
@@ -61,30 +88,24 @@ impl<R: BufRead + Send + Sync, W: WriteTsPacket + Send + Sync> Remux for Remuxer
             }
         }
 
-        Ok(())
-    }
+        self.mux.finalize()?;
 
-    fn clear(&mut self) {
-        self.demux.clear();
-        self.mux.clear();
-        self.map.clear();
-        self.current_event_id = None;
+        Ok(())
     }
 }
 
-impl<R: BufRead, W: WriteTsPacket> Remuxer<R, W> {
+impl<R: BufRead, M: Mux> Remuxer<R, M> {
     pub fn new(
         demux: MmtDemuxer<R>,
-        mux: M2tsMuxer<W>,
-        signal_tx: Sender<Signal>,
-        registry: Arc<Registry>,
+        mux: M,
+        signal_tx: Option<Sender<Signal>>,
+        registry: Option<Arc<Registry>>,
     ) -> Self {
         Self {
             demux,
             mux,
             signal_tx,
             registry,
-            map: BTreeMap::new(),
             current_event_id: None,
         }
     }
@@ -92,12 +113,8 @@ impl<R: BufRead, W: WriteTsPacket> Remuxer<R, W> {
     fn read_packet(&mut self, packet: Packet) -> anyhow::Result<()> {
         match packet.payload {
             Payload::Mfu { dts, pts, data } => {
-                let Some(pid) = self.map.get(&packet.packet_id).copied() else {
-                    // The stream is not yet added, or unrecognisable.
-                    return Ok(());
-                };
-
-                self.mux.write_pes(pid, Bytes::from(data), dts, pts)?;
+                self.mux
+                    .write_sample(packet.packet_id, Bytes::from(data), dts, pts)?;
             }
             Payload::Message(message) => match message {
                 Message::Pa(message) => self.read_pa_message(message),
@@ -115,12 +132,6 @@ impl<R: BufRead, W: WriteTsPacket> Remuxer<R, W> {
                 continue;
             };
 
-            // Already added streams.
-            // TODO: Compare the streams and handle changes?
-            if !self.map.is_empty() {
-                return;
-            }
-
             let mut has_video = false;
             let mut has_audio = false;
 
@@ -134,46 +145,17 @@ impl<R: BufRead, W: WriteTsPacket> Remuxer<R, W> {
                             continue;
                         }
 
-                        let pid = Pid::new(0x1011).unwrap();
-
-                        self.map.insert(packet_id, pid);
-                        self.mux.add_stream(
-                            pid,
-                            StreamId::new_video(0xe0).unwrap(),
-                            EsInfo {
-                                elementary_pid: pid,
-                                stream_type: StreamType::H265,
-                                descriptors: vec![TsDescriptor {
-                                    tag: 0x05,
-                                    data: b"HEVC".to_vec(),
-                                }],
-                            },
-                        );
-
-                        info!(packet_id, pid = pid.as_u16(), "Added a HEVC video stream");
+                        self.mux.add_track(packet_id, TrackType::H265);
 
                         has_video = true;
                     }
                     b"mp4a" => {
                         if has_audio {
-                            warn!("Multiple audio streams are not supported yet.");
+                            // warn!("Multiple audio streams are not supported yet.");
                             continue;
                         }
 
-                        let pid = Pid::new(0x1100).unwrap();
-
-                        self.map.insert(packet_id, pid);
-                        self.mux.add_stream(
-                            pid,
-                            StreamId::new_audio(0xc0).unwrap(),
-                            EsInfo {
-                                elementary_pid: pid,
-                                stream_type: StreamType::Mpeg4LoasMultiFormatFramedAudio, // AAC-LATM
-                                descriptors: vec![],
-                            },
-                        );
-
-                        info!(packet_id, pid = pid.as_u16(), "Added an AAC video stream");
+                        self.mux.add_track(packet_id, TrackType::AacLatm);
 
                         has_audio = true;
                     }
@@ -194,7 +176,9 @@ impl<R: BufRead, W: WriteTsPacket> Remuxer<R, W> {
 
     fn read_mh_eit(&mut self, table: MhEit) -> anyhow::Result<()> {
         for event in &table.events {
-            self.registry.put_event(table.service_id, event);
+            if let Some(registry) = &self.registry {
+                registry.put_event(table.service_id, event);
+            }
 
             let Some((start_time, duration)) = event.start_time.zip(event.duration) else {
                 continue;
@@ -205,9 +189,11 @@ impl<R: BufRead, W: WriteTsPacket> Remuxer<R, W> {
 
             if start_time <= now && now < end_time && self.current_event_id != Some(event.event_id)
             {
-                self.signal_tx.send(Signal::EventChanged {
-                    event_id: event.event_id,
-                })?;
+                if let Some(signal_tx) = &self.signal_tx {
+                    signal_tx.send(Signal::EventChanged {
+                        event_id: event.event_id,
+                    })?;
+                }
 
                 self.current_event_id = Some(event.event_id);
             }
@@ -218,7 +204,9 @@ impl<R: BufRead, W: WriteTsPacket> Remuxer<R, W> {
 
     fn read_mh_bit(&mut self, table: MhBit) -> anyhow::Result<()> {
         for broadcaster in &table.broadcasters {
-            self.registry.put_broadcaster(broadcaster);
+            if let Some(registry) = &self.registry {
+                registry.put_broadcaster(broadcaster);
+            }
         }
 
         Ok(())
@@ -226,7 +214,9 @@ impl<R: BufRead, W: WriteTsPacket> Remuxer<R, W> {
 
     fn read_mh_sdt(&mut self, table: MhSdt) -> anyhow::Result<()> {
         for service in &table.services {
-            self.registry.put_service(table.tlv_stream_id, service);
+            if let Some(registry) = &self.registry {
+                registry.put_service(table.tlv_stream_id, service);
+            }
         }
 
         Ok(())

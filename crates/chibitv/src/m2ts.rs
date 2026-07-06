@@ -3,14 +3,16 @@ use std::collections::BTreeMap;
 use std::sync::RwLock;
 
 use bytes::{Buf, Bytes};
-use mpeg2ts::es::StreamId;
+use mpeg2ts::es::{StreamId, StreamType};
 use mpeg2ts::pes::PesHeader;
 use mpeg2ts::time::Timestamp;
 use mpeg2ts::ts::payload::{Pat, Pes, Pmt};
 use mpeg2ts::ts::{
-    ContinuityCounter, EsInfo, Pid, ProgramAssociation, TransportScramblingControl, TsHeader,
-    TsPacket, TsPayload, VersionNumber, WriteTsPacket,
+    ContinuityCounter, Descriptor, EsInfo, Pid, ProgramAssociation, TransportScramblingControl,
+    TsHeader, TsPacket, TsPayload, VersionNumber, WriteTsPacket,
 };
+
+use crate::remux::{Mux, TrackType};
 
 // Multi-program in a stream won't be needed, I believe.
 const PROGRAM_NUM: u16 = 0x0001;
@@ -65,14 +67,16 @@ fn default_streams() -> BTreeMap<Pid, RwLock<M2tsStream>> {
 
 pub struct M2tsMuxer<W> {
     writer: W,
+    track_map: BTreeMap<u16, Pid>,
     streams: BTreeMap<Pid, RwLock<M2tsStream>>,
     last_pat_pmt_ts: Option<f64>,
 }
 
-impl<W: WriteTsPacket> M2tsMuxer<W> {
+impl<W: WriteTsPacket + Send + Sync> M2tsMuxer<W> {
     pub fn new(writer: W) -> Self {
         Self {
             writer,
+            track_map: BTreeMap::new(),
             streams: default_streams(),
             last_pat_pmt_ts: None,
         }
@@ -212,9 +216,64 @@ impl<W: WriteTsPacket> M2tsMuxer<W> {
 
         Ok(())
     }
+}
 
-    pub fn clear(&mut self) {
-        self.streams = default_streams();
-        self.last_pat_pmt_ts = None;
+impl<W: WriteTsPacket + Send + Sync> Mux for M2tsMuxer<W> {
+    fn add_track(&mut self, track_id: u16, ty: TrackType) {
+        // Already added streams.
+        // TODO: Support video-only or audio-only mux
+        // TODO: Compare the streams and handle changes?
+        if self.track_map.len() >= 2 {
+            return;
+        }
+
+        match ty {
+            TrackType::H265 => {
+                let pid = Pid::new(0x1011).unwrap();
+
+                self.track_map.insert(track_id, pid);
+                self.add_stream(
+                    pid,
+                    StreamId::new_video(0xe0).unwrap(),
+                    EsInfo {
+                        elementary_pid: pid,
+                        stream_type: StreamType::H265,
+                        descriptors: vec![Descriptor {
+                            tag: 0x05,
+                            data: b"HEVC".to_vec(),
+                        }],
+                    },
+                );
+            }
+            TrackType::AacLatm => {
+                let pid = Pid::new(0x1100).unwrap();
+
+                self.track_map.insert(track_id, pid);
+                self.add_stream(
+                    pid,
+                    StreamId::new_audio(0xc0).unwrap(),
+                    EsInfo {
+                        elementary_pid: pid,
+                        stream_type: StreamType::Mpeg4LoasMultiFormatFramedAudio, // AAC-LATM
+                        descriptors: vec![],
+                    },
+                );
+            }
+        }
+    }
+
+    fn write_sample(
+        &mut self,
+        track_id: u16,
+        data: Bytes,
+        dts: Option<f64>,
+        pts: Option<f64>,
+    ) -> anyhow::Result<()> {
+        let Some(pid) = self.track_map.get(&track_id).copied() else {
+            // The stream is not yet added, or unrecognisable.
+            return Ok(());
+        };
+
+        self.write_pes(pid, data, dts, pts)
     }
 }
