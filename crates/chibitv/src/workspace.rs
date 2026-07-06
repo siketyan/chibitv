@@ -73,14 +73,6 @@ impl Workspace {
             .map_err(WorkspaceError::Internal)
     }
 
-    pub fn get_m2ts_stream(&self, stream_id: u32) -> Option<BroadcastStream<Bytes>> {
-        let streams = self.streams.read().unwrap();
-        let stream = streams.get_stream(stream_id)?;
-        let rx = stream.subscribe_m2ts();
-
-        Some(BroadcastStream::new(rx))
-    }
-
     pub fn get_fmp4_stream(
         &self,
         stream_id: u32,

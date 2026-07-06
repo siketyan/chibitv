@@ -26,7 +26,6 @@ use crate::workspace::{Workspace, WorkspaceError};
         get_events,
         get_stream,
         update_stream,
-        get_m2ts_stream,
         get_fmp4_stream,
     )
 )]
@@ -38,7 +37,6 @@ pub async fn serve(addr: SocketAddr, state: Arc<Workspace>) -> anyhow::Result<()
         .route("/services", get(get_services))
         .route("/services/{id}/events", get(get_events))
         .route("/streams/{id}", get(get_stream).patch(update_stream))
-        .route("/streams/{id}/stream.ts", get(get_m2ts_stream))
         .route("/streams/{id}/stream.mp4", get(get_fmp4_stream))
         .route("/openapi.json", get(async || Json(ApiDoc::openapi())))
         .with_state(state);
@@ -231,28 +229,6 @@ async fn update_stream(
     }
 
     Ok(())
-}
-
-#[utoipa::path(
-    get,
-    path = "/streams/{id}/stream.ts",
-    responses((status = 200, content_type = "video/mp2t"), (status = NOT_FOUND)),
-    params(("id" = u32, Path)),
-)]
-async fn get_m2ts_stream(
-    State(workspace): State<Arc<Workspace>>,
-    Path(stream_id): Path<u32>,
-) -> Result<Response, StatusCode> {
-    let stream = workspace
-        .get_m2ts_stream(stream_id)
-        .ok_or(StatusCode::NOT_FOUND)?
-        .filter_map(|data| data.ok().map(Frame::data))
-        .map(Ok::<_, Infallible>);
-
-    Ok(Response::builder()
-        .header("Content-Type", "video/mp2t")
-        .body(Body::new(StreamBody::new(stream)))
-        .unwrap())
 }
 
 #[utoipa::path(

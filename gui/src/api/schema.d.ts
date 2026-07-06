@@ -68,22 +68,6 @@ export interface paths {
         patch: operations["update_stream"];
         trace?: never;
     };
-    "/streams/{id}/stream.ts": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["get_m2ts_stream"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/streams/{id}/stream.mp4": {
         parameters: {
             query?: never;
@@ -257,33 +241,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-            404: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    get_m2ts_stream: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: number;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "video/mp2t": unknown;
-                };
             };
             404: {
                 headers: {
