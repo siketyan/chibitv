@@ -1,0 +1,3 @@
+[submodule "third_party/mpeg2ts"]
+	path = third_party/mpeg2ts
+	url = https://github.com/siketyan/mpeg2ts.git

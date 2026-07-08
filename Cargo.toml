@@ -1,10 +1,12 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
+exclude = ["third_party/mpeg2ts"]
 
 [patch.crates-io]
 cros-codecs = { git = "https://github.com/siketyan/cros-codecs.git", rev = "e6e1281" }
 dvbv5-sys = { git = "https://gitlab.com/kazuki08241/rust-libdvbv5-sys.git", rev = "7cab8db" }
+mpeg2ts = { path = "third_party/mpeg2ts" }
 
 [profile.release-with-debug]
 debug    = true
