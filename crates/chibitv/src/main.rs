@@ -2,7 +2,6 @@ mod aac;
 mod channel;
 mod command;
 mod config;
-mod descrambler;
 mod hevc;
 mod m2ts;
 mod mmt;

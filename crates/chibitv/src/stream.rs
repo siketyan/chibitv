@@ -8,8 +8,9 @@ use bytes::Bytes;
 use tokio::sync::broadcast::{Receiver, Sender, channel};
 use tracing::info;
 
+use chibitv_b61::Descrambler;
+
 use crate::channel::Channel;
-use crate::descrambler::Descrambler;
 use crate::mmt::MmtDemuxer;
 use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
 use crate::registry::Registry;

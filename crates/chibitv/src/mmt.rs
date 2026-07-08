@@ -17,8 +17,8 @@ use chibitv_b60::mmtp::{
 };
 use chibitv_b60::table::Table;
 use chibitv_b60::tlv::{TlvPacket, TlvPacketType};
+use chibitv_b61::Descrambler;
 
-use crate::descrambler::Descrambler;
 use crate::hevc::HevcParser;
 use crate::remux::{Demux, Packet, TrackType};
 

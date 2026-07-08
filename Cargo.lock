@@ -242,18 +242,15 @@ dependencies = [
 name = "chibitv"
 version = "0.1.0"
 dependencies = [
- "aes",
  "anyhow",
  "axum",
  "bitstream-io",
  "bytes",
- "chibitv_b25",
  "chibitv_b60",
  "chibitv_b61",
  "chrono",
  "clap",
  "cros-codecs",
- "ctr",
  "dvbv5-sys",
  "hex",
  "http-body",
@@ -261,9 +258,7 @@ dependencies = [
  "libc",
  "mpeg2ts",
  "papaya",
- "rand",
  "serde",
- "sha2",
  "shiguredo_mp4",
  "tokio",
  "tokio-stream",

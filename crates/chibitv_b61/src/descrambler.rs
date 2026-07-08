@@ -1,18 +1,19 @@
+use std::error::Error;
+use std::fmt::{Debug, Display, Formatter};
+use std::sync::{Arc, Mutex, mpsc};
+
 use aes::Aes128;
 use anyhow::{Result, anyhow};
 use bytes::{Buf, Bytes};
+use chibitv_b60::mmtp::MmtpPacket;
 use ctr::Ctr128BE;
 use ctr::cipher::{KeyIvInit, StreamCipher};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
-use std::error::Error;
-use std::fmt::{Display, Formatter};
-use std::sync::{Arc, Mutex, mpsc};
 use tracing::{debug, error, info};
 
-use chibitv_b60::mmtp::MmtpPacket;
-use chibitv_b61::{CasModule as CasModuleInner, EncryptionFlag};
+use crate::{CasModule as CasModuleInner, EncryptionFlag};
 
 #[derive(Copy, Clone, Debug)]
 pub struct NoDecryptionKeyError;
@@ -32,13 +33,13 @@ struct DecryptionKey {
 }
 
 #[derive(Debug)]
-pub struct CasModule {
+pub struct B61CasModule {
     inner: CasModuleInner,
     master_key: [u8; 32],
     rng: StdRng,
 }
 
-impl CasModule {
+impl B61CasModule {
     pub fn open(master_key: [u8; 32]) -> Result<Self> {
         Self::init(CasModuleInner::open()?, master_key)
     }
@@ -93,7 +94,7 @@ impl CasModule {
     }
 }
 
-pub type SharedCasModule = Arc<Mutex<CasModule>>;
+pub type SharedCasModule = Arc<Mutex<B61CasModule>>;
 
 type EcmSender = mpsc::SyncSender<[u8; 148]>;
 type KeyReceiver = mpsc::Receiver<([u8; 148], Result<DecryptionKey>)>;
@@ -108,7 +109,6 @@ pub struct Descrambler {
 }
 
 impl Descrambler {
-    /// Initialize a decoder using the CAS module and the master key.
     pub fn init(cas: SharedCasModule, is_async: bool) -> Result<Self> {
         let (ecm_tx, ecm_rx) = mpsc::sync_channel(16);
         let (key_tx, key_rx) = mpsc::sync_channel(16);

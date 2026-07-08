@@ -4,9 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chibitv_b60 = { path = "../chibitv_b60" }
+
+aes = "0.9.1"
 anyhow = "1.0.103"
 apdu-core = "0.4.0"
 byteorder = "1.5.0"
+bytes = "1.12.0"
+ctr = "0.10.1"
+hex = "0.4.3"
 pcsc = "2.9.0"
+rand = "0.10.2"
+sha2 = "0.11.0"
 strum = { version = "0.28.0", features = ["derive"] }
 tracing = "0.1.44"

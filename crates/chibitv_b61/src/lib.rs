@@ -1,8 +1,10 @@
 //! Basic implementation for the ARIB STD-B61 standard.
 
 mod cas;
+mod descrambler;
 
 pub use cas::CasModule;
+pub use descrambler::{B61CasModule, Descrambler, NoDecryptionKeyError, SharedCasModule};
 
 use strum::FromRepr;
 
