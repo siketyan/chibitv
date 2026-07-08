@@ -1,3 +1,5 @@
+use mpeg2ts::ts::TransportScramblingControl;
+
 #[derive(Clone, Copy, Debug)]
 struct CoreData {
     l: u32,
@@ -47,14 +49,18 @@ impl Multi2 {
         ]);
     }
 
-    pub(crate) fn decrypt(&self, scrambling_control: u8, data: &mut [u8]) -> anyhow::Result<bool> {
+    pub(crate) fn decrypt(
+        &self,
+        scrambling_control: TransportScramblingControl,
+        data: &mut [u8],
+    ) -> anyhow::Result<bool> {
         let Some(work_keys) = self.work_keys else {
             return Ok(false);
         };
 
         let work_key = match scrambling_control {
-            0b10 => work_keys[1],
-            0b11 => work_keys[0],
+            TransportScramblingControl::ScrambledWithOddKey => work_keys[0],
+            TransportScramblingControl::ScrambledWithEvenKey => work_keys[1],
             _ => return Ok(true),
         };
 

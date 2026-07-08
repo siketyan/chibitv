@@ -275,6 +275,7 @@ dependencies = [
  "anyhow",
  "apdu-core",
  "byteorder",
+ "mpeg2ts",
  "pcsc",
  "strum",
  "tracing",

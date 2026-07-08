@@ -7,6 +7,7 @@ edition = "2024"
 anyhow = "1.0.103"
 apdu-core = "0.4.0"
 byteorder = "1.5.0"
+mpeg2ts = "0.6.0"
 pcsc = "2.9.0"
 strum = { version = "0.28.0", features = ["derive"] }
 tracing = "0.1.44"

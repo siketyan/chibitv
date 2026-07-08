@@ -1,12 +1,12 @@
 use std::fmt::{Debug, Formatter};
 use std::sync::Mutex;
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
+use mpeg2ts::ts::payload::Bytes;
+use mpeg2ts::ts::{TransportScramblingControl, TsPacket, TsPayload};
 
 use crate::CasModule;
 use crate::multi2::Multi2;
-
-const TS_PACKET_SIZE: usize = 188;
 
 pub struct B25Descrambler {
     cas: Mutex<CasModule>,
@@ -46,41 +46,54 @@ impl B25Descrambler {
         Ok(())
     }
 
-    pub fn descramble_packet(&mut self, packet: &mut [u8]) -> Result<bool> {
-        if packet.len() != TS_PACKET_SIZE {
-            return Err(anyhow!("invalid TS packet size"));
+    pub fn descramble(&mut self, packet: &mut TsPacket) -> Result<()> {
+        let scrambling_control = packet.header.transport_scrambling_control;
+        if scrambling_control == TransportScramblingControl::NotScrambled {
+            return Ok(());
         }
 
-        let scrambling_control = (packet[3] >> 6) & 0x03;
-        if scrambling_control == 0 {
-            return Ok(true);
+        let Some(payload) = &mut packet.payload else {
+            return Ok(());
+        };
+
+        match payload {
+            TsPayload::PesStart(pes) => {
+                if let Some(data) =
+                    self.descramble_payload(scrambling_control, pes.data.as_ref())?
+                {
+                    pes.data = data;
+                }
+            }
+            TsPayload::PesContinuation(data) | TsPayload::Raw(data) => {
+                if let Some(descrambled) =
+                    self.descramble_payload(scrambling_control, data.as_ref())?
+                {
+                    *data = descrambled;
+                };
+            }
+            _ => {}
         }
 
-        let adaptation_field_control = (packet[3] >> 4) & 0x03;
-        if adaptation_field_control & 0x01 == 0 {
-            return Ok(true);
-        }
+        packet.header.transport_scrambling_control = TransportScramblingControl::NotScrambled;
 
-        let mut payload_offset = 4;
-        if adaptation_field_control & 0x02 != 0 {
-            let adaptation_field_length = usize::from(packet[payload_offset]);
-            payload_offset += 1 + adaptation_field_length;
-        }
+        Ok(())
+    }
 
-        if payload_offset >= packet.len() {
-            return Ok(true);
-        }
-
+    fn descramble_payload(
+        &self,
+        scrambling_control: TransportScramblingControl,
+        payload: &[u8],
+    ) -> Result<Option<Bytes>> {
+        let mut payload = payload.to_vec();
         if !self
             .multi2
             .lock()
             .unwrap()
-            .decrypt(scrambling_control, &mut packet[payload_offset..])?
+            .decrypt(scrambling_control, &mut payload)?
         {
-            return Ok(false);
+            return Ok(None);
         }
-        packet[3] &= 0x3f;
 
-        Ok(true)
+        Ok(Some(Bytes::new(&payload)?))
     }
 }
