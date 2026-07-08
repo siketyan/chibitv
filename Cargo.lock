@@ -246,6 +246,7 @@ dependencies = [
  "axum",
  "bitstream-io",
  "bytes",
+ "chibitv_b25",
  "chibitv_b60",
  "chibitv_b61",
  "chrono",

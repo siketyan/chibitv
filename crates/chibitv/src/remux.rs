@@ -142,10 +142,11 @@ impl<D: Demux, M: Mux> Remuxer<D, M> {
             } => {
                 self.mux.write_sample(track_id, data, dts, pts)?;
             }
-            Packet::Message(message) => match message {
-                Message::M2Section(message) => self.read_m2_section_message(message)?,
-                _ => {}
-            },
+            Packet::Message(message) => {
+                if let Message::M2Section(message) = message {
+                    self.read_m2_section_message(message)?;
+                }
+            }
         }
 
         Ok(())

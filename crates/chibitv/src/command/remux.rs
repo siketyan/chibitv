@@ -2,6 +2,7 @@ use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write, stdin, stdout};
 use std::sync::{Arc, Mutex};
 
+use chibitv_b25::B25Descrambler;
 use chibitv_b61::{B61CasModule, Descrambler};
 use clap::{Parser, ValueEnum};
 use mpeg2ts::ts::TsPacketWriter;
@@ -115,12 +116,15 @@ fn remux_mmts(
 }
 
 fn remux_m2ts(input: Box<dyn Read + Send + Sync>, options: &Options) -> anyhow::Result<()> {
+    let descrambler = B25Descrambler::open()?;
+    let demux = M2tsDemuxer::new(input, descrambler);
+
     match options.format.unwrap_or_default() {
         OutputFormat::M2ts => {
             let output = open_output(options)?;
             let writer = TsPacketWriter::new(BufWriter::new(output));
             let mux = M2tsMuxer::new(writer);
-            let mut remux = Remuxer::new(M2tsDemuxer::new(input), mux, None, None);
+            let mut remux = Remuxer::new(demux, mux, None, None);
 
             remux.run(None)
         }

@@ -15,6 +15,6 @@ stream_id = 0x40F1
 [[channels]]
 name = "Terrestrial Example"
 delivery_system = "ISDB-T"
-frequency = 473142857
+frequency = 551142857
 # Optional. Defaults to 6000000.
 bandwidth_hz = 6000000

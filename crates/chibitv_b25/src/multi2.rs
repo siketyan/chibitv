@@ -1,5 +1,7 @@
 use mpeg2ts::ts::TransportScramblingControl;
 
+use crate::descrambler::NoDecryptionKeyError;
+
 #[derive(Clone, Copy, Debug)]
 struct CoreData {
     l: u32,
@@ -53,15 +55,15 @@ impl Multi2 {
         &self,
         scrambling_control: TransportScramblingControl,
         data: &mut [u8],
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<()> {
         let Some(work_keys) = self.work_keys else {
-            return Ok(false);
+            return Err(NoDecryptionKeyError.into());
         };
 
         let work_key = match scrambling_control {
             TransportScramblingControl::ScrambledWithOddKey => work_keys[0],
             TransportScramblingControl::ScrambledWithEvenKey => work_keys[1],
-            _ => return Ok(true),
+            _ => return Ok(()),
         };
 
         let mut cbc = self.init_cbc.expect("CBC initial value is not set");
@@ -90,7 +92,7 @@ impl Multi2 {
             }
         }
 
-        Ok(true)
+        Ok(())
     }
 }
 

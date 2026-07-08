@@ -1,485 +1,232 @@
 use std::cmp::min;
-use std::collections::BTreeMap;
-use std::io::Read;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io::{self, Read};
 use std::sync::RwLock;
+use std::sync::{Arc, Mutex};
 
-use bytes::{Buf, Bytes};
+use bytes::{Buf, Bytes, BytesMut};
+use chibitv_b25::{B25Descrambler, NoDecryptionKeyError};
 use mpeg2ts::es::{StreamId, StreamType};
 use mpeg2ts::pes::PesHeader;
 use mpeg2ts::time::Timestamp;
 use mpeg2ts::ts::payload::{Pat, Pes, Pmt};
 use mpeg2ts::ts::{
-    ContinuityCounter, Descriptor, EsInfo, Pid, ProgramAssociation, TransportScramblingControl,
-    TsHeader, TsPacket, TsPayload, VersionNumber, WriteTsPacket,
+    ContinuityCounter, Descriptor, EsInfo, Pid, ProgramAssociation, ReadTsPacket,
+    TransportScramblingControl, TsHeader, TsPacket, TsPacketReader, TsPayload, VersionNumber,
+    WriteTsPacket,
 };
 
 use crate::remux::{Demux, Mux, Packet, TrackType};
 
-// Multi-program in a stream won't be needed, I believe.
-const PROGRAM_NUM: u16 = 0x0001;
-const TS_PACKET_SIZE: usize = 188;
-const TS_SYNC_BYTE: u8 = 0x47;
-
-#[inline]
-fn pat_pid() -> Pid {
-    Pid::new(0x0000).unwrap()
-}
-
-#[inline]
-fn pmt_pid() -> Pid {
-    Pid::new(0x1000).unwrap()
-}
-
-#[derive(Debug)]
-pub enum M2tsPayload {
-    Pat {
-        transport_stream_id: u16,
-        version_number: VersionNumber,
-        program_num: u16,
-        pmt_pid: u16,
-    },
-    Pmt {
-        program_num: u16,
-        pcr_pid: Option<u16>,
-        version_number: VersionNumber,
-        program_info: Vec<Descriptor>,
-        es_info: Vec<EsInfo>,
-    },
-    Raw(Vec<u8>),
-}
-
-#[derive(Debug)]
-pub struct M2tsPacket {
-    pub pid: u16,
-    pub payload: M2tsPayload,
-}
-
-#[derive(Debug)]
-struct PesBuffer {
-    data: Vec<u8>,
-    dts: Option<f64>,
-    pts: Option<f64>,
-}
-
-#[derive(Debug)]
-struct PesStart {
-    data: Vec<u8>,
-    dts: Option<f64>,
-    pts: Option<f64>,
-}
-
 #[derive(Debug, Default)]
+struct PesBuffer {
+    data: BytesMut,
+    dts: Option<f64>,
+    pts: Option<f64>,
+}
+
+#[derive(Debug)]
 struct TrackState {
-    es_info: Option<EsInfo>,
-    track_type: Option<TrackType>,
-    track_emitted: bool,
-    pes: Option<PesBuffer>,
+    pes: PesBuffer,
 }
 
 #[derive(Debug)]
 pub struct M2tsDemuxer<R> {
-    reader: R,
-    pending: Vec<u8>,
-    aligned: bool,
-    transport_stream_id: u16,
-    pat_version_number: VersionNumber,
-    program_num: u16,
-    pmt_pid: Option<u16>,
-    pcr_pid: Option<u16>,
-    pmt_version_number: VersionNumber,
-    program_info: Vec<Descriptor>,
-    psi_buffers: BTreeMap<u16, Vec<u8>>,
-    tracks: BTreeMap<u16, TrackState>,
-    eof_flushed: bool,
+    reader: TsPacketReader<AlignedTsReader<R>>,
+    descrambler: Arc<Mutex<B25Descrambler>>,
+    ecm_pids: BTreeSet<Pid>,
+    tracks: BTreeMap<Pid, TrackState>,
 }
 
 impl<R: Read> M2tsDemuxer<R> {
-    pub fn new(reader: R) -> Self {
+    pub fn new(reader: R, descrambler: B25Descrambler) -> Self {
+        let descrambler = Arc::new(Mutex::new(descrambler));
         Self {
-            reader,
-            pending: Vec::new(),
-            aligned: false,
-            transport_stream_id: PROGRAM_NUM,
-            pat_version_number: VersionNumber::default(),
-            program_num: PROGRAM_NUM,
-            pmt_pid: None,
-            pcr_pid: None,
-            pmt_version_number: VersionNumber::default(),
-            program_info: Vec::new(),
-            psi_buffers: BTreeMap::new(),
+            reader: TsPacketReader::new(AlignedTsReader::new(reader)),
+            descrambler,
+            ecm_pids: BTreeSet::new(),
             tracks: BTreeMap::new(),
-            eof_flushed: false,
         }
     }
 
-    pub fn read(&mut self) -> anyhow::Result<Option<Vec<M2tsPacket>>> {
-        while let Some(packet) = self.read_packet()? {
-            let header = TsPacketHeader::parse(&packet)?;
-            if header.pid == 0x0000 {
-                return Ok(Some(self.read_pat(&packet, &header)?.into_iter().collect()));
-            }
-
-            if Some(header.pid) == self.pmt_pid {
-                return Ok(Some(self.read_pmt(&packet, &header)?.into_iter().collect()));
-            }
-
-            if self.tracks.contains_key(&header.pid) {
-                return Ok(Some(vec![M2tsPacket {
-                    pid: header.pid,
-                    payload: M2tsPayload::Raw(packet),
-                }]));
-            }
-
-            return Ok(Some(vec![]));
+    fn read_ecm(&mut self, section: Bytes) -> anyhow::Result<()> {
+        if section.first().copied() != Some(0x82) {
+            return Ok(());
         }
 
-        Ok(None)
+        let section_syntax_indicator = section[1] & 0x80 != 0;
+        let data_offset = if section_syntax_indicator { 8 } else { 3 };
+        if section.len() < data_offset + 4 {
+            return Ok(());
+        }
+
+        let ecm_payload = &section[data_offset..section.len() - 4];
+        self.descrambler.lock().unwrap().push_ecm(ecm_payload)
     }
 
-    fn read_packet(&mut self) -> anyhow::Result<Option<Vec<u8>>> {
-        if !self.aligned {
-            let mut buffer = vec![0; TS_PACKET_SIZE * 8192];
-            let read = self.reader.read(&mut buffer)?;
-            if read == 0 {
-                return Ok(None);
-            }
-            buffer.truncate(read);
-
-            let Some(offset) = find_sync_offset(&buffer) else {
-                anyhow::bail!("Could not find MPEG-TS sync byte");
-            };
-
-            self.pending.extend_from_slice(&buffer[offset..]);
-            self.aligned = true;
+    fn add_ecm_pid(&mut self, pid: Pid) {
+        if self.ecm_pids.insert(pid) {
+            self.reader.add_section_pid(pid);
         }
-
-        while self.pending.len() < TS_PACKET_SIZE {
-            let mut buffer = [0; TS_PACKET_SIZE * 32];
-            let read = self.reader.read(&mut buffer)?;
-            if read == 0 {
-                return Ok(None);
-            }
-
-            self.pending.extend_from_slice(&buffer[..read]);
-        }
-
-        let packet = self.pending.drain(..TS_PACKET_SIZE).collect::<Vec<_>>();
-        if packet[0] != TS_SYNC_BYTE {
-            anyhow::bail!("MPEG-TS sync byte mismatch");
-        }
-
-        Ok(Some(packet))
-    }
-
-    fn read_pat(
-        &mut self,
-        packet: &[u8],
-        header: &TsPacketHeader,
-    ) -> anyhow::Result<Option<M2tsPacket>> {
-        let Some(section) = self.read_psi_section(packet, header)? else {
-            return Ok(None);
-        };
-        if section.first().copied() != Some(0x00) {
-            return Ok(None);
-        }
-
-        let section_length = section_length(&section)?;
-        let end = 3 + section_length;
-        if section.len() < end || end < 12 {
-            return Ok(None);
-        }
-
-        self.transport_stream_id = u16::from_be_bytes([section[3], section[4]]);
-        self.pat_version_number = VersionNumber::from_u8((section[5] >> 1) & 0x1f)?;
-
-        let mut pmt_pid = None;
-        let entries_end = end - 4;
-        for entry in section[8..entries_end].chunks_exact(4) {
-            let program_number = u16::from_be_bytes([entry[0], entry[1]]);
-            if program_number == 0 {
-                continue;
-            }
-
-            let pid = u16::from_be_bytes([entry[2] & 0x1f, entry[3]]);
-            self.program_num = program_number;
-            self.pmt_pid = Some(pid);
-            self.tracks.entry(pid).or_default();
-            pmt_pid = Some(pid);
-            break;
-        }
-
-        let Some(pmt_pid) = pmt_pid else {
-            return Ok(None);
-        };
-
-        Ok(Some(M2tsPacket {
-            pid: header.pid,
-            payload: M2tsPayload::Pat {
-                transport_stream_id: self.transport_stream_id,
-                version_number: self.pat_version_number,
-                program_num: self.program_num,
-                pmt_pid,
-            },
-        }))
-    }
-
-    fn read_pmt(
-        &mut self,
-        packet: &[u8],
-        header: &TsPacketHeader,
-    ) -> anyhow::Result<Option<M2tsPacket>> {
-        let Some(section) = self.read_psi_section(packet, header)? else {
-            return Ok(None);
-        };
-        if section.first().copied() != Some(0x02) {
-            return Ok(None);
-        }
-
-        let section_length = section_length(&section)?;
-        let end = 3 + section_length;
-        if section.len() < end || end < 16 {
-            return Ok(None);
-        }
-
-        self.program_num = u16::from_be_bytes([section[3], section[4]]);
-        self.pmt_version_number = VersionNumber::from_u8((section[5] >> 1) & 0x1f)?;
-
-        let pcr_pid = u16::from_be_bytes([section[8] & 0x1f, section[9]]);
-        self.pcr_pid = (pcr_pid != 0x1fff).then_some(pcr_pid);
-        if let Some(pcr_pid) = self.pcr_pid {
-            self.tracks.entry(pcr_pid).or_default();
-        }
-
-        let program_info_length = u16::from_be_bytes([section[10] & 0x0f, section[11]]) as usize;
-        self.program_info = read_descriptors(&section[12..12 + program_info_length])?;
-        let mut selected_es_info = Vec::new();
-
-        let mut offset = 12 + program_info_length;
-        let entries_end = end - 4;
-        let mut has_video = false;
-        let mut has_audio = false;
-
-        while offset + 5 <= entries_end {
-            let stream_type = section[offset];
-            let pid = u16::from_be_bytes([section[offset + 1] & 0x1f, section[offset + 2]]);
-            let es_info_length =
-                u16::from_be_bytes([section[offset + 3] & 0x0f, section[offset + 4]]) as usize;
-
-            if !has_video && is_video_stream_type(stream_type) {
-                let es_info = EsInfo {
-                    stream_type: StreamType::from_u8(stream_type)?,
-                    elementary_pid: Pid::new(pid).unwrap(),
-                    descriptors: read_descriptors(
-                        &section[offset + 5..offset + 5 + es_info_length],
-                    )?,
-                };
-                let state = self.tracks.entry(pid).or_default();
-                state.track_type = track_type_from_stream_type(es_info.stream_type);
-                state.es_info = Some(es_info.clone());
-                selected_es_info.push(es_info);
-                has_video = true;
-            } else if !has_audio && is_audio_stream_type(stream_type) {
-                let es_info = EsInfo {
-                    stream_type: StreamType::from_u8(stream_type)?,
-                    elementary_pid: Pid::new(pid).unwrap(),
-                    descriptors: read_descriptors(
-                        &section[offset + 5..offset + 5 + es_info_length],
-                    )?,
-                };
-                let state = self.tracks.entry(pid).or_default();
-                state.track_type = track_type_from_stream_type(es_info.stream_type);
-                state.es_info = Some(es_info.clone());
-                selected_es_info.push(es_info);
-                has_audio = true;
-            }
-
-            offset += 5 + es_info_length;
-        }
-
-        if selected_es_info.is_empty() {
-            return Ok(None);
-        }
-
-        Ok(Some(M2tsPacket {
-            pid: header.pid,
-            payload: M2tsPayload::Pmt {
-                program_num: self.program_num,
-                pcr_pid: self.pcr_pid,
-                version_number: self.pmt_version_number,
-                program_info: self.program_info.clone(),
-                es_info: selected_es_info,
-            },
-        }))
-    }
-
-    fn read_psi_section(
-        &mut self,
-        packet: &[u8],
-        header: &TsPacketHeader,
-    ) -> anyhow::Result<Option<Vec<u8>>> {
-        let Some(payload_offset) = payload_offset(packet, header) else {
-            return Ok(None);
-        };
-
-        let payload = &packet[payload_offset..];
-        let buffer = self.psi_buffers.entry(header.pid).or_default();
-
-        if header.payload_unit_start_indicator {
-            let Some(pointer_field) = payload.first().copied() else {
-                return Ok(None);
-            };
-
-            let section_offset = 1 + usize::from(pointer_field);
-            if section_offset >= payload.len() {
-                return Ok(None);
-            }
-
-            buffer.clear();
-            buffer.extend_from_slice(&payload[section_offset..]);
-        } else if !buffer.is_empty() {
-            buffer.extend_from_slice(payload);
-        }
-
-        if buffer.len() < 3 {
-            return Ok(None);
-        }
-
-        let section_length = section_length(buffer)?;
-        let end = 3 + section_length;
-        if buffer.len() < end {
-            return Ok(None);
-        }
-
-        Ok(Some(buffer[..end].to_vec()))
     }
 }
 
 impl<R: Read> Demux for M2tsDemuxer<R> {
     fn read(&mut self) -> anyhow::Result<Option<Vec<Packet>>> {
+        let mut out = Vec::new();
         loop {
-            let Some(packets) = M2tsDemuxer::read(self)? else {
-                if self.eof_flushed {
-                    return Ok(None);
-                }
+            let mut packet = match self.reader.read_ts_packet() {
+                Ok(Some(packet)) => packet,
+                Ok(None) => break,
+                Err(_) => {
+                    if out.is_empty() {
+                        continue;
+                    }
 
-                self.eof_flushed = true;
-                let packets = self.flush_pes_buffers();
-                return Ok((!packets.is_empty()).then_some(packets));
+                    return Ok(Some(out));
+                }
             };
 
-            let mut out = Vec::new();
-            for packet in packets {
-                match packet.payload {
-                    M2tsPayload::Pat {
-                        transport_stream_id,
-                        version_number,
-                        program_num,
-                        pmt_pid,
-                    } => {
-                        let _ = (transport_stream_id, version_number, program_num, pmt_pid);
+            let pid = packet.header.pid;
+            if packet.header.transport_scrambling_control
+                != TransportScramblingControl::NotScrambled
+            {
+                let result = self.descrambler.lock().unwrap().descramble(&mut packet);
+                if let Err(error) = result {
+                    if error.is::<NoDecryptionKeyError>() {
+                        continue;
                     }
-                    M2tsPayload::Pmt {
-                        program_num,
-                        pcr_pid,
-                        version_number,
-                        program_info,
-                        es_info,
-                    } => {
-                        let _ = (program_num, pcr_pid, version_number, program_info);
-                        for info in es_info {
-                            let track_id = info.elementary_pid.as_u16();
-                            let Some(state) = self.tracks.get_mut(&track_id) else {
-                                continue;
-                            };
-                            let Some(ty) = state.track_type else {
-                                continue;
-                            };
-                            if !state.track_emitted {
-                                state.track_emitted = true;
-                                out.push(Packet::Track { track_id, ty });
-                            }
-                        }
-                    }
-                    M2tsPayload::Raw(data) => {
-                        if let Some(sample) = self.read_pes_packet(packet.pid, &data)? {
-                            out.push(sample);
-                        }
-                    }
+
+                    return Err(error);
+                }
+
+                if self.tracks.contains_key(&pid) {
+                    parse_pes_payload(&mut packet)?;
                 }
             }
+
+            let Some(payload) = packet.payload else {
+                continue;
+            };
+
+            match payload {
+                TsPayload::Pmt(pmt) => {
+                    let ca_system_id = self.descrambler.lock().unwrap().ca_system_id();
+
+                    for info in pmt.program_info {
+                        if let Some(pid) = ca_descriptor_pid(&info, ca_system_id)? {
+                            self.add_ecm_pid(pid);
+                        }
+                    }
+
+                    let mut selected_video = None;
+                    let mut selected_audio = None;
+
+                    for info in pmt.es_info {
+                        let pid = info.elementary_pid;
+                        let Some(track_type) = track_type_from_stream_type(info.stream_type) else {
+                            continue;
+                        };
+                        for descriptor in &info.descriptors {
+                            if let Some(pid) = ca_descriptor_pid(descriptor, ca_system_id)? {
+                                self.add_ecm_pid(pid);
+                            }
+                        }
+                        if self.tracks.contains_key(&pid) {
+                            continue;
+                        }
+
+                        if is_video_track_type(track_type) {
+                            if matches!(track_type, TrackType::Mpeg2Video) {
+                                selected_video = Some((pid, track_type));
+                            }
+                        } else if is_audio_track_type(track_type) && selected_audio.is_none() {
+                            selected_audio = Some((pid, track_type));
+                        }
+                    }
+
+                    if selected_video.is_none() {
+                        continue;
+                    }
+
+                    for (pid, track_type) in [selected_video, selected_audio].into_iter().flatten()
+                    {
+                        self.tracks.insert(
+                            pid,
+                            TrackState {
+                                pes: PesBuffer::default(),
+                            },
+                        );
+                        out.push(Packet::Track {
+                            track_id: pid.as_u16(),
+                            ty: track_type,
+                        });
+                    }
+                }
+                TsPayload::Section(section) => {
+                    if self.ecm_pids.contains(&pid) {
+                        self.read_ecm(Bytes::from(section.data.to_vec()))?;
+                    }
+                }
+                TsPayload::PesStart(pes) => {
+                    let Some(state) = self.tracks.get_mut(&pid) else {
+                        continue;
+                    };
+
+                    let buffer = std::mem::take(&mut state.pes);
+                    let finished = (!buffer.data.is_empty()).then_some(Packet::Sample {
+                        track_id: pid.as_u16(),
+                        data: buffer.data.freeze(),
+                        dts: buffer.dts,
+                        pts: buffer.pts,
+                    });
+
+                    state.pes = PesBuffer {
+                        data: BytesMut::from(Bytes::from(pes.data.to_vec())),
+                        dts: pes.header.dts.map(timestamp_to_seconds),
+                        pts: pes.header.pts.map(timestamp_to_seconds),
+                    };
+
+                    if let Some(sample) = finished {
+                        out.push(sample);
+                    }
+                }
+                TsPayload::PesContinuation(payload) => {
+                    let Some(state) = self.tracks.get_mut(&pid) else {
+                        continue;
+                    };
+                    if state.pes.data.is_empty() {
+                        continue;
+                    }
+
+                    state.pes.data.extend_from_slice(payload.as_ref());
+                }
+                _ => {}
+            };
 
             if !out.is_empty() {
                 return Ok(Some(out));
             }
         }
-    }
-}
 
-impl<R: Read> M2tsDemuxer<R> {
-    fn read_pes_packet(&mut self, pid: u16, packet: &[u8]) -> anyhow::Result<Option<Packet>> {
-        let Some(track_type) = self.tracks.get(&pid).and_then(|state| state.track_type) else {
-            return Ok(None);
-        };
-
-        let header = TsPacketHeader::parse(packet)?;
-        let Some(payload_offset) = payload_offset(packet, &header) else {
-            return Ok(None);
-        };
-        let payload = &packet[payload_offset..];
-
-        if header.payload_unit_start_indicator {
-            let finished = self
-                .tracks
-                .get_mut(&pid)
-                .and_then(|state| state.pes.take())
-                .and_then(|buffer| {
-                    (!buffer.data.is_empty()).then_some(Packet::Sample {
-                        track_id: pid,
-                        data: Bytes::from(buffer.data),
-                        dts: buffer.dts,
-                        pts: buffer.pts,
-                    })
-                });
-
-            if let Some(pes) = parse_pes_start(payload)? {
-                if let Some(state) = self.tracks.get_mut(&pid) {
-                    state.pes = Some(PesBuffer {
-                        data: pes.data,
-                        dts: pes.dts,
-                        pts: pes.pts,
-                    });
-                    state.track_type = Some(track_type);
-                }
-            } else {
-                if let Some(state) = self.tracks.get_mut(&pid) {
-                    state.track_type = None;
-                    state.pes = None;
-                }
-                return Ok(None);
-            }
-
-            return Ok(finished);
-        }
-
-        if let Some(buffer) = self
-            .tracks
-            .get_mut(&pid)
-            .and_then(|state| state.pes.as_mut())
-        {
-            buffer.data.extend_from_slice(payload);
+        let flushed = self.flush_pes_buffers();
+        if !flushed.is_empty() {
+            return Ok(Some(flushed));
         }
 
         Ok(None)
     }
+}
 
+impl<R: Read> M2tsDemuxer<R> {
     fn flush_pes_buffers(&mut self) -> Vec<Packet> {
         self.tracks
             .iter_mut()
             .filter_map(|(&track_id, state)| {
-                let buffer = state.pes.take()?;
+                let buffer = std::mem::take(&mut state.pes);
                 (!buffer.data.is_empty()).then_some(Packet::Sample {
-                    track_id,
-                    data: Bytes::from(buffer.data),
+                    track_id: track_id.as_u16(),
+                    data: buffer.data.freeze(),
                     dts: buffer.dts,
                     pts: buffer.pts,
                 })
@@ -489,49 +236,101 @@ impl<R: Read> M2tsDemuxer<R> {
 }
 
 #[derive(Debug)]
-struct TsPacketHeader {
-    pid: u16,
-    payload_unit_start_indicator: bool,
-    adaptation_field_control: u8,
+struct AlignedTsReader<R> {
+    inner: R,
+    pending: Vec<u8>,
+    aligned: bool,
 }
 
-impl TsPacketHeader {
-    fn parse(packet: &[u8]) -> anyhow::Result<Self> {
-        if packet.len() != TS_PACKET_SIZE || packet[0] != TS_SYNC_BYTE {
-            anyhow::bail!("Invalid MPEG-TS packet");
+impl<R: Read> AlignedTsReader<R> {
+    fn new(inner: R) -> Self {
+        Self {
+            inner,
+            pending: Vec::new(),
+            aligned: false,
+        }
+    }
+
+    fn align(&mut self) -> io::Result<()> {
+        if self.aligned {
+            return Ok(());
         }
 
-        Ok(Self {
-            pid: (u16::from(packet[1] & 0x1f) << 8) | u16::from(packet[2]),
-            payload_unit_start_indicator: packet[1] & 0x40 != 0,
-            adaptation_field_control: (packet[3] >> 4) & 0x03,
-        })
+        let mut buffer = vec![0; TsPacket::SIZE * 8192];
+        loop {
+            let read = self.inner.read(&mut buffer)?;
+            if read == 0 {
+                self.aligned = true;
+                return Ok(());
+            }
+
+            if let Some(offset) = find_sync_offset(&buffer[..read]) {
+                self.pending.extend_from_slice(&buffer[offset..read]);
+                self.aligned = true;
+                return Ok(());
+            }
+        }
     }
 }
 
-fn payload_offset(packet: &[u8], header: &TsPacketHeader) -> Option<usize> {
-    if header.adaptation_field_control & 0x01 == 0 {
-        return None;
-    }
+impl<R: Read> Read for AlignedTsReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
 
-    let mut offset = 4;
-    if header.adaptation_field_control & 0x02 != 0 {
-        let adaptation_field_length = usize::from(*packet.get(offset)?);
-        offset += 1 + adaptation_field_length;
-    }
+        self.align()?;
 
-    (offset < packet.len()).then_some(offset)
+        let pending_len = self.pending.len().min(buf.len());
+        if pending_len > 0 {
+            buf[..pending_len].copy_from_slice(&self.pending[..pending_len]);
+            self.pending.drain(..pending_len);
+
+            if pending_len == buf.len() {
+                return Ok(pending_len);
+            }
+        }
+
+        let read = self.inner.read(&mut buf[pending_len..])?;
+
+        Ok(pending_len + read)
+    }
 }
 
-fn section_length(section: &[u8]) -> anyhow::Result<usize> {
-    if section.len() < 3 {
-        anyhow::bail!("PSI section is too short");
+fn parse_pes_payload(packet: &mut TsPacket) -> anyhow::Result<()> {
+    let Some(TsPayload::Raw(payload)) = packet.payload.take() else {
+        return Ok(());
+    };
+
+    packet.payload = Some(if packet.header.payload_unit_start_indicator {
+        TsPayload::PesStart(Pes::read_from(payload.as_ref())?)
+    } else {
+        TsPayload::PesContinuation(payload)
+    });
+
+    Ok(())
+}
+
+fn timestamp_to_seconds(timestamp: Timestamp) -> f64 {
+    timestamp.as_u64() as f64 / 90_000_f64
+}
+
+fn ca_descriptor_pid(descriptor: &Descriptor, ca_system_id: u16) -> anyhow::Result<Option<Pid>> {
+    if descriptor.tag != 0x09 || descriptor.data.len() < 4 {
+        return Ok(None);
     }
 
-    Ok(usize::from(u16::from_be_bytes([
-        section[1] & 0x0f,
-        section[2],
-    ])))
+    let descriptor_ca_system_id = u16::from_be_bytes([descriptor.data[0], descriptor.data[1]]);
+    if descriptor_ca_system_id != ca_system_id {
+        return Ok(None);
+    }
+
+    let pid = u16::from_be_bytes([descriptor.data[2] & 0x1f, descriptor.data[3]]);
+    if pid == 0 || pid == 0x1fff {
+        return Ok(None);
+    }
+
+    Ok(Some(Pid::new(pid)?))
 }
 
 fn find_sync_offset(buffer: &[u8]) -> Option<usize> {
@@ -540,98 +339,41 @@ fn find_sync_offset(buffer: &[u8]) -> Option<usize> {
     (0..buffer.len()).find(|&offset| {
         (0..MIN_SYNC_PACKETS).all(|index| {
             buffer
-                .get(offset + index * TS_PACKET_SIZE)
-                .is_some_and(|byte| *byte == TS_SYNC_BYTE)
+                .get(offset + index * TsPacket::SIZE)
+                .is_some_and(|byte| *byte == TsPacket::SYNC_BYTE)
         })
     })
-}
-
-fn is_video_stream_type(stream_type: u8) -> bool {
-    matches!(stream_type, 0x01 | 0x02 | 0x1b | 0x24)
-}
-
-fn is_audio_stream_type(stream_type: u8) -> bool {
-    matches!(stream_type, 0x03 | 0x04 | 0x0f | 0x11)
 }
 
 fn track_type_from_stream_type(stream_type: StreamType) -> Option<TrackType> {
     match stream_type {
         StreamType::Mpeg2Video => Some(TrackType::Mpeg2Video),
-        StreamType::AdtsAac => Some(TrackType::AacAdts),
         StreamType::H265 => Some(TrackType::H265),
+        StreamType::AdtsAac => Some(TrackType::AacAdts),
         StreamType::Mpeg4LoasMultiFormatFramedAudio => Some(TrackType::AacLatm),
         _ => None,
     }
 }
 
-fn parse_pes_start(payload: &[u8]) -> anyhow::Result<Option<PesStart>> {
-    if payload.len() < 6 || payload[..3] != [0x00, 0x00, 0x01] {
-        return Ok(None);
-    }
-
-    if payload.len() < 9 {
-        anyhow::bail!("PES header is too short");
-    }
-
-    let pts_dts_flags = (payload[7] >> 6) & 0x03;
-    let header_data_length = usize::from(payload[8]);
-    let data_offset = 9 + header_data_length;
-    if payload.len() < data_offset {
-        anyhow::bail!("PES header data length is invalid");
-    }
-
-    let pts = match pts_dts_flags {
-        0b10 | 0b11 if payload.len() >= 14 => Some(read_pes_timestamp(&payload[9..14])?),
-        _ => None,
-    };
-    let dts = match pts_dts_flags {
-        0b11 if payload.len() >= 19 => Some(read_pes_timestamp(&payload[14..19])?),
-        _ => pts,
-    };
-
-    Ok(Some(PesStart {
-        data: payload[data_offset..].to_vec(),
-        dts,
-        pts,
-    }))
+fn is_video_track_type(track_type: TrackType) -> bool {
+    matches!(track_type, TrackType::Mpeg2Video | TrackType::H265)
 }
 
-fn read_pes_timestamp(data: &[u8]) -> anyhow::Result<f64> {
-    if data.len() < 5 {
-        anyhow::bail!("PES timestamp is too short");
-    }
-
-    let timestamp = ((u64::from(data[0] >> 1) & 0x07) << 30)
-        | (u64::from(data[1]) << 22)
-        | ((u64::from(data[2] >> 1) & 0x7f) << 15)
-        | (u64::from(data[3]) << 7)
-        | (u64::from(data[4] >> 1) & 0x7f);
-
-    Ok(timestamp as f64 / 90_000_f64)
+fn is_audio_track_type(track_type: TrackType) -> bool {
+    matches!(track_type, TrackType::AacAdts | TrackType::AacLatm)
 }
 
-fn read_descriptors(mut data: &[u8]) -> anyhow::Result<Vec<Descriptor>> {
-    let mut descriptors = Vec::new();
+// Multi-program in a stream won't be needed, I believe.
+const PROGRAM_NUM: u16 = 0x0001;
 
-    while !data.is_empty() {
-        if data.len() < 2 {
-            anyhow::bail!("Descriptor is too short");
-        }
+#[inline]
+fn pat_pid() -> Pid {
+    Pid::new(0x0000).unwrap()
+}
 
-        let tag = data[0];
-        let length = usize::from(data[1]);
-        if data.len() < 2 + length {
-            anyhow::bail!("Descriptor length is invalid");
-        }
-
-        descriptors.push(Descriptor {
-            tag,
-            data: data[2..2 + length].to_vec(),
-        });
-        data = &data[2 + length..];
-    }
-
-    Ok(descriptors)
+#[inline]
+fn pmt_pid() -> Pid {
+    Pid::new(0x1000).unwrap()
 }
 
 pub struct M2tsStream {
@@ -731,6 +473,7 @@ impl<W: WriteTsPacket + Send + Sync> M2tsMuxer<W> {
                 continuity_counter: stream.next_cc(),
                 transport_error_indicator: false,
                 transport_priority: false,
+                payload_unit_start_indicator: true,
                 transport_scrambling_control: TransportScramblingControl::NotScrambled,
             },
             payload: Some(TsPayload::PesStart(Pes {
@@ -760,6 +503,7 @@ impl<W: WriteTsPacket + Send + Sync> M2tsMuxer<W> {
                     continuity_counter: stream.next_cc(),
                     transport_error_indicator: false,
                     transport_priority: false,
+                    payload_unit_start_indicator: false,
                     transport_scrambling_control: TransportScramblingControl::NotScrambled,
                 },
                 payload: Some(TsPayload::Raw(
@@ -789,6 +533,7 @@ impl<W: WriteTsPacket + Send + Sync> M2tsMuxer<W> {
                 continuity_counter: pat_stream.next_cc(),
                 transport_error_indicator: false,
                 transport_priority: false,
+                payload_unit_start_indicator: true,
                 transport_scrambling_control: TransportScramblingControl::NotScrambled,
             },
             payload: Some(TsPayload::Pat(Pat {
@@ -809,6 +554,7 @@ impl<W: WriteTsPacket + Send + Sync> M2tsMuxer<W> {
                 continuity_counter: pmt_stream.next_cc(),
                 transport_error_indicator: false,
                 transport_priority: false,
+                payload_unit_start_indicator: true,
                 transport_scrambling_control: TransportScramblingControl::NotScrambled,
             },
             payload: Some(TsPayload::Pmt(Pmt {

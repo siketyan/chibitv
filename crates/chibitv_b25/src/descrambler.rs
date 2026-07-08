@@ -1,4 +1,5 @@
-use std::fmt::{Debug, Formatter};
+use std::error::Error;
+use std::fmt::{Debug, Display, Formatter};
 use std::sync::Mutex;
 
 use anyhow::Result;
@@ -8,10 +9,21 @@ use mpeg2ts::ts::{TransportScramblingControl, TsPacket, TsPayload};
 use crate::CasModule;
 use crate::multi2::Multi2;
 
+#[derive(Copy, Clone, Debug)]
+pub struct NoDecryptionKeyError;
+
+impl Display for NoDecryptionKeyError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Decryption key is not provided yet")
+    }
+}
+
+impl Error for NoDecryptionKeyError {}
+
 pub struct B25Descrambler {
     cas: Mutex<CasModule>,
-    ca_system_id: u16,
     multi2: Mutex<Multi2>,
+    ca_system_id: u16,
 }
 
 impl Debug for B25Descrambler {
@@ -27,8 +39,8 @@ impl B25Descrambler {
 
         Ok(Self {
             cas: Mutex::new(cas),
-            ca_system_id: settings.ca_system_id,
             multi2: Mutex::new(Multi2::new(settings.system_key, settings.init_cbc)),
+            ca_system_id: settings.ca_system_id,
         })
     }
 
@@ -58,18 +70,10 @@ impl B25Descrambler {
 
         match payload {
             TsPayload::PesStart(pes) => {
-                if let Some(data) =
-                    self.descramble_payload(scrambling_control, pes.data.as_ref())?
-                {
-                    pes.data = data;
-                }
+                pes.data = self.descramble_payload(scrambling_control, pes.data.as_ref())?;
             }
             TsPayload::PesContinuation(data) | TsPayload::Raw(data) => {
-                if let Some(descrambled) =
-                    self.descramble_payload(scrambling_control, data.as_ref())?
-                {
-                    *data = descrambled;
-                };
+                *data = self.descramble_payload(scrambling_control, data.as_ref())?;
             }
             _ => {}
         }
@@ -83,17 +87,14 @@ impl B25Descrambler {
         &self,
         scrambling_control: TransportScramblingControl,
         payload: &[u8],
-    ) -> Result<Option<Bytes>> {
+    ) -> Result<Bytes> {
         let mut payload = payload.to_vec();
-        if !self
-            .multi2
+
+        self.multi2
             .lock()
             .unwrap()
-            .decrypt(scrambling_control, &mut payload)?
-        {
-            return Ok(None);
-        }
+            .decrypt(scrambling_control, &mut payload)?;
 
-        Ok(Some(Bytes::new(&payload)?))
+        Ok(Bytes::new(&payload)?)
     }
 }

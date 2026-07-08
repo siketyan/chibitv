@@ -5,4 +5,4 @@ mod descrambler;
 mod multi2;
 
 pub use cas::{CasModule, EcmReceptionResponse, InitialSettingConditionResponse};
-pub use descrambler::B25Descrambler;
+pub use descrambler::{B25Descrambler, NoDecryptionKeyError};
