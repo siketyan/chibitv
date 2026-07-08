@@ -247,6 +247,7 @@ dependencies = [
  "axum",
  "bitstream-io",
  "bytes",
+ "chibitv_b25",
  "chibitv_b60",
  "chibitv_b61",
  "chrono",
@@ -273,6 +274,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "chibitv_b25"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "apdu-core",
+ "byteorder",
+ "pcsc",
+ "strum",
+ "tracing",
+]
+
+[[package]]
 name = "chibitv_b60"
 version = "0.1.0"
 dependencies = [
@@ -288,10 +301,17 @@ dependencies = [
 name = "chibitv_b61"
 version = "0.1.0"
 dependencies = [
+ "aes",
  "anyhow",
  "apdu-core",
  "byteorder",
+ "bytes",
+ "chibitv_b60",
+ "ctr",
+ "hex",
  "pcsc",
+ "rand",
+ "sha2",
  "strum",
  "tracing",
 ]
