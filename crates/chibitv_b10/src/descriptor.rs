@@ -19,6 +19,40 @@ impl NetworkNameDescriptor {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServiceListItem {
+    pub service_id: u16,
+    pub service_type: u8,
+}
+
+impl ServiceListItem {
+    pub fn read(bytes: &mut Bytes) -> Result<Self> {
+        let service_id = bytes.get_u16();
+        let service_type = bytes.get_u8();
+
+        Ok(Self {
+            service_id,
+            service_type,
+        })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ServiceListDescriptor {
+    pub services: Vec<ServiceListItem>,
+}
+
+impl ServiceListDescriptor {
+    pub fn read(bytes: &mut Bytes) -> Result<Self> {
+        let mut services = Vec::new();
+        while bytes.has_remaining() {
+            services.push(ServiceListItem::read(bytes)?);
+        }
+
+        Ok(Self { services })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServiceDescriptor {
     pub service_type: u8,
     pub service_provider_name: Vec<u8>,
@@ -72,6 +106,7 @@ impl ShortEventDescriptor {
 #[repr(u8)]
 pub enum DescriptorTag {
     NetworkNameDescriptor = 0x40,
+    ServiceListDescriptor = 0x41,
     ServiceDescriptor = 0x48,
     ShortEventDescriptor = 0x4D,
 }
@@ -79,6 +114,7 @@ pub enum DescriptorTag {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Descriptor {
     NetworkName(NetworkNameDescriptor),
+    ServiceList(ServiceListDescriptor),
     Service(ServiceDescriptor),
     ShortEvent(ShortEventDescriptor),
     Unknown(u8, Vec<u8>),
@@ -97,6 +133,9 @@ impl Descriptor {
         Ok(match descriptor_tag {
             DescriptorTag::NetworkNameDescriptor => {
                 Self::NetworkName(NetworkNameDescriptor::read(&mut bytes)?)
+            }
+            DescriptorTag::ServiceListDescriptor => {
+                Self::ServiceList(ServiceListDescriptor::read(&mut bytes)?)
             }
             DescriptorTag::ServiceDescriptor => Self::Service(ServiceDescriptor::read(&mut bytes)?),
             DescriptorTag::ShortEventDescriptor => {

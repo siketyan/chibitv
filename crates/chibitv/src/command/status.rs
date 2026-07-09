@@ -28,7 +28,7 @@ pub struct Options {
 #[derive(Clone, Debug, Default)]
 struct StatusState {
     nit: Option<Nit>,
-    services: BTreeMap<u16, ServiceInformation>,
+    services: BTreeMap<u16, Option<ServiceInformation>>,
     current_events: BTreeMap<u16, EventInformation>,
 }
 
@@ -90,13 +90,18 @@ pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
 
 impl StatusState {
     fn is_ready(&self) -> bool {
-        self.nit.is_some() && !self.services.is_empty() && !self.current_events.is_empty()
+        if self.nit.is_none() || self.services.is_empty() || self.current_events.is_empty() {
+            return false;
+        }
+
+        self.has_all_expected_service_descriptors()
     }
 
     fn read_table(&mut self, table_id: Option<u8>, table: Table) {
         match table {
             Table::Nit(nit) => {
                 if self.nit.is_none() {
+                    self.read_expected_services(&nit);
                     self.nit = Some(nit);
                 }
             }
@@ -108,7 +113,19 @@ impl StatusState {
 
     fn read_sdt(&mut self, sdt: Sdt) {
         for service in sdt.services {
-            self.services.entry(service.service_id).or_insert(service);
+            self.services.insert(service.service_id, Some(service));
+        }
+    }
+
+    fn read_expected_services(&mut self, nit: &Nit) {
+        for transport_stream in &nit.transport_streams {
+            for descriptor in &transport_stream.descriptors {
+                if let Descriptor::ServiceList(descriptor) = descriptor {
+                    for service in &descriptor.services {
+                        self.services.entry(service.service_id).or_insert(None);
+                    }
+                }
+            }
         }
     }
 
@@ -118,6 +135,14 @@ impl StatusState {
                 self.current_events.entry(eit.service_id).or_insert(event);
             }
         }
+    }
+
+    fn has_all_expected_service_descriptors(&self) -> bool {
+        self.services.values().all(|service| {
+            service
+                .as_ref()
+                .is_some_and(|service| service.descriptors.iter().any(is_service_descriptor))
+        })
     }
 
     fn print(&self) {
@@ -136,7 +161,12 @@ impl StatusState {
             println!("Services:");
         }
 
-        for service in self.services.values() {
+        for (&service_id, service) in &self.services {
+            let Some(service) = service else {
+                println!("  {:#06X}: (not found)", service_id);
+                continue;
+            };
+
             let service_descriptor = service
                 .descriptors
                 .iter()
@@ -165,7 +195,11 @@ impl StatusState {
         }
 
         for (service_id, event) in &self.current_events {
-            if self.services.contains_key(service_id) {
+            if self
+                .services
+                .get(service_id)
+                .is_some_and(|service| service.is_some())
+            {
                 continue;
             }
 
@@ -206,6 +240,10 @@ fn service_descriptor(descriptor: &Descriptor) -> Option<ServiceDescriptor> {
         provider_name: text_bytes(&descriptor.service_provider_name),
         service_name: text_bytes(&descriptor.service_name),
     })
+}
+
+fn is_service_descriptor(descriptor: &Descriptor) -> bool {
+    matches!(descriptor, Descriptor::Service(_))
 }
 
 fn short_event_descriptor(descriptor: &Descriptor) -> Option<ShortEventDescriptor> {
