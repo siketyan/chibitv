@@ -2,7 +2,7 @@ use std::net::{Ipv6Addr, SocketAddr};
 use std::path::Path;
 
 use serde::de::Error;
-use serde::{Deserialize, Deserializer};
+use serde::{Deserialize, Deserializer, Serialize};
 
 #[derive(Copy, Clone, Debug)]
 pub struct CasMasterKey([u8; 32]);
@@ -51,7 +51,7 @@ pub enum TunerConfig {
     Dvb { adapter_num: u8, frontend_num: u8 },
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "delivery_system")]
 pub enum ChannelConfigInner {
     #[serde(rename = "ISDB-S")]
@@ -70,7 +70,7 @@ fn default_isdb_t_bandwidth_hz() -> u32 {
     6_000_000
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ChannelConfig {
     pub name: String,
 

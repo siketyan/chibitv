@@ -1,6 +1,7 @@
 mod live;
 mod record;
 mod remux;
+mod scan;
 mod serve;
 mod status;
 
@@ -19,6 +20,9 @@ pub(super) enum Command {
     /// Demux a MMT/TLV stream and mux a M2TS stream.
     Remux(remux::Options),
 
+    /// Scan UHF channels and print ISDB-T channel config as TOML.
+    Scan(scan::Options),
+
     /// Run the chibitv server.
     Serve(serve::Options),
 
@@ -32,6 +36,7 @@ impl Command {
             Self::Live(options) => live::live(options, config).await,
             Self::Record(options) => record::record(options, config).await,
             Self::Remux(options) => remux::remux(options, config).await,
+            Self::Scan(options) => scan::scan(options, config).await,
             Self::Serve(options) => serve::serve(options, config).await,
             Self::Status(options) => status::status(options, config).await,
         }
