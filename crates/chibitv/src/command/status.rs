@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
-use chibitv_b10::table::{Descriptor, Eit, EventInformation, Nit, Sdt, ServiceInformation, Table};
-use chibitv_b24::decode as decode_b24;
-use chibitv_b25::B25Descrambler;
 use clap::Parser;
 use tracing::info;
+
+use chibitv_b10::descriptor::Descriptor;
+use chibitv_b10::table::{Eit, EventInformation, Nit, Sdt, ServiceInformation, Table};
+use chibitv_b24::decode as decode_b24;
+use chibitv_b25::B25Descrambler;
 
 use crate::channel::{Channel, ChannelInner};
 use crate::config::Config;
@@ -119,6 +121,21 @@ impl StatusState {
     }
 
     fn print(&self) {
+        if let Some(nit) = &self.nit {
+            let network_name = nit
+                .descriptors
+                .iter()
+                .find_map(network_name_descriptor)
+                .unwrap_or_default();
+
+            println!(
+                "Network: {:#06X} {}",
+                nit.network_id,
+                empty_as_unknown(&network_name),
+            );
+            println!("Services:");
+        }
+
         for service in self.services.values() {
             let service_descriptor = service
                 .descriptors
@@ -127,15 +144,23 @@ impl StatusState {
                 .unwrap_or_default();
 
             println!(
-                "{:#06X}: {}",
+                "  {:#06X}: {}",
                 service.service_id,
                 empty_as_unknown(&service_descriptor.service_name),
             );
+            println!(
+                "    Provider: {}",
+                empty_as_unknown(&service_descriptor.provider_name),
+            );
+
+            if let Some(service_type) = service_descriptor.service_type {
+                println!("    Type: {:#04X}", service_type);
+            }
 
             if let Some(event) = self.current_events.get(&service.service_id) {
-                print_event(event, 2);
+                print_event(event, 4);
             } else {
-                println!("  Event: (not found)");
+                println!("    Event: (not found)");
             }
         }
 
@@ -144,8 +169,8 @@ impl StatusState {
                 continue;
             }
 
-            println!("{:#06X}: (unknown service)", service_id);
-            print_event(event, 2);
+            println!("  {:#06X}: (unknown service)", service_id);
+            print_event(event, 4);
         }
     }
 }
@@ -164,58 +189,33 @@ struct ShortEventDescriptor {
 }
 
 fn network_name_descriptor(descriptor: &Descriptor) -> Option<String> {
-    (descriptor.tag == 0x40).then(|| text_bytes(&descriptor.data))
+    if let Descriptor::NetworkName(descriptor) = descriptor {
+        Some(text_bytes(&descriptor.network_name))
+    } else {
+        None
+    }
 }
 
 fn service_descriptor(descriptor: &Descriptor) -> Option<ServiceDescriptor> {
-    if descriptor.tag != 0x48 || descriptor.data.len() < 3 {
+    let Descriptor::Service(descriptor) = descriptor else {
         return None;
-    }
-
-    let service_type = descriptor.data[0];
-    let provider_name_length = descriptor.data[1] as usize;
-    let provider_name_start = 2;
-    let provider_name_end = provider_name_start + provider_name_length;
-    if descriptor.data.len() < provider_name_end + 1 {
-        return None;
-    }
-
-    let service_name_length = descriptor.data[provider_name_end] as usize;
-    let service_name_start = provider_name_end + 1;
-    let service_name_end = service_name_start + service_name_length;
-    if descriptor.data.len() < service_name_end {
-        return None;
-    }
+    };
 
     Some(ServiceDescriptor {
-        service_type: Some(service_type),
-        provider_name: text_bytes(&descriptor.data[provider_name_start..provider_name_end]),
-        service_name: text_bytes(&descriptor.data[service_name_start..service_name_end]),
+        service_type: Some(descriptor.service_type),
+        provider_name: text_bytes(&descriptor.service_provider_name),
+        service_name: text_bytes(&descriptor.service_name),
     })
 }
 
 fn short_event_descriptor(descriptor: &Descriptor) -> Option<ShortEventDescriptor> {
-    if descriptor.tag != 0x4D || descriptor.data.len() < 5 {
+    let Descriptor::ShortEvent(descriptor) = descriptor else {
         return None;
-    }
-
-    let event_name_length = descriptor.data[3] as usize;
-    let event_name_start = 4;
-    let event_name_end = event_name_start + event_name_length;
-    if descriptor.data.len() < event_name_end + 1 {
-        return None;
-    }
-
-    let text_length = descriptor.data[event_name_end] as usize;
-    let text_start = event_name_end + 1;
-    let text_end = text_start + text_length;
-    if descriptor.data.len() < text_end {
-        return None;
-    }
+    };
 
     Some(ShortEventDescriptor {
-        event_name: text_bytes(&descriptor.data[event_name_start..event_name_end]),
-        text: text_bytes(&descriptor.data[text_start..text_end]),
+        event_name: text_bytes(&descriptor.event_name),
+        text: text_bytes(&descriptor.text),
     })
 }
 

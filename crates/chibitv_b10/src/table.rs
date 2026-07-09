@@ -6,23 +6,8 @@ use chrono::{Duration, NaiveDateTime, NaiveTime};
 use julianday::ModifiedJulianDay;
 use strum::FromRepr;
 
+use crate::descriptor::Descriptor;
 use crate::read_ext::BytesExt;
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Descriptor {
-    pub tag: u8,
-    pub data: Vec<u8>,
-}
-
-impl Descriptor {
-    pub fn read(bytes: &mut Bytes) -> Result<Self> {
-        let tag = bytes.get_u8();
-        let length = bytes.get_u8();
-        let data = bytes.split_to(length as usize).into();
-
-        Ok(Self { tag, data })
-    }
-}
 
 fn read_descriptors(bytes: &mut Bytes, length: usize) -> Result<Vec<Descriptor>> {
     let mut bytes = bytes.split_to(length);
