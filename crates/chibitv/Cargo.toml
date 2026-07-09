@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 chibitv_b25 = { path = "../chibitv_b25" }
+chibitv_b10 = { path = "../chibitv_b10" }
+chibitv_b24 = { path = "../chibitv_b24" }
 chibitv_b60 = { path = "../chibitv_b60" }
 chibitv_b61 = { path = "../chibitv_b61" }
 

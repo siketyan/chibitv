@@ -5,6 +5,7 @@ use tokio::sync::broadcast::Sender;
 use tokio::sync::oneshot::Receiver;
 use tracing::error;
 
+use chibitv_b10::table::Table as B10Table;
 use chibitv_b60::message::{M2SectionMessage, Message};
 use chibitv_b60::table::{MhBit, MhEit, MhSdt, Table};
 
@@ -35,6 +36,10 @@ pub enum Packet {
         data: Bytes,
         dts: Option<f64>,
         pts: Option<f64>,
+    },
+    B10Table {
+        table_id: u8,
+        table: B10Table,
     },
     Message(Message),
 }
@@ -147,8 +152,13 @@ impl<D: Demux, M: Mux> Remuxer<D, M> {
                     self.read_m2_section_message(message)?;
                 }
             }
+            Packet::B10Table { table, .. } => self.read_b10_table(table)?,
         }
 
+        Ok(())
+    }
+
+    fn read_b10_table(&mut self, _table: B10Table) -> anyhow::Result<()> {
         Ok(())
     }
 

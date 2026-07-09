@@ -1,4 +1,4 @@
-use std::io::{BufReader, BufWriter, Write, stdout};
+use std::io::{BufReader, BufWriter, stdout};
 use std::sync::{Arc, Mutex};
 
 use chibitv_b25::B25Descrambler;

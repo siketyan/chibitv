@@ -1,0 +1,272 @@
+use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
+
+use chibitv_b10::table::{Descriptor, Eit, EventInformation, Nit, Sdt, ServiceInformation, Table};
+use chibitv_b24::decode as decode_b24;
+use chibitv_b25::B25Descrambler;
+use clap::Parser;
+use tracing::info;
+
+use crate::channel::{Channel, ChannelInner};
+use crate::config::Config;
+use crate::m2ts::M2tsDemuxer;
+use crate::remux::{Demux, Packet};
+use crate::tuner::Tuners;
+
+#[derive(Clone, Debug, Parser)]
+pub struct Options {
+    #[clap(short, long)]
+    channel: usize,
+
+    /// Maximum time in seconds to wait for SI tables before printing.
+    #[clap(long, default_value_t = 3)]
+    timeout: u64,
+}
+
+#[derive(Clone, Debug, Default)]
+struct StatusState {
+    nit: Option<Nit>,
+    services: BTreeMap<u16, ServiceInformation>,
+    current_events: BTreeMap<u16, EventInformation>,
+}
+
+pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
+    let mut tuners = Tuners::default();
+    for (id, tuner) in config.tuners.iter().enumerate() {
+        tuners.add_tuner_from_config(id as u32, tuner)?;
+    }
+
+    let Some(tuner) = tuners.get_tuner(0) else {
+        anyhow::bail!("No tuners are configured");
+    };
+
+    let Some(channel) = config.channels.get(options.channel).map(|channel| Channel {
+        id: options.channel,
+        name: channel.name.to_string(),
+        inner: (&channel.inner).into(),
+    }) else {
+        anyhow::bail!("Could not find the channel in the config");
+    };
+
+    let ChannelInner::IsdbT { .. } = channel.inner else {
+        anyhow::bail!("ISDB-T channels are only supported");
+    };
+
+    info!("Tuning to the channel: {:?}", channel);
+
+    tuner.tune(channel.clone())?;
+
+    let descrambler = B25Descrambler::open()?;
+    let mut demux = M2tsDemuxer::new(tuner.open()?, descrambler);
+    let mut state = StatusState::default();
+
+    let deadline = Instant::now() + Duration::from_secs(options.timeout);
+    while Instant::now() < deadline && !state.is_ready() {
+        let packets = match demux.read() {
+            Ok(Some(packets)) => packets,
+            Ok(None) => break,
+            Err(_) => continue,
+        };
+
+        for packet in packets {
+            let Packet::B10Table { table_id, table } = packet else {
+                continue;
+            };
+
+            state.read_table(Some(table_id), table);
+
+            if state.is_ready() {
+                break;
+            }
+        }
+    }
+
+    state.print();
+
+    Ok(())
+}
+
+impl StatusState {
+    fn is_ready(&self) -> bool {
+        self.nit.is_some() && !self.services.is_empty() && !self.current_events.is_empty()
+    }
+
+    fn read_table(&mut self, table_id: Option<u8>, table: Table) {
+        match table {
+            Table::Nit(nit) => {
+                if self.nit.is_none() {
+                    self.nit = Some(nit);
+                }
+            }
+            Table::Sdt(sdt) => self.read_sdt(sdt),
+            Table::Eit(eit) if table_id == Some(0x4E) => self.read_eit(eit),
+            _ => {}
+        }
+    }
+
+    fn read_sdt(&mut self, sdt: Sdt) {
+        for service in sdt.services {
+            self.services.entry(service.service_id).or_insert(service);
+        }
+    }
+
+    fn read_eit(&mut self, eit: Eit) {
+        for event in eit.events {
+            if is_current_event(&event) {
+                self.current_events.entry(eit.service_id).or_insert(event);
+            }
+        }
+    }
+
+    fn print(&self) {
+        for service in self.services.values() {
+            let service_descriptor = service
+                .descriptors
+                .iter()
+                .find_map(service_descriptor)
+                .unwrap_or_default();
+
+            println!(
+                "{:#06X}: {}",
+                service.service_id,
+                empty_as_unknown(&service_descriptor.service_name),
+            );
+
+            if let Some(event) = self.current_events.get(&service.service_id) {
+                print_event(event, 2);
+            } else {
+                println!("  Event: (not found)");
+            }
+        }
+
+        for (service_id, event) in &self.current_events {
+            if self.services.contains_key(service_id) {
+                continue;
+            }
+
+            println!("{:#06X}: (unknown service)", service_id);
+            print_event(event, 2);
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct ServiceDescriptor {
+    service_type: Option<u8>,
+    provider_name: String,
+    service_name: String,
+}
+
+#[derive(Clone, Debug, Default)]
+struct ShortEventDescriptor {
+    event_name: String,
+    text: String,
+}
+
+fn network_name_descriptor(descriptor: &Descriptor) -> Option<String> {
+    (descriptor.tag == 0x40).then(|| text_bytes(&descriptor.data))
+}
+
+fn service_descriptor(descriptor: &Descriptor) -> Option<ServiceDescriptor> {
+    if descriptor.tag != 0x48 || descriptor.data.len() < 3 {
+        return None;
+    }
+
+    let service_type = descriptor.data[0];
+    let provider_name_length = descriptor.data[1] as usize;
+    let provider_name_start = 2;
+    let provider_name_end = provider_name_start + provider_name_length;
+    if descriptor.data.len() < provider_name_end + 1 {
+        return None;
+    }
+
+    let service_name_length = descriptor.data[provider_name_end] as usize;
+    let service_name_start = provider_name_end + 1;
+    let service_name_end = service_name_start + service_name_length;
+    if descriptor.data.len() < service_name_end {
+        return None;
+    }
+
+    Some(ServiceDescriptor {
+        service_type: Some(service_type),
+        provider_name: text_bytes(&descriptor.data[provider_name_start..provider_name_end]),
+        service_name: text_bytes(&descriptor.data[service_name_start..service_name_end]),
+    })
+}
+
+fn short_event_descriptor(descriptor: &Descriptor) -> Option<ShortEventDescriptor> {
+    if descriptor.tag != 0x4D || descriptor.data.len() < 5 {
+        return None;
+    }
+
+    let event_name_length = descriptor.data[3] as usize;
+    let event_name_start = 4;
+    let event_name_end = event_name_start + event_name_length;
+    if descriptor.data.len() < event_name_end + 1 {
+        return None;
+    }
+
+    let text_length = descriptor.data[event_name_end] as usize;
+    let text_start = event_name_end + 1;
+    let text_end = text_start + text_length;
+    if descriptor.data.len() < text_end {
+        return None;
+    }
+
+    Some(ShortEventDescriptor {
+        event_name: text_bytes(&descriptor.data[event_name_start..event_name_end]),
+        text: text_bytes(&descriptor.data[text_start..text_end]),
+    })
+}
+
+fn print_event(event: &EventInformation, indent: usize) {
+    let pad = " ".repeat(indent);
+    let event_descriptor = event
+        .descriptors
+        .iter()
+        .find_map(short_event_descriptor)
+        .unwrap_or_default();
+
+    println!(
+        "{}Event: {:#06X} {}",
+        pad,
+        event.event_id,
+        empty_as_unknown(&event_descriptor.event_name)
+    );
+
+    if !event_descriptor.text.is_empty() {
+        println!("{}Description: {}", pad, event_descriptor.text);
+    }
+
+    if let Some(start_time) = event.start_time {
+        if let Some(duration) = event.duration {
+            let end_time = start_time + duration;
+            println!(
+                "{}Time: {} - {}  ({} min)",
+                pad,
+                start_time.format("%Y-%m-%d %H:%M:%S"),
+                end_time.format("%H:%M:%S"),
+                duration.num_minutes()
+            );
+        } else {
+            println!("{}Time: {}", pad, start_time.format("%Y-%m-%d %H:%M:%S"));
+        }
+    }
+}
+
+fn is_current_event(event: &EventInformation) -> bool {
+    let Some((start_time, duration)) = event.start_time.zip(event.duration) else {
+        return false;
+    };
+
+    let now = chrono::Local::now().naive_local();
+    start_time <= now && now < start_time + duration
+}
+
+fn text_bytes(bytes: &[u8]) -> String {
+    decode_b24(bytes)
+}
+
+fn empty_as_unknown(value: &str) -> &str {
+    if value.is_empty() { "(unknown)" } else { value }
+}

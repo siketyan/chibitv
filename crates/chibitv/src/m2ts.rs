@@ -5,7 +5,6 @@ use std::sync::RwLock;
 use std::sync::{Arc, Mutex};
 
 use bytes::{Buf, Bytes, BytesMut};
-use chibitv_b25::{B25Descrambler, NoDecryptionKeyError};
 use mpeg2ts::es::{StreamId, StreamType};
 use mpeg2ts::pes::PesHeader;
 use mpeg2ts::time::Timestamp;
@@ -15,6 +14,9 @@ use mpeg2ts::ts::{
     TransportScramblingControl, TsHeader, TsPacket, TsPacketReader, TsPayload, VersionNumber,
     WriteTsPacket,
 };
+
+use chibitv_b10::table::Table as B10Table;
+use chibitv_b25::{B25Descrambler, NoDecryptionKeyError};
 
 use crate::remux::{Demux, Mux, Packet, TrackType};
 
@@ -36,16 +38,24 @@ pub struct M2tsDemuxer<R> {
     descrambler: Arc<Mutex<B25Descrambler>>,
     ecm_pids: BTreeSet<Pid>,
     tracks: BTreeMap<Pid, TrackState>,
+    section_buffers: BTreeMap<Pid, Vec<u8>>,
 }
 
 impl<R: Read> M2tsDemuxer<R> {
     pub fn new(reader: R, descrambler: B25Descrambler) -> Self {
         let descrambler = Arc::new(Mutex::new(descrambler));
+        let mut reader = TsPacketReader::new(AlignedTsReader::new(reader));
+
+        for pid in B10_SECTION_PIDS {
+            reader.add_section_pid(Pid::new(*pid).expect("B10 section PID must be valid"));
+        }
+
         Self {
-            reader: TsPacketReader::new(AlignedTsReader::new(reader)),
+            reader,
             descrambler,
             ecm_pids: BTreeSet::new(),
             tracks: BTreeMap::new(),
+            section_buffers: BTreeMap::new(),
         }
     }
 
@@ -164,8 +174,28 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
                     }
                 }
                 TsPayload::Section(section) => {
+                    let Some(section) = self.read_section(
+                        pid,
+                        packet.header.payload_unit_start_indicator,
+                        section.pointer_field,
+                        section.data.as_ref(),
+                    ) else {
+                        continue;
+                    };
+
                     if self.ecm_pids.contains(&pid) {
-                        self.read_ecm(Bytes::from(section.data.to_vec()))?;
+                        self.read_ecm(Bytes::from(section))?;
+                        continue;
+                    }
+
+                    let Some(table_id) = section.first().copied() else {
+                        continue;
+                    };
+
+                    let mut bytes = Bytes::from(section);
+                    let table = B10Table::read(&mut bytes)?;
+                    if !matches!(table, B10Table::Unknown(_, _)) {
+                        out.push(Packet::B10Table { table_id, table });
                     }
                 }
                 TsPayload::PesStart(pes) => {
@@ -232,6 +262,46 @@ impl<R: Read> M2tsDemuxer<R> {
                 })
             })
             .collect()
+    }
+
+    fn read_section(
+        &mut self,
+        pid: Pid,
+        payload_unit_start_indicator: bool,
+        pointer_field: u8,
+        payload: &[u8],
+    ) -> Option<Vec<u8>> {
+        let buffer = self.section_buffers.entry(pid).or_default();
+
+        if payload_unit_start_indicator {
+            let section_offset = usize::from(pointer_field);
+            if section_offset >= payload.len() {
+                buffer.clear();
+                return None;
+            }
+
+            buffer.clear();
+            buffer.extend_from_slice(&payload[section_offset..]);
+        } else if !buffer.is_empty() {
+            buffer.extend_from_slice(payload);
+        } else {
+            return None;
+        }
+
+        if buffer.len() < 3 {
+            return None;
+        }
+
+        let section_length = usize::from(u16::from_be_bytes([buffer[1] & 0x0F, buffer[2]]));
+        let section_end = 3 + section_length;
+        if buffer.len() < section_end {
+            return None;
+        }
+
+        let section = buffer[..section_end].to_vec();
+        buffer.drain(..section_end);
+
+        Some(section)
     }
 }
 
@@ -332,6 +402,23 @@ fn ca_descriptor_pid(descriptor: &Descriptor, ca_system_id: u16) -> anyhow::Resu
 
     Ok(Some(Pid::new(pid)?))
 }
+
+const B10_SECTION_PIDS: &[u16] = &[
+    0x0001, // CAT
+    0x0010, // NIT
+    0x0011, // SDT, BAT
+    0x0012, // EIT
+    0x0013, // RST
+    0x0014, // TDT, TOT
+    0x0020, // LIT
+    0x0021, // ERT
+    0x0022, // PCAT
+    0x0024, // BIT
+    0x0025, // NBIT, LDT
+    0x0026, // EIT for terrestrial digital TV and multimedia broadcasting
+    0x0027, // EIT for terrestrial digital TV and multimedia broadcasting
+    0x002E, // AMT
+];
 
 fn find_sync_offset(buffer: &[u8]) -> Option<usize> {
     const MIN_SYNC_PACKETS: usize = 3;

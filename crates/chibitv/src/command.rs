@@ -2,6 +2,7 @@ mod live;
 mod record;
 mod remux;
 mod serve;
+mod status;
 
 use clap::Parser;
 
@@ -20,6 +21,9 @@ pub(super) enum Command {
 
     /// Run the chibitv server.
     Serve(serve::Options),
+
+    /// Show current broadcast status from B10 SI tables.
+    Status(status::Options),
 }
 
 impl Command {
@@ -29,6 +33,7 @@ impl Command {
             Self::Record(options) => record::record(options, config).await,
             Self::Remux(options) => remux::remux(options, config).await,
             Self::Serve(options) => serve::serve(options, config).await,
+            Self::Status(options) => status::status(options, config).await,
         }
     }
 }
