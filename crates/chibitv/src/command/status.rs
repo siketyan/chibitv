@@ -90,11 +90,11 @@ pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
 
 impl StatusState {
     fn is_ready(&self) -> bool {
-        if self.nit.is_none() || self.services.is_empty() || self.current_events.is_empty() {
+        if self.nit.is_none() || self.services.is_empty() {
             return false;
         }
 
-        self.has_all_expected_service_descriptors()
+        self.has_all_expected_service_descriptors() && self.has_all_current_events()
     }
 
     fn read_table(&mut self, table_id: Option<u8>, table: Table) {
@@ -143,6 +143,12 @@ impl StatusState {
                 .as_ref()
                 .is_some_and(|service| service.descriptors.iter().any(is_service_descriptor))
         })
+    }
+
+    fn has_all_current_events(&self) -> bool {
+        self.services
+            .keys()
+            .all(|service_id| self.current_events.contains_key(service_id))
     }
 
     fn print(&self) {

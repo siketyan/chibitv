@@ -174,28 +174,32 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
                     }
                 }
                 TsPayload::Section(section) => {
-                    let Some(section) = self.read_section(
+                    let sections = read_sections(
+                        &mut self.section_buffers,
                         pid,
                         packet.header.payload_unit_start_indicator,
                         section.pointer_field,
                         section.data.as_ref(),
-                    ) else {
+                    );
+                    if sections.is_empty() {
                         continue;
                     };
 
-                    if self.ecm_pids.contains(&pid) {
-                        self.read_ecm(Bytes::from(section))?;
-                        continue;
-                    }
+                    for section in sections {
+                        if self.ecm_pids.contains(&pid) {
+                            self.read_ecm(Bytes::from(section))?;
+                            continue;
+                        }
 
-                    let Some(table_id) = section.first().copied() else {
-                        continue;
-                    };
+                        let Some(table_id) = section.first().copied() else {
+                            continue;
+                        };
 
-                    let mut bytes = Bytes::from(section);
-                    let table = B10Table::read(&mut bytes)?;
-                    if !matches!(table, B10Table::Unknown(_, _)) {
-                        out.push(Packet::B10Table { table_id, table });
+                        let mut bytes = Bytes::from(section);
+                        let table = B10Table::read(&mut bytes)?;
+                        if !matches!(table, B10Table::Unknown(_, _)) {
+                            out.push(Packet::B10Table { table_id, table });
+                        }
                     }
                 }
                 TsPayload::PesStart(pes) => {
@@ -263,45 +267,71 @@ impl<R: Read> M2tsDemuxer<R> {
             })
             .collect()
     }
+}
 
-    fn read_section(
-        &mut self,
-        pid: Pid,
-        payload_unit_start_indicator: bool,
-        pointer_field: u8,
-        payload: &[u8],
-    ) -> Option<Vec<u8>> {
-        let buffer = self.section_buffers.entry(pid).or_default();
+fn read_sections(
+    section_buffers: &mut BTreeMap<Pid, Vec<u8>>,
+    pid: Pid,
+    payload_unit_start_indicator: bool,
+    pointer_field: u8,
+    payload: &[u8],
+) -> Vec<Vec<u8>> {
+    let mut sections = Vec::new();
+    let buffer = section_buffers.entry(pid).or_default();
 
-        if payload_unit_start_indicator {
-            let section_offset = usize::from(pointer_field);
-            if section_offset >= payload.len() {
-                buffer.clear();
-                return None;
+    if payload_unit_start_indicator {
+        let new_section_offset = usize::from(pointer_field);
+        if new_section_offset > payload.len() {
+            buffer.clear();
+            return sections;
+        }
+
+        if new_section_offset > 0 {
+            if !buffer.is_empty() {
+                buffer.extend_from_slice(&payload[..new_section_offset]);
+                drain_complete_sections(buffer, &mut sections);
             }
 
             buffer.clear();
-            buffer.extend_from_slice(&payload[section_offset..]);
         } else if !buffer.is_empty() {
-            buffer.extend_from_slice(payload);
-        } else {
-            return None;
+            buffer.clear();
+        }
+
+        if new_section_offset == payload.len() {
+            return sections;
+        }
+
+        buffer.extend_from_slice(&payload[new_section_offset..]);
+    } else if !buffer.is_empty() {
+        buffer.extend_from_slice(payload);
+    } else {
+        return sections;
+    }
+
+    drain_complete_sections(buffer, &mut sections);
+
+    sections
+}
+
+fn drain_complete_sections(buffer: &mut Vec<u8>, sections: &mut Vec<Vec<u8>>) {
+    loop {
+        if buffer.first().copied() == Some(0xFF) {
+            buffer.clear();
+            break;
         }
 
         if buffer.len() < 3 {
-            return None;
+            break;
         }
 
         let section_length = usize::from(u16::from_be_bytes([buffer[1] & 0x0F, buffer[2]]));
         let section_end = 3 + section_length;
         if buffer.len() < section_end {
-            return None;
+            break;
         }
 
-        let section = buffer[..section_end].to_vec();
+        sections.push(buffer[..section_end].to_vec());
         buffer.drain(..section_end);
-
-        Some(section)
     }
 }
 
@@ -743,5 +773,64 @@ impl<W: WriteTsPacket + Send + Sync> Mux for M2tsMuxer<W> {
         };
 
         self.write_pes(pid, data, dts, pts)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_sections_keeps_previous_section_tail_before_pointer_field() {
+        let pid = Pid::new(0x0012).unwrap();
+        let mut buffers = BTreeMap::new();
+
+        assert!(
+            read_sections(&mut buffers, pid, true, 0, &[0x4E, 0xB0, 0x05, 0x01, 0x02],).is_empty()
+        );
+
+        let sections = read_sections(
+            &mut buffers,
+            pid,
+            true,
+            3,
+            &[
+                0x03, 0x04, 0x05, // End of the previous section.
+                0x4F, 0xB0, 0x03, 0x06, 0x07, 0x08,
+            ],
+        );
+
+        assert_eq!(
+            sections,
+            vec![
+                vec![0x4E, 0xB0, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05],
+                vec![0x4F, 0xB0, 0x03, 0x06, 0x07, 0x08],
+            ]
+        );
+    }
+
+    #[test]
+    fn read_sections_drains_multiple_sections_from_one_payload() {
+        let pid = Pid::new(0x0012).unwrap();
+        let mut buffers = BTreeMap::new();
+
+        let sections = read_sections(
+            &mut buffers,
+            pid,
+            true,
+            0,
+            &[
+                0x4E, 0xB0, 0x03, 0x01, 0x02, 0x03, 0x4F, 0xB0, 0x03, 0x04, 0x05, 0x06, 0xFF,
+            ],
+        );
+
+        assert_eq!(
+            sections,
+            vec![
+                vec![0x4E, 0xB0, 0x03, 0x01, 0x02, 0x03],
+                vec![0x4F, 0xB0, 0x03, 0x04, 0x05, 0x06],
+            ]
+        );
+        assert!(buffers.get(&pid).map_or(true, Vec::is_empty));
     }
 }
