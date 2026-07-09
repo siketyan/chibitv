@@ -1,3 +1,4 @@
+use std::env;
 use std::ffi::c_void;
 use std::io::{ErrorKind, Read};
 use std::ptr::{null, null_mut};
@@ -19,6 +20,7 @@ use crate::channel::ChannelInner;
 use crate::tuner::{Channel, Tuner};
 
 const DVR_BUFFER_SIZE: i32 = 32 * 1024 * 1024;
+const DVB_VERBOSE_ENV: &str = "CHIBITV_DVB_VERBOSE";
 
 struct DvbDevice {
     dvb: *mut dvb_device,
@@ -32,7 +34,7 @@ impl DvbDevice {
         unsafe {
             let dvb = dvb_dev_alloc();
 
-            dvb_dev_set_log(dvb, 3, None);
+            dvb_dev_set_log(dvb, if is_verbose_logging_enabled() { 3 } else { 0 }, None);
             dvb_dev_find(dvb, None, null_mut());
 
             let demux_dev = dvb_dev_seek_by_adapter(dvb, adapter, num, DVB_DEVICE_DEMUX);
@@ -148,6 +150,11 @@ impl Drop for DvbDvr {
 
 unsafe impl Send for DvbDvr {}
 unsafe impl Sync for DvbDvr {}
+
+fn is_verbose_logging_enabled() -> bool {
+    env::var(DVB_VERBOSE_ENV)
+        .is_ok_and(|value| !matches!(value.as_str(), "" | "0" | "false" | "False" | "FALSE"))
+}
 
 pub struct DvbTuner {
     demux: DvbDemux,
