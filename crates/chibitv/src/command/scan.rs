@@ -115,7 +115,7 @@ pub async fn scan(options: &Options, config: &Config) -> anyhow::Result<()> {
                     continue;
                 };
 
-                state.read_table(physical_channel, frequency, table);
+                state.read_table(physical_channel, table);
 
                 if state.is_ready() {
                     break;
@@ -146,19 +146,18 @@ impl ScanState {
         self.nit.is_some() && !self.services.is_empty()
     }
 
-    fn read_table(&mut self, physical_channel: u8, frequency: u32, table: Table) {
+    fn read_table(&mut self, physical_channel: u8, table: Table) {
         match table {
-            Table::Nit(nit) => self.read_nit(physical_channel, frequency, nit),
-            Table::Sdt(sdt) => self.read_sdt(physical_channel, frequency, sdt),
+            Table::Nit(nit) => self.read_nit(physical_channel, nit),
+            Table::Sdt(sdt) => self.read_sdt(physical_channel, sdt),
             _ => {}
         }
     }
 
-    fn read_nit(&mut self, physical_channel: u8, frequency: u32, nit: Nit) {
+    fn read_nit(&mut self, physical_channel: u8, nit: Nit) {
         if self.logged_networks.insert(nit.network_id) {
             info!(
                 physical_channel,
-                frequency,
                 network_id = nit.network_id,
                 network_name = network_name(&nit).unwrap_or_default(),
                 "Network found"
@@ -170,7 +169,7 @@ impl ScanState {
         }
     }
 
-    fn read_sdt(&mut self, physical_channel: u8, frequency: u32, sdt: Sdt) {
+    fn read_sdt(&mut self, physical_channel: u8, sdt: Sdt) {
         for service in sdt.services {
             if self.logged_services.insert(service.service_id) {
                 let descriptor = service_descriptor(&service).unwrap_or_default();
@@ -200,7 +199,6 @@ impl ScanState {
 #[derive(Clone, Debug, Default)]
 struct ServiceDescriptor {
     service_type: Option<u8>,
-    provider_name: String,
     service_name: String,
 }
 
@@ -226,7 +224,6 @@ fn service_descriptor(service: &ServiceInformation) -> Option<ServiceDescriptor>
 
         Some(ServiceDescriptor {
             service_type: Some(descriptor.service_type),
-            provider_name: text_bytes(&descriptor.service_provider_name),
             service_name: text_bytes(&descriptor.service_name),
         })
     })
