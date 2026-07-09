@@ -150,8 +150,8 @@ unsafe impl Send for DvbDvr {}
 unsafe impl Sync for DvbDvr {}
 
 pub struct DvbTuner {
-    dev: DvbDevice,
     demux: DvbDemux,
+    dev: DvbDevice,
 }
 
 impl DvbTuner {
@@ -160,8 +160,8 @@ impl DvbTuner {
         let demux_fd = dev.open_demux()?;
 
         Ok(Self {
-            dev,
             demux: demux_fd,
+            dev,
         })
     }
 }
