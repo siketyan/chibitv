@@ -15,6 +15,7 @@ use mpeg2ts::ts::{
     WriteTsPacket,
 };
 
+use chibitv_b10::descriptor::Descriptor as B10Descriptor;
 use chibitv_b10::table::Table as B10Table;
 use chibitv_b25::{B25Descrambler, NoDecryptionKeyError};
 
@@ -416,21 +417,19 @@ fn timestamp_to_seconds(timestamp: Timestamp) -> f64 {
 }
 
 fn ca_descriptor_pid(descriptor: &Descriptor, ca_system_id: u16) -> anyhow::Result<Option<Pid>> {
-    if descriptor.tag != 0x09 || descriptor.data.len() < 4 {
+    let descriptor = B10Descriptor::try_from(descriptor)?;
+    let B10Descriptor::Ca(descriptor) = descriptor else {
+        return Ok(None);
+    };
+
+    if descriptor.ca_system_id != ca_system_id
+        || descriptor.ca_pid == 0
+        || descriptor.ca_pid == 0x1fff
+    {
         return Ok(None);
     }
 
-    let descriptor_ca_system_id = u16::from_be_bytes([descriptor.data[0], descriptor.data[1]]);
-    if descriptor_ca_system_id != ca_system_id {
-        return Ok(None);
-    }
-
-    let pid = u16::from_be_bytes([descriptor.data[2] & 0x1f, descriptor.data[3]]);
-    if pid == 0 || pid == 0x1fff {
-        return Ok(None);
-    }
-
-    Ok(Some(Pid::new(pid)?))
+    Ok(Some(Pid::new(descriptor.ca_pid)?))
 }
 
 const B10_SECTION_PIDS: &[u16] = &[
