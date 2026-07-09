@@ -5,7 +5,7 @@ use tokio::sync::broadcast::Sender;
 use tokio::sync::oneshot::Receiver;
 use tracing::error;
 
-use chibitv_b10::table::Table as B10Table;
+use chibitv_b10::table::{Eit, Table as B10Table};
 use chibitv_b60::message::{M2SectionMessage, Message};
 use chibitv_b60::table::{MhBit, MhEit, MhSdt, Table};
 
@@ -158,7 +158,36 @@ impl<D: Demux, M: Mux> Remuxer<D, M> {
         Ok(())
     }
 
-    fn read_b10_table(&mut self, _table: B10Table) -> anyhow::Result<()> {
+    fn read_b10_table(&mut self, table: B10Table) -> anyhow::Result<()> {
+        match table {
+            B10Table::Eit(table) => self.read_eit(table),
+            _ => Ok(()),
+        }
+    }
+
+    fn read_eit(&mut self, table: Eit) -> anyhow::Result<()> {
+        for event in table.events {
+            // TODO: Put event to the registry
+
+            let Some((start_time, duration)) = event.start_time.zip(event.duration) else {
+                continue;
+            };
+
+            let end_time = start_time + duration;
+            let now = chrono::Local::now().naive_local();
+
+            if start_time <= now && now < end_time && self.current_event_id != Some(event.event_id)
+            {
+                if let Some(signal_tx) = &self.signal_tx {
+                    signal_tx.send(Signal::EventChanged {
+                        event_id: event.event_id,
+                    })?;
+                }
+
+                self.current_event_id = Some(event.event_id);
+            }
+        }
+
         Ok(())
     }
 

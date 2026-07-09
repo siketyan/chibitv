@@ -11,7 +11,7 @@ use crate::channel::{Channel, ChannelInner};
 use crate::config::Config;
 use crate::m2ts::{M2tsDemuxer, M2tsMuxer};
 use crate::mmt::MmtDemuxer;
-use crate::remux::{Remux, Remuxer};
+use crate::remux::{Remux, Remuxer, Signal};
 use crate::tuner::Tuners;
 
 #[derive(Clone, Debug, Parser)]
@@ -49,6 +49,22 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
     let writer = TsPacketWriter::new(BufWriter::new(output));
     let mux = M2tsMuxer::new(writer);
 
+    let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel::<Signal>(1);
+
+    tokio::spawn(async move {
+        loop {
+            let Ok(signal) = signal_rx.recv().await else {
+                continue;
+            };
+
+            match signal {
+                Signal::EventChanged { event_id, .. } => {
+                    info!(event_id, "Event changed");
+                }
+            }
+        }
+    });
+
     match channel.inner {
         ChannelInner::IsdbS { .. } => {
             let cas_module = Arc::new(Mutex::new(B61CasModule::open(
@@ -56,14 +72,14 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
             )?));
             let descrambler = Descrambler::init(cas_module, false)?;
             let demux = MmtDemuxer::new(BufReader::new(input), descrambler);
-            let mut remux = Remuxer::new(demux, mux, None, None);
+            let mut remux = Remuxer::new(demux, mux, Some(signal_tx), None);
 
             remux.run(None)
         }
         ChannelInner::IsdbT { .. } => {
             let descrambler = B25Descrambler::open()?;
             let demux = M2tsDemuxer::new(input, descrambler);
-            let mut remux = Remuxer::new(demux, mux, None, None);
+            let mut remux = Remuxer::new(demux, mux, Some(signal_tx), None);
 
             remux.run(None)
         }
