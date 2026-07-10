@@ -14,6 +14,7 @@ use mpeg2ts::ts::{
     TransportScramblingControl, TsHeader, TsPacket, TsPacketReader, TsPayload, VersionNumber,
     WriteTsPacket,
 };
+use tracing::warn;
 
 use chibitv_b10::descriptor::Descriptor as B10Descriptor;
 use chibitv_b10::table::Table as B10Table;
@@ -89,7 +90,9 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
             let mut packet = match self.reader.read_ts_packet() {
                 Ok(Some(packet)) => packet,
                 Ok(None) => break,
-                Err(_) => {
+                Err(error) => {
+                    warn!(error = %error, "Failed to parse MPEG-TS packet");
+
                     if out.is_empty() {
                         continue;
                     }
