@@ -41,7 +41,7 @@ impl Default for Decoder {
                 GraphicSet::Kanji,
                 GraphicSet::Alphanumeric,
                 GraphicSet::Hiragana,
-                GraphicSet::Katakana,
+                GraphicSet::Macro,
             ],
             gl: 0,
             gr: 2,
@@ -78,7 +78,13 @@ impl Decoder {
         output
     }
 
-    fn decode_single_shift(&self, bytes: &[u8], index: &mut usize, g: usize, output: &mut String) {
+    fn decode_single_shift(
+        &mut self,
+        bytes: &[u8],
+        index: &mut usize,
+        g: usize,
+        output: &mut String,
+    ) {
         let Some(byte) = bytes.get(*index).copied() else {
             return;
         };
@@ -92,7 +98,7 @@ impl Decoder {
     }
 
     fn decode_graphic(
-        &self,
+        &mut self,
         bytes: &[u8],
         index: &mut usize,
         g: usize,
@@ -100,6 +106,11 @@ impl Decoder {
         output: &mut String,
     ) {
         let set = self.g[g];
+
+        if set == GraphicSet::Macro {
+            self.apply_default_macro(byte);
+            return;
+        }
 
         if set.is_two_byte() {
             let Some(trail) = bytes.get(*index).copied() else {
@@ -112,6 +123,76 @@ impl Decoder {
         } else {
             output.push_str(&decode_one_byte(set, byte));
         }
+    }
+
+    fn apply_default_macro(&mut self, byte: u8) {
+        let graphic_sets = match byte {
+            0x60 => [
+                GraphicSet::Kanji,
+                GraphicSet::Alphanumeric,
+                GraphicSet::Hiragana,
+                GraphicSet::Macro,
+            ],
+            0x61 => [
+                GraphicSet::Kanji,
+                GraphicSet::Katakana,
+                GraphicSet::Hiragana,
+                GraphicSet::Macro,
+            ],
+            0x62 => [
+                GraphicSet::Kanji,
+                GraphicSet::DrCs,
+                GraphicSet::Hiragana,
+                GraphicSet::Macro,
+            ],
+            0x63 => [
+                GraphicSet::Mosaic,
+                GraphicSet::Mosaic,
+                GraphicSet::Mosaic,
+                GraphicSet::Macro,
+            ],
+            0x64 => [
+                GraphicSet::Mosaic,
+                GraphicSet::Mosaic,
+                GraphicSet::Mosaic,
+                GraphicSet::Macro,
+            ],
+            0x65 => [
+                GraphicSet::Mosaic,
+                GraphicSet::DrCs,
+                GraphicSet::Mosaic,
+                GraphicSet::Macro,
+            ],
+            0x66..=0x6A => [
+                GraphicSet::DrCs,
+                GraphicSet::DrCs,
+                GraphicSet::DrCs,
+                GraphicSet::Macro,
+            ],
+            0x6B..=0x6D => [
+                GraphicSet::Kanji,
+                GraphicSet::DrCs,
+                GraphicSet::Hiragana,
+                GraphicSet::Macro,
+            ],
+            0x6E => [
+                GraphicSet::Katakana,
+                GraphicSet::Hiragana,
+                GraphicSet::Alphanumeric,
+                GraphicSet::Macro,
+            ],
+            0x6F => [
+                GraphicSet::Alphanumeric,
+                GraphicSet::Mosaic,
+                GraphicSet::DrCs,
+                GraphicSet::Macro,
+            ],
+            _ => return,
+        };
+
+        self.g = graphic_sets;
+        self.gl = 0;
+        self.gr = 2;
     }
 
     fn decode_escape(&mut self, bytes: &[u8], index: &mut usize) {
@@ -361,5 +442,22 @@ mod tests {
     fn rejects_undefined_arib_kana_cells() {
         assert_eq!(decode(&[0x19, 0x74]), "�");
         assert_eq!(decode(&[0x1B, 0x29, 0x31, 0x0E, 0x74]), "�");
+    }
+
+    #[test]
+    fn initializes_g3_as_macro() {
+        assert_eq!(decode(&[0x1D, 0x61, 0x0E, 0x22]), "ア");
+    }
+
+    #[test]
+    fn applies_default_macro_to_restore_designations() {
+        assert_eq!(
+            decode(&[
+                0x1B, 0x29, 0x31, // Designate Katakana to G1.
+                0x1D, 0x60, // Restore the default sets through G3.
+                0x0E, 0x41,
+            ]),
+            "A"
+        );
     }
 }
