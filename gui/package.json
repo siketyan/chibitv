@@ -7,21 +7,23 @@
   },
   "packageManager": "pnpm@11.10.0+sha512.0b7f8b98060031904c017e3a41eb187a16d40eeb829b95c4f8cb03681761fc4ab53dd219115b9b447f4dce1a05a214764461e7d3703392a9f32f9511ce8c86c8",
   "dependencies": {
+    "@bufbuild/protobuf": "2.10.1",
+    "@connectrpc/connect": "2.1.2",
+    "@connectrpc/connect-web": "2.1.2",
     "@heroicons/react": "2.2.0",
     "@heroui/react": "3.2.2",
-    "clsx": "2.1.1",
-    "openapi-fetch": "0.17.0"
+    "clsx": "2.1.1"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.2",
+    "@bufbuild/buf": "1.66.1",
+    "@bufbuild/protoc-gen-es": "2.10.1",
     "@rsbuild/core": "2.1.4",
     "@rsbuild/plugin-react": "2.1.0",
     "@tailwindcss/postcss": "4.3.2",
     "@tanstack/react-query": "5.101.2",
     "@types/react": "19.2.17",
     "@types/react-dom": "19.2.3",
-    "openapi-react-query": "0.5.4",
-    "openapi-typescript": "7.13.0",
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "tailwindcss": "4.3.2",
@@ -31,6 +33,6 @@
     "check": "biome check .",
     "fix": "biome check --write .",
     "dev": "rsbuild dev",
-    "generate": "openapi-typescript http://[::1]:3001/api/openapi.json -o ./src/api/schema.d.ts"
+    "generate": "buf generate ../proto"
   }
 }

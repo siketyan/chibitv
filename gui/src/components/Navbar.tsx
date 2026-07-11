@@ -1,8 +1,9 @@
 import { CalendarDaysIcon, InformationCircleIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { Button, Link, Tooltip } from "@heroui/react";
+import { useQuery } from "@tanstack/react-query";
 import type { JSX } from "react";
 
-import { $api } from "../api";
+import { chibitvClient, queryKeys } from "../api";
 import { MobileChannels } from "./MobileChannels";
 
 interface NavbarProps {
@@ -11,16 +12,13 @@ interface NavbarProps {
 }
 
 export function Navbar({ isScheduleOpen, onChangeScheduleOpen }: NavbarProps): JSX.Element {
-  const { data: stream = {} } = $api.useQuery(
-    "get",
-    "/streams/{id}",
-    { params: { path: { id: 0 } } },
-    {
-      refetchInterval: 5000,
-      refetchIntervalInBackground: true,
-    },
-  );
-  const event = stream.event ?? undefined;
+  const { data: stream } = useQuery({
+    queryKey: queryKeys.stream(0),
+    queryFn: () => chibitvClient.getStream({ streamId: 0 }),
+    refetchInterval: 5000,
+    refetchIntervalInBackground: true,
+  });
+  const event = stream?.event;
   const description = event?.description.filter(({ content }) => content.length > 0) ?? [];
 
   return (

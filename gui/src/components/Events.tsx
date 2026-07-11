@@ -1,8 +1,10 @@
 import { Chip } from "@heroui/react";
+import { useQuery } from "@tanstack/react-query";
 import clsx from "clsx";
 import type { JSX } from "react";
 
-import { $api } from "../api";
+import { chibitvClient, queryKeys } from "../api";
+import type { DateTime } from "../gen/chibitv/v1/chibitv_pb";
 
 const timeFormatter = new Intl.DateTimeFormat("en-GB", {
   hour: "2-digit",
@@ -24,34 +26,39 @@ function formatDuration(startAt: Date, endAt: Date): string {
   return `${hours}h`;
 }
 
+function toDate(value: DateTime | undefined): Date | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  return new Date(Number(value.seconds) * 1000 + value.nanos / 1_000_000);
+}
+
 export function Events(): JSX.Element {
   const now = new Date();
-  const { data: stream = {} } = $api.useQuery("get", "/streams/{id}", {
-    params: { path: { id: 0 } },
+  const { data: stream } = useQuery({
+    queryKey: queryKeys.stream(0),
+    queryFn: () => chibitvClient.getStream({ streamId: 0 }),
   });
-  const serviceId = stream.service?.id;
-  const { data: events = [] } = $api.useQuery(
-    "get",
-    "/services/{id}/events",
-    { params: { path: { id: serviceId ?? 0 } } },
-    {
-      enabled: serviceId !== undefined,
-      select: (events) =>
-        events
-          .map((event) => {
-            if (!event.start_time || !event.end_time || !event.title) return undefined;
-            return {
-              id: event.id,
-              title: event.title,
-              startAt: new Date(event.start_time),
-              endAt: new Date(event.end_time),
-            };
-          })
-          .filter((event) => event != null)
-          .filter((event) => event.endAt >= now)
-          .toSorted((a, b) => a.startAt.valueOf() - b.startAt.valueOf()),
-    },
-  );
+  const serviceId = stream?.service?.id;
+  const { data: events = [] } = useQuery({
+    queryKey: queryKeys.events(serviceId ?? 0),
+    queryFn: async () => (await chibitvClient.listEvents({ serviceId: serviceId ?? 0 })).events,
+    enabled: serviceId !== undefined,
+    select: (events) =>
+      events
+        .flatMap((event) => {
+          const startAt = toDate(event.startTime);
+          const endAt = toDate(event.endTime);
+          if (!startAt || !endAt || !event.title) {
+            return [];
+          }
+
+          return [{ id: event.id, title: event.title, startAt, endAt }];
+        })
+        .filter((event) => event.endAt >= now)
+        .toSorted((a, b) => a.startAt.valueOf() - b.startAt.valueOf()),
+  });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3">

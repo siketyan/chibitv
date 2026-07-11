@@ -1,10 +1,16 @@
-import createFetchClient from "openapi-fetch";
-import createClient from "openapi-react-query";
+import { createClient } from "@connectrpc/connect";
+import { createConnectTransport } from "@connectrpc/connect-web";
 
-import type { paths } from "./schema.d.ts";
+import { ChibitvService } from "../gen/chibitv/v1/chibitv_pb";
 
-const fetchClient = createFetchClient<paths>({
-  baseUrl: "/api",
+const transport = createConnectTransport({
+  baseUrl: location.origin,
 });
 
-export const $api = createClient(fetchClient);
+export const chibitvClient = createClient(ChibitvService, transport);
+
+export const queryKeys = {
+  services: ["services"] as const,
+  stream: (streamId: number) => ["stream", streamId] as const,
+  events: (serviceId: number) => ["events", serviceId] as const,
+};

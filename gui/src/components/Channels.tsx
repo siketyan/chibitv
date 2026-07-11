@@ -1,25 +1,36 @@
 import { CheckIcon } from "@heroicons/react/24/outline";
 import { ListBox, Spinner } from "@heroui/react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { JSX } from "react";
 
-import { $api } from "../api";
+import { chibitvClient, queryKeys } from "../api";
 
 interface ChannelsProps {
   onServiceChange?: () => void;
 }
 
 export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
-  const { data: services = [], isLoading, isError } = $api.useQuery("get", "/services");
-  const { data: stream = {}, refetch } = $api.useQuery("get", "/streams/{id}", {
-    params: { path: { id: 0 } },
+  const queryClient = useQueryClient();
+  const {
+    data: services = [],
+    isLoading,
+    isError,
+  } = useQuery({
+    queryKey: queryKeys.services,
+    queryFn: async () => (await chibitvClient.listServices({})).services,
   });
-  const { mutate, isPending } = $api.useMutation("patch", "/streams/{id}", {
+  const { data: stream } = useQuery({
+    queryKey: queryKeys.stream(0),
+    queryFn: () => chibitvClient.getStream({ streamId: 0 }),
+  });
+  const { mutate, variables, isPending } = useMutation({
+    mutationFn: (serviceId: number) => chibitvClient.updateStream({ streamId: 0, serviceId }),
     onSuccess: async () => {
-      await refetch();
+      await queryClient.invalidateQueries({ queryKey: queryKeys.stream(0) });
       onServiceChange?.();
     },
   });
-  const serviceId = stream.service?.id;
+  const serviceId = stream?.service?.id;
 
   if (isLoading) {
     return (
@@ -52,7 +63,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         const [key] = keys;
         const selectedServiceId = Number(key);
         if (!Number.isNaN(selectedServiceId) && selectedServiceId !== serviceId) {
-          mutate({ params: { path: { id: 0 } }, body: { service_id: selectedServiceId } });
+          mutate(selectedServiceId);
         }
       }}
     >
@@ -66,9 +77,9 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         >
           <div className="flex min-w-0 flex-1 flex-col">
             <span className="truncate text-sm font-medium">{service.name}</span>
-            {service.provider_name && <span className="truncate text-xs text-muted">{service.provider_name}</span>}
+            {service.providerName && <span className="truncate text-xs text-muted">{service.providerName}</span>}
           </div>
-          {isPending && service.id === serviceId ? (
+          {isPending && service.id === variables ? (
             <Spinner className="ms-auto shrink-0" size="sm" />
           ) : (
             <ListBox.ItemIndicator className="text-accent">

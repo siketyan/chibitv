@@ -1,17 +1,19 @@
+import { useQuery } from "@tanstack/react-query";
 import { type JSX, useEffect, useRef } from "react";
 
-import { $api } from "../api";
+import { chibitvClient, queryKeys } from "../api";
 
 export function Player(): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
-  const { data: stream = {} } = $api.useQuery("get", "/streams/{id}", {
-    params: { path: { id: 0 } },
+  const { data: stream } = useQuery({
+    queryKey: queryKeys.stream(0),
+    queryFn: () => chibitvClient.getStream({ streamId: 0 }),
   });
-  const serviceId = stream.service?.id;
+  const serviceId = stream?.service?.id;
 
   useEffect(() => {
     const video = ref.current;
-    if (!video) {
+    if (!video || serviceId === undefined) {
       return;
     }
 
@@ -62,27 +64,10 @@ export function Player(): JSX.Element {
     };
 
     const readStream = async () => {
-      const streamUrl = new URL("/api/streams/0/stream.mp4", location.href);
-      streamUrl.searchParams.set("v", (serviceId ?? 0).toString());
-
-      const response = await fetch(streamUrl, {
-        signal: abortController.signal,
-      });
-      if (!response.ok || !response.body) {
-        throw new Error(`Stream request failed: ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      while (!abortController.signal.aborted) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        if (value) {
-          queue.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer);
-          appendNext();
-        }
+      const stream = chibitvClient.streamFmp4({ streamId: 0 }, { signal: abortController.signal });
+      for await (const { data } of stream) {
+        queue.push(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer);
+        appendNext();
       }
     };
 
