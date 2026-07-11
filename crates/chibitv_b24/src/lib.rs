@@ -67,6 +67,12 @@ pub enum DrcsMapping {
     Replacement,
 }
 
+#[derive(Copy, Clone, Debug)]
+pub enum DecoderProfile {
+    Data,
+    Caption,
+}
+
 #[derive(Clone, Debug)]
 pub struct Decoder {
     g: [GraphicSet; 4],
@@ -85,7 +91,7 @@ impl Default for Decoder {
                 GraphicSet::Kanji,
                 GraphicSet::Alphanumeric,
                 GraphicSet::Hiragana,
-                GraphicSet::Macro,
+                GraphicSet::Katakana,
             ],
             gl: 0,
             gr: 2,
@@ -98,6 +104,14 @@ impl Default for Decoder {
 }
 
 impl Decoder {
+    pub fn with_profile(profile: DecoderProfile) -> Self {
+        let mut decoder = Self::default();
+        if matches!(profile, DecoderProfile::Caption) {
+            decoder.g[3] = GraphicSet::Macro;
+        }
+        decoder
+    }
+
     pub fn with_drcs_mapping(drcs_mapping: DrcsMapping) -> Self {
         Self {
             drcs_mapping,
@@ -626,6 +640,10 @@ fn replacement() -> String {
 mod tests {
     use super::*;
 
+    fn decode_caption(bytes: &[u8]) -> String {
+        Decoder::with_profile(DecoderProfile::Caption).decode(bytes)
+    }
+
     #[test]
     fn decodes_locking_shift_alphanumeric() {
         assert_eq!(decode(b"\x0ETOKYO MX1"), "TOKYO MX1");
@@ -679,14 +697,15 @@ mod tests {
     }
 
     #[test]
-    fn initializes_g3_as_macro() {
-        assert_eq!(decode(&[0x1D, 0x61, 0x0E, 0x22]), "ア");
+    fn initializes_g3_for_data_and_caption_profiles() {
+        assert_eq!(decode(&[0x1D, 0x22]), "ア");
+        assert_eq!(decode_caption(&[0x1D, 0x61, 0x0E, 0x22]), "ア");
     }
 
     #[test]
     fn applies_default_macro_to_restore_designations() {
         assert_eq!(
-            decode(&[
+            decode_caption(&[
                 0x1B, 0x29, 0x31, // Designate Katakana to G1.
                 0x1D, 0x60, // Restore the default sets through G3.
                 0x0E, 0x41,
@@ -743,7 +762,7 @@ mod tests {
     #[test]
     fn treats_default_macro_drcs_as_one_byte() {
         assert_eq!(
-            decode(&[0x1D, 0x62, 0x0E, 0x21, 0x1D, 0x60, 0x0E, 0x41]),
+            decode_caption(&[0x1D, 0x62, 0x0E, 0x21, 0x1D, 0x60, 0x0E, 0x41]),
             "\u{EC00}A"
         );
     }
@@ -763,13 +782,13 @@ mod tests {
     #[test]
     fn can_replace_drcs_instead_of_using_private_use_characters() {
         let mut decoder = Decoder::with_drcs_mapping(DrcsMapping::Replacement);
-        assert_eq!(decoder.decode(&[0x1D, 0x62, 0x0E, 0x21]), "�");
+        assert_eq!(decoder.decode(&[0x1B, 0x29, 0x20, 0x41, 0x0E, 0x21]), "�");
     }
 
     #[test]
     fn reuses_private_use_character_for_the_same_drcs_code() {
         assert_eq!(
-            decode(&[0x1D, 0x62, 0x0E, 0x21, 0x21, 0x22]),
+            decode_caption(&[0x1D, 0x62, 0x0E, 0x21, 0x21, 0x22]),
             "\u{EC00}\u{EC00}\u{EC01}"
         );
     }
