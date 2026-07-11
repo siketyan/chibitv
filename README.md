@@ -123,8 +123,9 @@ MP4 requires an output path. MP4 and fragmented MP4 output from an `m2ts` input 
 
 ### `scan`
 
-Scan terrestrial UHF physical channels and print discovered ISDB-T `[[channels]]` entries as TOML. The default range
-is channels 13 through 52, with a maximum wait of 12 seconds per channel.
+Scan terrestrial UHF physical channels and print discovered ISDB-T `[[channels]]` entries and their inline
+`services` catalog as TOML. The default range is channels 13 through 52, with a maximum wait of 12 seconds per
+channel.
 
 ```shell
 cargo run -- scan > scanned-channels.toml
@@ -163,7 +164,9 @@ pnpm --filter chibitv dev
 
 Open http://localhost:3000/ in your browser and enjoy!
 
-The server currently supports ISDB-S channels only and requires at least one configured tuner and channel.
+The server supports ISDB-S and ISDB-T channels and requires at least one configured tuner and channel. For ISDB-T,
+generate the service catalog with `scan` first so that every configured physical channel's services are available
+before tuning.
 
 ## References
 
