@@ -195,6 +195,7 @@ impl From<&registry::Service> for Service {
             id: value.id.into(),
             name: value.name.clone(),
             provider_name: value.provider_name.clone(),
+            channel_id: value.channel_id as u32,
             ..Default::default()
         }
     }

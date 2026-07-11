@@ -10,6 +10,7 @@ const transport = createConnectTransport({
 export const chibitvClient = createClient(ChibitvService, transport);
 
 export const queryKeys = {
+  channels: ["channels"] as const,
   services: ["services"] as const,
   events: (serviceId: number) => ["events", serviceId] as const,
 };

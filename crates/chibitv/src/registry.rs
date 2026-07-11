@@ -24,7 +24,7 @@ pub struct Service {
     pub name: String,
     pub provider_name: String,
     pub transport_stream_id: u16,
-    pub channel_id: Option<usize>,
+    pub channel_id: usize,
 
     events: Arc<HashMap<u16, Event>>,
 }
@@ -101,7 +101,12 @@ impl Registry {
         broadcasters.insert(broadcaster_id, broadcaster);
     }
 
-    pub fn put_service(&self, transport_stream_id: u16, service: &ServiceInformation) {
+    pub fn put_service(
+        &self,
+        channel_id: usize,
+        transport_stream_id: u16,
+        service: &ServiceInformation,
+    ) {
         let service_id = service.service_id;
         let services = self.services.pin();
         if services.contains_key(&service_id) {
@@ -128,7 +133,7 @@ impl Registry {
             name: String::from_utf8_lossy(&descriptor.service_name).to_string(),
             provider_name: String::from_utf8_lossy(&descriptor.service_provider_name).to_string(),
             transport_stream_id,
-            channel_id: None,
+            channel_id,
             events: Arc::new(HashMap::new()),
         };
 
@@ -170,7 +175,7 @@ impl Registry {
             name: decode_b24(&descriptor.service_name),
             provider_name: decode_b24(&descriptor.service_provider_name),
             transport_stream_id,
-            channel_id: Some(channel_id),
+            channel_id,
             events,
         };
 
@@ -198,7 +203,7 @@ impl Registry {
                 name,
                 provider_name,
                 transport_stream_id,
-                channel_id: Some(channel_id),
+                channel_id,
                 events: Arc::new(HashMap::new()),
             },
         );
@@ -320,8 +325,36 @@ mod tests {
     use chibitv_b10::descriptor::{
         Descriptor as B10Descriptor, ServiceDescriptor, ShortEventDescriptor,
     };
+    use chibitv_b60::descriptor::{Descriptor as B60Descriptor, MhServiceDescriptor};
+    use chibitv_b60::table::ServiceInformation as B60ServiceInformation;
 
     use super::*;
+
+    #[test]
+    fn registers_isdb_s_service_with_channel_id() {
+        let registry = Registry::default();
+        registry.put_service(
+            4,
+            0x1234,
+            &B60ServiceInformation {
+                service_id: 0x5678,
+                eit_user_defined_flags: 0,
+                eit_schedule_flag: true,
+                eit_present_following_flag: true,
+                running_status: 4,
+                free_ca_mode: false,
+                descriptors: vec![B60Descriptor::MhService(MhServiceDescriptor {
+                    service_type: 0x01,
+                    service_provider_name: b"Provider".to_vec(),
+                    service_name: b"Channel".to_vec(),
+                })],
+            },
+        );
+
+        let service = registry.get_service_by_id(0x5678).unwrap();
+        assert_eq!(service.channel_id, 4);
+        assert_eq!(service.transport_stream_id, 0x1234);
+    }
 
     #[test]
     fn registers_isdb_t_service_and_event() {
@@ -355,7 +388,7 @@ mod tests {
         assert_eq!(service.name, "Channel");
         assert_eq!(service.provider_name, "Provider");
         assert_eq!(service.transport_stream_id, 0x1234);
-        assert_eq!(service.channel_id, Some(3));
+        assert_eq!(service.channel_id, 3);
 
         let start_time = NaiveDate::from_ymd_opt(2026, 7, 11)
             .unwrap()

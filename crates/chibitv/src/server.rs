@@ -104,6 +104,7 @@ mod tests {
         let service_a = body.find("Service A").unwrap();
         let service_b = body.find("Service B").unwrap();
         assert!(service_a < service_b);
+        assert!(body.contains(r#""channelId":1"#));
     }
 
     #[tokio::test]

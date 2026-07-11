@@ -79,7 +79,7 @@ impl Workspace {
                 ChannelInner::IsdbS { stream_id, .. } => {
                     *stream_id == u32::from(service.transport_stream_id)
                 }
-                ChannelInner::IsdbT { .. } => service.channel_id == Some(channel.id),
+                ChannelInner::IsdbT { .. } => service.channel_id == channel.id,
             })
             .ok_or_else(|| WorkspaceError::ChannelNotFound)?;
 

@@ -270,8 +270,8 @@ impl<D: Demux, M: Mux> Remuxer<D, M> {
 
     fn read_mh_sdt(&mut self, table: MhSdt) -> anyhow::Result<()> {
         for service in &table.services {
-            if let Some(registry) = &self.registry {
-                registry.put_service(table.tlv_stream_id, service);
+            if let (Some(registry), Some(channel_id)) = (&self.registry, self.channel_id) {
+                registry.put_service(channel_id, table.tlv_stream_id, service);
             }
         }
 

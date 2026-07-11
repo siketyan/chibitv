@@ -138,10 +138,10 @@ mod tests {
 
         assert_eq!(registry.get_all_services().len(), 2);
         let first = registry.get_service_by_id(101).unwrap();
-        assert_eq!(first.channel_id, Some(0));
+        assert_eq!(first.channel_id, 0);
         assert_eq!(first.transport_stream_id, 100);
         let second = registry.get_service_by_id(201).unwrap();
-        assert_eq!(second.channel_id, Some(1));
+        assert_eq!(second.channel_id, 1);
         assert_eq!(second.transport_stream_id, 200);
     }
 }
