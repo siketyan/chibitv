@@ -22,8 +22,15 @@ export function Player(): JSX.Element {
   }, [subscribeFmp4]);
 
   return (
-    <div className="relative min-h-0 min-w-0 overflow-hidden bg-black">
-      <video ref={ref} controls muted autoPlay playsInline className="block h-full max-h-full w-full object-contain" />
+    <div className="relative grid min-h-0 min-w-0 place-items-center overflow-hidden bg-black">
+      <video
+        ref={ref}
+        controls
+        muted
+        autoPlay
+        playsInline
+        className="aspect-video h-auto max-h-full w-full max-w-full object-fill"
+      />
       {error && (
         <div className="absolute inset-x-4 bottom-4 rounded-lg bg-danger/90 p-3 text-sm text-white shadow-lg">
           {error}
