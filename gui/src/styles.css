@@ -2,6 +2,7 @@
 
 :root {
   font-family: "Noto Sans Symbols", ui-sans-serif, system-ui, sans-serif;
+  color-scheme: dark;
   background: var(--background);
   color: var(--foreground);
 }

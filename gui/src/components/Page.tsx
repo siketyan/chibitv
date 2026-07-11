@@ -1,26 +1,39 @@
-import clsx from "clsx";
 import { type JSX, useState } from "react";
 
 import { Channels } from "./Channels";
 import { Events } from "./Events";
-import { Navbar } from "./Navbar";
 import { Player } from "./Player";
 
+const isNarrowScreen = () => window.matchMedia("(max-width: 767px)").matches;
+
 export function Page(): JSX.Element {
+  const [isChannelsOpen, setIsChannelsOpen] = useState(() => !isNarrowScreen());
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
 
+  const changeChannelsOpen = (open: boolean) => {
+    setIsChannelsOpen(open);
+    if (open && isNarrowScreen()) {
+      setIsScheduleOpen(false);
+    }
+  };
+
+  const changeScheduleOpen = (open: boolean) => {
+    setIsScheduleOpen(open);
+    if (open && isNarrowScreen()) {
+      setIsChannelsOpen(false);
+    }
+  };
+
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
-      <Navbar isScheduleOpen={isScheduleOpen} onChangeScheduleOpen={setIsScheduleOpen} />
-      <main
-        className={clsx(
-          "grid min-h-0 flex-1 overflow-hidden",
-          isScheduleOpen
-            ? "grid-cols-[minmax(8rem,1fr)_minmax(11rem,40%)] md:grid-cols-[16rem_minmax(8rem,1fr)_minmax(11rem,35%)] lg:grid-cols-[16rem_minmax(8rem,1fr)_24rem]"
-            : "grid-cols-[minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)]",
-        )}
-      >
-        <aside className="hidden min-h-0 flex-col border-r border-separator bg-surface p-3 md:flex">
+    <main className="relative h-dvh overflow-hidden bg-black text-foreground">
+      <Player
+        isChannelsOpen={isChannelsOpen}
+        isScheduleOpen={isScheduleOpen}
+        onChangeChannelsOpen={changeChannelsOpen}
+        onChangeScheduleOpen={changeScheduleOpen}
+      />
+      {isChannelsOpen && (
+        <aside className="absolute bottom-3 left-3 top-18 z-20 flex w-[min(18rem,calc(100%-1.5rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-surface/75 p-3 shadow-2xl backdrop-blur-xl sm:bottom-4 sm:left-4 sm:top-20">
           <div className="flex items-center justify-between px-2 pb-3 pt-1">
             <h2 className="font-semibold">Channels</h2>
           </div>
@@ -28,13 +41,12 @@ export function Page(): JSX.Element {
             <Channels />
           </div>
         </aside>
-        <Player />
-        {isScheduleOpen && (
-          <aside className="flex min-h-0 min-w-0 overflow-hidden border-l border-separator bg-surface">
-            <Events />
-          </aside>
-        )}
-      </main>
-    </div>
+      )}
+      {isScheduleOpen && (
+        <aside className="absolute bottom-3 right-3 top-18 z-20 flex w-[min(24rem,calc(100%-1.5rem))] min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-surface/75 shadow-2xl backdrop-blur-xl sm:bottom-4 sm:right-4 sm:top-20">
+          <Events />
+        </aside>
+      )}
+    </main>
   );
 }
