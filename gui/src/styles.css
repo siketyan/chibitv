@@ -1,6 +1,17 @@
-@import "tailwindcss";
-@plugin "daisyui";
+@import "@heroui/react/styles";
 
 :root {
-  font-family: "Noto Sans Symbols", sans-serif;
+  font-family: "Noto Sans Symbols", ui-sans-serif, system-ui, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
 }

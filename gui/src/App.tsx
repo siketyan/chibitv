@@ -1,83 +1,178 @@
-import { Bars3Icon, InformationCircleIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import {
+  CalendarDaysIcon,
+  CheckIcon,
+  InformationCircleIcon,
+  QueueListIcon,
+  XMarkIcon,
+} from "@heroicons/react/24/outline";
+import { Button, Chip, Drawer, Link, ListBox, Spinner, Tooltip, useOverlayState } from "@heroui/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import clsx from "clsx";
 import { type JSX, useEffect, useRef, useState } from "react";
 
 import { $api } from "./api";
+import type { components } from "./api/schema.d.ts";
+
+type Service = components["schemas"]["Service"];
+type CurrentEvent = Pick<components["schemas"]["Event"], "description" | "title">;
+
+function Channels({
+  services,
+  serviceId,
+  isLoading,
+  isError,
+  disabled,
+  onChangeService,
+}: {
+  services: Service[];
+  serviceId: number | undefined;
+  isLoading: boolean;
+  isError: boolean;
+  disabled: boolean;
+  onChangeService: (serviceId: number) => void;
+}): JSX.Element {
+  if (isLoading) {
+    return (
+      <div className="flex flex-1 items-center justify-center gap-3 text-sm text-muted">
+        <Spinner size="sm" />
+        Loading channels
+      </div>
+    );
+  }
+
+  if (isError) {
+    return <p className="p-3 text-sm text-danger">Could not load channels.</p>;
+  }
+
+  if (services.length === 0) {
+    return <p className="p-3 text-sm text-muted">No channels are available.</p>;
+  }
+
+  return (
+    <ListBox
+      aria-label="Channels"
+      className="gap-1 p-0"
+      selectedKeys={serviceId === undefined ? [] : [serviceId]}
+      selectionMode="single"
+      onSelectionChange={(keys) => {
+        if (keys === "all") {
+          return;
+        }
+
+        const [key] = keys;
+        const selectedServiceId = Number(key);
+        if (!Number.isNaN(selectedServiceId) && selectedServiceId !== serviceId) {
+          onChangeService(selectedServiceId);
+        }
+      }}
+    >
+      {services.map((service) => (
+        <ListBox.Item
+          key={service.id}
+          id={service.id}
+          className="min-h-12 rounded-xl px-3 data-[selected=true]:bg-accent-soft data-[selected=true]:text-accent-soft-foreground"
+          isDisabled={disabled}
+          textValue={service.name}
+        >
+          <div className="flex min-w-0 flex-1 flex-col">
+            <span className="truncate text-sm font-medium">{service.name}</span>
+            {service.provider_name && <span className="truncate text-xs text-muted">{service.provider_name}</span>}
+          </div>
+          {disabled && service.id === serviceId ? (
+            <Spinner className="ms-auto shrink-0" size="sm" />
+          ) : (
+            <ListBox.ItemIndicator className="text-accent">
+              <CheckIcon className="size-4" />
+            </ListBox.ItemIndicator>
+          )}
+        </ListBox.Item>
+      ))}
+    </ListBox>
+  );
+}
+
+type ChannelsProps = Parameters<typeof Channels>[0];
+
+function MobileChannels(props: ChannelsProps): JSX.Element {
+  const drawerState = useOverlayState();
+
+  return (
+    <Drawer state={drawerState}>
+      <Button aria-label="Open channel" className="md:hidden" isIconOnly variant="ghost">
+        <QueueListIcon />
+      </Button>
+      <Drawer.Backdrop variant="blur">
+        <Drawer.Content placement="left">
+          <Drawer.Dialog>
+            <Drawer.CloseTrigger aria-label="Close" />
+            <Drawer.Header>
+              <Drawer.Heading>Channels</Drawer.Heading>
+            </Drawer.Header>
+            <Drawer.Body className="mt-3">
+              <Channels
+                {...props}
+                onChangeService={(serviceId) => {
+                  props.onChangeService(serviceId);
+                  drawerState.close();
+                }}
+              />
+            </Drawer.Body>
+          </Drawer.Dialog>
+        </Drawer.Content>
+      </Drawer.Backdrop>
+    </Drawer>
+  );
+}
 
 function Navbar({
   event,
-  isMenuOpen,
-  onChangeMenuOpen,
+  isScheduleOpen,
+  onChangeScheduleOpen,
+  channelsProps,
 }: {
-  event: { title: string; description: { name: string; content: string }[] } | undefined;
-  isMenuOpen: boolean;
-  onChangeMenuOpen: (open: boolean) => void;
+  event: CurrentEvent | undefined;
+  isScheduleOpen: boolean;
+  onChangeScheduleOpen: (open: boolean) => void;
+  channelsProps: ChannelsProps;
 }): JSX.Element {
   const description = event?.description.filter(({ content }) => content.length > 0) ?? [];
 
   return (
-    <div className="navbar flex items-center justify-between">
-      <div className="flex items-center gap-4">
-        <a className="btn btn-ghost text-xl" href="/">
+    <header className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-separator bg-surface px-3 sm:px-5">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+        <MobileChannels {...channelsProps} />
+        <Link className="shrink-0 text-xl font-bold tracking-tight text-foreground no-underline" href="/">
           chibitv
-        </a>
-        <h2>{event?.title}</h2>
+        </Link>
+        {event?.title && <h1 className="truncate text-sm font-medium sm:text-base">{event.title}</h1>}
         {description.length > 0 && (
-          <div className="tooltip tooltip-bottom">
-            <div className="tooltip-content text-start p-4 max-w-[512px]">
+          <Tooltip delay={0}>
+            <Button aria-label="Event details" isIconOnly size="sm" variant="ghost">
+              <InformationCircleIcon />
+            </Button>
+            <Tooltip.Content className="max-w-lg p-4 text-start" placement="bottom" showArrow>
               <dl className="flex flex-col gap-4">
                 {description.map(({ name, content }) => (
                   <div key={name} className="flex flex-col gap-2">
-                    <dt className="text-slate-300">{name}</dt>
-                    <dd className="leading-5">{content.replaceAll("\r", "\n") || "-"}</dd>
+                    <dt className="text-muted">{name}</dt>
+                    <dd className="whitespace-pre-line text-sm leading-5">{content.replaceAll("\r", "\n") || "-"}</dd>
                   </div>
                 ))}
               </dl>
-            </div>
-            <button type="button" className="btn btn-ghost btn-circle">
-              <InformationCircleIcon className="size-[1.5rem]" />
-            </button>
-          </div>
+            </Tooltip.Content>
+          </Tooltip>
         )}
       </div>
-      <label className="btn btn-ghost btn-circle swap swap-rotate">
-        <input type="checkbox" checked={isMenuOpen} onChange={(event) => onChangeMenuOpen(event.target.checked)} />
-        <Bars3Icon className="swap-off size-[1.5rem]" />
-        <XMarkIcon className="swap-on size-[1.5rem]" />
-      </label>
-    </div>
-  );
-}
-
-function Channels({
-  serviceId,
-  disabled,
-  onChangeService,
-}: {
-  serviceId: number | undefined;
-  disabled: boolean;
-  onChangeService: (serviceId: number) => void;
-}): JSX.Element {
-  const { data: services = [] } = $api.useQuery("get", "/services");
-
-  return (
-    <div role="tablist" className="tabs tabs-border">
-      {services.map((service) => (
-        <button
-          key={service.id}
-          type="button"
-          role="tab"
-          className={clsx("tab", service.id === serviceId && "tab-active")}
-          disabled={disabled}
-          onClick={() => {
-            onChangeService(service.id);
-          }}
-        >
-          {service.name}
-        </button>
-      ))}
-    </div>
+      <Button
+        aria-label={isScheduleOpen ? "Close schedule" : "Open schedule"}
+        aria-pressed={isScheduleOpen}
+        isIconOnly
+        variant={isScheduleOpen ? "secondary" : "ghost"}
+        onPress={() => onChangeScheduleOpen(!isScheduleOpen)}
+      >
+        {isScheduleOpen ? <XMarkIcon /> : <CalendarDaysIcon />}
+      </Button>
+    </header>
   );
 }
 
@@ -102,6 +197,7 @@ function formatDuration(startAt: Date, endAt: Date): string {
 }
 
 function Events({ serviceId }: { serviceId: number }): JSX.Element {
+  const now = new Date();
   const { data: events = [] } = $api.useQuery(
     "get",
     "/services/{id}/events",
@@ -123,25 +219,40 @@ function Events({ serviceId }: { serviceId: number }): JSX.Element {
           .toSorted((a, b) => a.startAt.valueOf() - b.startAt.valueOf()),
     },
   );
-  const now = new Date();
 
   return (
-    <div className="min-h-0 w-[480px] overflow-y-auto flex flex-col">
-      {events.map((event) => (
-        <div
-          key={event.id}
-          className={clsx(
-            "px-4 py-2 flex items-start gap-2",
-            event.startAt <= now && event.endAt > now && "bg-blue-700",
-          )}
-        >
-          <div className="flex flex-col items-end gap-1">
-            <div className="font-semibold">{timeFormatter.format(event.startAt)}</div>
-            <div className="text-slate-300 text-sm">{formatDuration(event.startAt, event.endAt)}</div>
-          </div>
-          <div>{event.title}</div>
-        </div>
-      ))}
+    <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-3">
+      <div className="flex items-center justify-between px-2 pb-3 pt-1">
+        <h2 className="font-semibold">Schedule</h2>
+      </div>
+      {events.length === 0 ? (
+        <p className="px-2 py-8 text-center text-sm text-muted">No schedule available.</p>
+      ) : (
+        events.map((event) => {
+          const isLive = event.startAt <= now && event.endAt > now;
+
+          return (
+            <div
+              key={event.id}
+              className={clsx(
+                "flex items-start gap-3 rounded-xl px-3 py-2.5",
+                isLive && "bg-accent-soft text-accent-soft-foreground",
+              )}
+            >
+              <div className="flex w-12 shrink-0 flex-col items-end gap-1">
+                <div className="font-semibold tabular-nums">{timeFormatter.format(event.startAt)}</div>
+                <div className="text-xs text-muted">{formatDuration(event.startAt, event.endAt)}</div>
+              </div>
+              <div className="min-w-0 flex-1 text-sm leading-5">{event.title}</div>
+              {isLive && (
+                <Chip color="accent" size="sm" variant="soft">
+                  LIVE
+                </Chip>
+              )}
+            </div>
+          );
+        })
+      )}
     </div>
   );
 }
@@ -265,7 +376,13 @@ function Player({ streamVersion }: { streamVersion: number }): JSX.Element {
 
 function Page() {
   const [streamVersion, setStreamVersion] = useState(0);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+
+  const {
+    data: services = [],
+    isLoading: areServicesLoading,
+    isError: areServicesError,
+  } = $api.useQuery("get", "/services");
 
   const { data: stream = {}, refetch } = $api.useQuery(
     "get",
@@ -289,16 +406,47 @@ function Page() {
     mutate({ params: { path: { id: 0 } }, body: { service_id: serviceId } });
   };
 
+  const channelsProps: ChannelsProps = {
+    services,
+    serviceId,
+    isLoading: areServicesLoading,
+    isError: areServicesError,
+    disabled: isPending,
+    onChangeService: handleChangeService,
+  };
+
   return (
-    <div className="h-dvh overflow-hidden flex flex-col">
-      <Navbar event={stream.event ?? undefined} isMenuOpen={isMenuOpen} onChangeMenuOpen={setIsMenuOpen} />
-      <div className="shrink-0 overflow-x-auto">
-        <Channels serviceId={serviceId} disabled={isPending} onChangeService={handleChangeService} />
-      </div>
-      <div className="min-h-0 flex-1 overflow-hidden grid grid-cols-[minmax(0,1fr)_max-content]">
+    <div className="flex h-dvh flex-col overflow-hidden bg-background text-foreground">
+      <Navbar
+        channelsProps={channelsProps}
+        event={stream.event ?? undefined}
+        isScheduleOpen={isScheduleOpen}
+        onChangeScheduleOpen={setIsScheduleOpen}
+      />
+      <main
+        className={clsx(
+          "grid min-h-0 flex-1 overflow-hidden",
+          isScheduleOpen
+            ? "grid-cols-[minmax(8rem,1fr)_minmax(11rem,40%)] md:grid-cols-[16rem_minmax(8rem,1fr)_minmax(11rem,35%)] lg:grid-cols-[16rem_minmax(8rem,1fr)_24rem]"
+            : "grid-cols-[minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)]",
+        )}
+      >
+        <aside className="hidden min-h-0 flex-col border-r border-separator bg-surface p-3 md:flex">
+          <div className="flex items-center justify-between px-2 pb-3 pt-1">
+            <h2 className="font-semibold">Channels</h2>
+            <span className="text-xs text-muted">{services.length}</span>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+            <Channels {...channelsProps} />
+          </div>
+        </aside>
         <Player streamVersion={streamVersion} />
-        {isMenuOpen && serviceId && <Events serviceId={serviceId} />}
-      </div>
+        {isScheduleOpen && serviceId !== undefined && (
+          <aside className="flex min-h-0 min-w-0 overflow-hidden border-l border-separator bg-surface">
+            <Events serviceId={serviceId} />
+          </aside>
+        )}
+      </main>
     </div>
   );
 }
