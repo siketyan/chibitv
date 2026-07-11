@@ -45,20 +45,18 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         None
     };
 
-    let tuners = {
+    let tuners = Arc::new({
         let mut tuners = Tuners::default();
 
         for (id, tuner) in config.tuners.iter().enumerate() {
             tuners.add_tuner_from_config(id as u32, tuner)?;
         }
 
-        Arc::new(RwLock::new(tuners))
-    };
+        tuners
+    });
 
     let streams = {
-        let tuners = tuners.read().unwrap();
-        let tuner = tuners.get_tuner(0).unwrap();
-        let stream = Stream::open(registry.clone(), tuner, b61_descrambler)?;
+        let stream = Stream::open(registry.clone(), Arc::clone(&tuners), b61_descrambler)?;
         let mut streams = Streams::new();
 
         let default_service_id = config

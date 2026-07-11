@@ -28,9 +28,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
         tuners.add_tuner_from_config(id as u32, tuner)?;
     }
 
-    let Some(tuner) = tuners.get_tuner(0) else {
-        anyhow::bail!("No tuners are configured");
-    };
+    let tuner = tuners.try_acquire_by_id(0)?;
 
     let Some(channel) = config.channels.get(options.channel).map(|channel| Channel {
         id: options.channel,

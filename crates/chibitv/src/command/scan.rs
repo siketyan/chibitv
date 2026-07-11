@@ -64,9 +64,9 @@ pub async fn scan(options: &Options, config: &Config) -> anyhow::Result<()> {
         tuners.add_tuner_from_config(id as u32, tuner)?;
     }
 
-    let Some(tuner) = tuners.get_tuner(0) else {
+    if tuners.is_in_use(0).is_none() {
         anyhow::bail!("No tuners are configured");
-    };
+    }
 
     let mut channels = Vec::new();
     for physical_channel in options.start_channel..=options.end_channel {
@@ -82,6 +82,7 @@ pub async fn scan(options: &Options, config: &Config) -> anyhow::Result<()> {
 
         info!(physical_channel, frequency, "Scanning UHF channel");
 
+        let tuner = tuners.try_acquire_by_id(0)?;
         if let Err(error) = tuner.tune(channel) {
             warn!(
                 physical_channel,

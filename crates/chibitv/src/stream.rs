@@ -19,7 +19,7 @@ use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
 use crate::registry::Registry;
 use crate::remux::Remuxer;
 use crate::service_information::{ServiceInformationProcessor, Signal};
-use crate::tuner::Tuner;
+use crate::tuner::{TunerInput, Tuners};
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
 const BROADCAST_CAPACITY: usize = 8192;
@@ -55,7 +55,7 @@ pub struct StreamState {
 
 pub struct Stream {
     registry: Arc<Registry>,
-    tuner: Arc<dyn Tuner>,
+    tuners: Arc<Tuners>,
     b61_descrambler: Option<Descrambler>,
     state: Arc<RwLock<StreamState>>,
     fmp4_tx: Sender<Bytes>,
@@ -66,7 +66,7 @@ pub struct Stream {
 impl Stream {
     pub fn open(
         registry: Arc<Registry>,
-        tuner: Arc<dyn Tuner>,
+        tuners: Arc<Tuners>,
         b61_descrambler: Option<Descrambler>,
     ) -> anyhow::Result<Self> {
         let (fmp4_tx, _) = channel::<Bytes>(BROADCAST_CAPACITY);
@@ -96,7 +96,7 @@ impl Stream {
 
         Ok(Self {
             registry,
-            tuner,
+            tuners,
             b61_descrambler,
             state,
             fmp4_tx,
@@ -145,8 +145,12 @@ impl Stream {
         Ok((handle, kill_tx))
     }
 
-    fn start_remuxer(&self, service_id: u16, channel: &Channel) -> anyhow::Result<()> {
-        let reader = self.tuner.open()?;
+    fn start_remuxer(
+        &self,
+        service_id: u16,
+        channel: &Channel,
+        reader: TunerInput,
+    ) -> anyhow::Result<()> {
         let handle = match &channel.inner {
             ChannelInner::IsdbS { .. } => {
                 let descrambler = self
@@ -195,11 +199,13 @@ impl Stream {
             handle.join().unwrap()?;
         };
 
-        // Tune to the channel.
-        self.tuner.tune(channel.clone())?;
+        let tuner = self.tuners.try_acquire()?;
+        info!(tuner_id = tuner.id(), "Acquired tuner");
+        tuner.tune(channel.clone())?;
+        let reader = tuner.open()?;
 
         *self.fmp4_init_segment.lock().unwrap() = None;
-        self.start_remuxer(service_id, channel)?;
+        self.start_remuxer(service_id, channel, reader)?;
 
         let mut state = self.state.write().unwrap();
         state.service_id = Some(service_id);
