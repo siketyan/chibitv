@@ -90,25 +90,6 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
-  poc/mpeg2-player:
-    dependencies:
-      '@chibitv/mediabunny-mpeg2':
-        specifier: workspace:*
-        version: link:../../packages/mediabunny-mpeg2
-      mediabunny:
-        specifier: 1.50.8
-        version: 1.50.8(patch_hash=c42e1fef87eaa5445cee5621f5e4663f2acf6e26e5e91df5d1482fba63d62267)
-    devDependencies:
-      '@rsbuild/core':
-        specifier: 2.1.4
-        version: 2.1.4
-      '@types/node':
-        specifier: 24.0.13
-        version: 24.0.13
-      typescript:
-        specifier: 6.0.3
-        version: 6.0.3
-
 packages:
 
   '@adobe/react-spectrum-ui@1.2.1':
