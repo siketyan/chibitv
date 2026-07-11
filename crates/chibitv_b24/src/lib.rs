@@ -1,5 +1,9 @@
 use encoding_rs::EUC_JP;
 
+mod additional_symbols;
+
+use additional_symbols::ADDITIONAL_SYMBOLS;
+
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum GraphicSet {
     Kanji,
@@ -216,7 +220,6 @@ fn decode_two_byte(set: GraphicSet, lead: u8, trail: u8) -> String {
         GraphicSet::Kanji => decode_jis(lead, trail).unwrap_or_else(replacement),
         GraphicSet::AdditionalSymbols => decode_additional_symbol(lead, trail)
             .map(|c| c.to_string())
-            .or_else(|| decode_jis(lead, trail))
             .unwrap_or_else(replacement),
         _ => replacement(),
     }
@@ -256,8 +259,17 @@ fn decode_jis_x0201_katakana(byte: u8) -> Option<char> {
         .then(|| TABLE[(byte - 0x21) as usize])
 }
 
-fn decode_additional_symbol(_lead: u8, _trail: u8) -> Option<char> {
-    None
+fn decode_additional_symbol(lead: u8, trail: u8) -> Option<char> {
+    if !(0x75..=0x7E).contains(&lead) || !(0x21..=0x7E).contains(&trail) {
+        return None;
+    }
+
+    let row = usize::from(lead - 0x75);
+    let cell = usize::from(trail - 0x21);
+    let code_point = ADDITIONAL_SYMBOLS[row * 94 + cell];
+    (code_point != 0xFFFD)
+        .then(|| char::from_u32(code_point))
+        .flatten()
 }
 
 fn replacement() -> String {
@@ -286,5 +298,17 @@ mod tests {
     #[test]
     fn decodes_gr_hiragana() {
         assert_eq!(decode(&[0xA2]), "あ");
+    }
+    #[test]
+    fn decodes_additional_kanji_and_symbols() {
+        assert_eq!(decode(&[0x1B, 0x24, 0x3B, 0x75, 0x21]), "㐂");
+        assert_eq!(decode(&[0x1B, 0x24, 0x3B, 0x75, 0x22]), "𠅘");
+        assert_eq!(decode(&[0x1B, 0x24, 0x3B, 0x7A, 0x23]), "❗");
+        assert_eq!(decode(&[0x1B, 0x24, 0x3B, 0x7E, 0x21]), "Ⅰ");
+    }
+
+    #[test]
+    fn replaces_undefined_additional_symbol_cells() {
+        assert_eq!(decode(&[0x1B, 0x24, 0x3B, 0x77, 0x21]), "�");
     }
 }
