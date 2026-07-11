@@ -15,11 +15,6 @@ use crate::workspace::Workspace;
 pub struct Options {}
 
 pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
-    let cas = Arc::new(Mutex::new(B61CasModule::open(
-        config.cas.master_key.into(),
-    )?));
-    let descrambler = Descrambler::init(cas, true)?;
-
     let registry = Arc::new(Registry::default());
 
     let channels = config
@@ -36,9 +31,18 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let Some(default_channel) = channels.first() else {
         bail!("No channels are defined in the config. At least one channel is required.");
     };
-    if matches!(default_channel.inner, ChannelInner::IsdbT { .. }) {
-        todo!("serve command does not support ISDB-T yet");
-    }
+
+    let b61_descrambler = if channels
+        .iter()
+        .any(|channel| matches!(channel.inner, ChannelInner::IsdbS { .. }))
+    {
+        let cas = Arc::new(Mutex::new(B61CasModule::open(
+            config.cas.master_key.into(),
+        )?));
+        Some(Descrambler::init(cas, true)?)
+    } else {
+        None
+    };
 
     let tuners = {
         let mut tuners = Tuners::default();
@@ -53,7 +57,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let streams = {
         let tuners = tuners.read().unwrap();
         let tuner = tuners.get_tuner(0).unwrap();
-        let stream = Stream::open(registry.clone(), tuner, descrambler)?;
+        let stream = Stream::open(registry.clone(), tuner, b61_descrambler)?;
         let mut streams = Streams::new();
 
         stream.set_channel(0, default_channel)?;
