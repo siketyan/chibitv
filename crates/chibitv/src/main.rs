@@ -1,10 +1,10 @@
-mod aac;
 mod channel;
 mod command;
 mod config;
 mod hevc;
 mod m2ts;
 mod mmt;
+mod mp2;
 mod mp4;
 mod proto {
     connectrpc::include_generated!();
