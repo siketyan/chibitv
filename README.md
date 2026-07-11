@@ -157,7 +157,8 @@ Start the HTTP API and live-streaming server at `server.address` from `config.to
 cargo run -- serve
 
 # Terminal 2: start the GUI development server.
-pnpm -C gui dev
+pnpm install
+pnpm --filter chibitv dev
 ```
 
 Open http://localhost:3000/ in your browser and enjoy!

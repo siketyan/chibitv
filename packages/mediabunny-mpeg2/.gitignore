@@ -1,0 +1,8 @@
+/dist/
+/lib/dist/
+/lib/vendor/
+
+# Repository-wide rules ignore TypeScript and generated dist directories.
+!/src/**/*.ts
+!/tsconfig.json
+!/tsconfig.build.json
