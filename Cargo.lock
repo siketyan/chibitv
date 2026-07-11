@@ -363,6 +363,7 @@ name = "chibitv_b24"
 version = "0.1.0"
 dependencies = [
  "encoding_rs",
+ "kradical_jis",
 ]
 
 [[package]]
@@ -1029,6 +1030,12 @@ checksum = "10d785e6dff2ce2071ffb01b1973c35f02b63b6fb91d1bd12bbb4ae79258b003"
 dependencies = [
  "chrono",
 ]
+
+[[package]]
+name = "kradical_jis"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02e3de4d97ae2ae659371d11e7181b2498efe5ef6211f7103aa37f58e5408c19"
 
 [[package]]
 name = "lazy_static"

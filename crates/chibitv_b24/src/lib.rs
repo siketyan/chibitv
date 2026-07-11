@@ -1,4 +1,5 @@
 use encoding_rs::EUC_JP;
+use kradical_jis::jis213_to_utf8;
 
 mod additional_symbols;
 
@@ -15,6 +16,8 @@ enum GraphicSet {
     ProportionalHiragana,
     ProportionalKatakana,
     JisX0201Katakana,
+    JisX0213Plane1,
+    JisX0213Plane2,
     AdditionalSymbols,
     Macro,
     DrCs,
@@ -23,7 +26,14 @@ enum GraphicSet {
 
 impl GraphicSet {
     fn is_two_byte(self) -> bool {
-        matches!(self, Self::Kanji | Self::AdditionalSymbols | Self::DrCs)
+        matches!(
+            self,
+            Self::Kanji
+                | Self::JisX0213Plane1
+                | Self::JisX0213Plane2
+                | Self::AdditionalSymbols
+                | Self::DrCs
+        )
     }
 }
 
@@ -322,6 +332,8 @@ pub fn decode(bytes: &[u8]) -> String {
 fn graphic_set_from_final(final_byte: u8, multibyte: bool) -> GraphicSet {
     match (multibyte, final_byte) {
         (true, 0x42) => GraphicSet::Kanji,
+        (true, 0x39) => GraphicSet::JisX0213Plane1,
+        (true, 0x3A) => GraphicSet::JisX0213Plane2,
         (true, 0x3B) => GraphicSet::AdditionalSymbols,
         (false, 0x4A) => GraphicSet::Alphanumeric,
         (false, 0x30) => GraphicSet::Hiragana,
@@ -360,6 +372,12 @@ fn decode_one_byte(set: GraphicSet, byte: u8) -> String {
 fn decode_two_byte(set: GraphicSet, lead: u8, trail: u8) -> String {
     match set {
         GraphicSet::Kanji => decode_jis(lead, trail).unwrap_or_else(replacement),
+        GraphicSet::JisX0213Plane1 => {
+            decode_jis_x0213(false, lead, trail).unwrap_or_else(replacement)
+        }
+        GraphicSet::JisX0213Plane2 => {
+            decode_jis_x0213(true, lead, trail).unwrap_or_else(replacement)
+        }
         GraphicSet::AdditionalSymbols => decode_additional_symbol(lead, trail)
             .map(|c| c.to_string())
             .unwrap_or_else(replacement),
@@ -415,6 +433,18 @@ fn decode_jis(lead: u8, trail: u8) -> Option<String> {
     let euc = [lead | 0x80, trail | 0x80];
     let (decoded, _, had_errors) = EUC_JP.decode(&euc);
     (!had_errors).then(|| decoded.into_owned())
+}
+
+fn decode_jis_x0213(plane_two: bool, lead: u8, trail: u8) -> Option<String> {
+    if !(0x21..=0x7E).contains(&lead) || !(0x21..=0x7E).contains(&trail) {
+        return None;
+    }
+
+    let mut code = (u32::from(lead | 0x80) << 8) | u32::from(trail | 0x80);
+    if plane_two {
+        code |= 0x8F_00_00;
+    }
+    jis213_to_utf8(code).map(str::to_owned)
 }
 
 fn decode_jis_x0201_katakana(byte: u8) -> Option<char> {
@@ -548,5 +578,10 @@ mod tests {
             ]),
             "ABC"
         );
+    }
+    #[test]
+    fn decodes_jis_x0213_planes() {
+        assert_eq!(decode(&[0x1B, 0x24, 0x39, 0x21, 0x21]), "　");
+        assert_eq!(decode(&[0x1B, 0x24, 0x3A, 0x21, 0x21]), "𠂉");
     }
 }
