@@ -6,6 +6,12 @@ mod additional_symbols;
 use additional_symbols::ADDITIONAL_SYMBOLS;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum CodeWidth {
+    One,
+    Two,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 enum GraphicSet {
     Kanji,
     Alphanumeric,
@@ -20,11 +26,22 @@ enum GraphicSet {
     JisX0213Plane2,
     AdditionalSymbols,
     Macro,
-    DrCs,
-    Unknown,
+    DrCs { set: u8, width: CodeWidth },
+    Unknown(CodeWidth),
 }
 
 impl GraphicSet {
+    fn drcs(set: u8) -> Self {
+        Self::DrCs {
+            set,
+            width: if set == 0 {
+                CodeWidth::Two
+            } else {
+                CodeWidth::One
+            },
+        }
+    }
+
     fn is_two_byte(self) -> bool {
         matches!(
             self,
@@ -32,7 +49,11 @@ impl GraphicSet {
                 | Self::JisX0213Plane1
                 | Self::JisX0213Plane2
                 | Self::AdditionalSymbols
-                | Self::DrCs
+                | Self::DrCs {
+                    width: CodeWidth::Two,
+                    ..
+                }
+                | Self::Unknown(CodeWidth::Two)
         )
     }
 }
@@ -153,7 +174,7 @@ impl Decoder {
             ],
             0x62 => [
                 GraphicSet::Kanji,
-                GraphicSet::DrCs,
+                GraphicSet::drcs(1),
                 GraphicSet::Hiragana,
                 GraphicSet::Macro,
             ],
@@ -171,19 +192,22 @@ impl Decoder {
             ],
             0x65 => [
                 GraphicSet::Mosaic,
-                GraphicSet::DrCs,
+                GraphicSet::drcs(1),
                 GraphicSet::Mosaic,
                 GraphicSet::Macro,
             ],
-            0x66..=0x6A => [
-                GraphicSet::DrCs,
-                GraphicSet::DrCs,
-                GraphicSet::DrCs,
-                GraphicSet::Macro,
-            ],
+            0x66..=0x6A => {
+                let first = (byte - 0x66) * 3 + 1;
+                [
+                    GraphicSet::drcs(first),
+                    GraphicSet::drcs(first + 1),
+                    GraphicSet::drcs(first + 2),
+                    GraphicSet::Macro,
+                ]
+            }
             0x6B..=0x6D => [
                 GraphicSet::Kanji,
-                GraphicSet::DrCs,
+                GraphicSet::drcs(byte - 0x69),
                 GraphicSet::Hiragana,
                 GraphicSet::Macro,
             ],
@@ -196,7 +220,7 @@ impl Decoder {
             0x6F => [
                 GraphicSet::Alphanumeric,
                 GraphicSet::Mosaic,
-                GraphicSet::DrCs,
+                GraphicSet::drcs(1),
                 GraphicSet::Macro,
             ],
             _ => return,
@@ -236,22 +260,38 @@ impl Decoder {
 
         if (0x28..=0x2B).contains(&next) {
             let g = (next - 0x28) as usize;
-            let Some(final_byte) = bytes.get(*index).copied() else {
+            let Some(next) = bytes.get(*index).copied() else {
                 return;
             };
             *index += 1;
-            self.g[g] = graphic_set_from_final(final_byte, true);
+            self.g[g] = if next == 0x20 {
+                let Some(final_byte) = bytes.get(*index).copied() else {
+                    return;
+                };
+                *index += 1;
+                drcs_from_final(final_byte, CodeWidth::Two)
+            } else {
+                graphic_set_from_final(next, true)
+            };
         } else {
             self.g[0] = graphic_set_from_final(next, true);
         }
     }
 
     fn decode_singlebyte_designation(&mut self, bytes: &[u8], index: &mut usize, g: usize) {
-        let Some(final_byte) = bytes.get(*index).copied() else {
+        let Some(next) = bytes.get(*index).copied() else {
             return;
         };
         *index += 1;
-        self.g[g] = graphic_set_from_final(final_byte, false);
+        self.g[g] = if next == 0x20 {
+            let Some(final_byte) = bytes.get(*index).copied() else {
+                return;
+            };
+            *index += 1;
+            drcs_from_final(final_byte, CodeWidth::One)
+        } else {
+            graphic_set_from_final(next, false)
+        };
     }
 
     fn skip_c1(&self, bytes: &[u8], index: &mut usize, byte: u8) {
@@ -330,6 +370,12 @@ pub fn decode(bytes: &[u8]) -> String {
 }
 
 fn graphic_set_from_final(final_byte: u8, multibyte: bool) -> GraphicSet {
+    let width = if multibyte {
+        CodeWidth::Two
+    } else {
+        CodeWidth::One
+    };
+
     match (multibyte, final_byte) {
         (true, 0x42) => GraphicSet::Kanji,
         (true, 0x39) => GraphicSet::JisX0213Plane1,
@@ -344,8 +390,15 @@ fn graphic_set_from_final(final_byte: u8, multibyte: bool) -> GraphicSet {
         (false, 0x38) => GraphicSet::ProportionalKatakana,
         (false, 0x49) => GraphicSet::JisX0201Katakana,
         (false, 0x70) => GraphicSet::Macro,
-        (_, 0x40..=0x4F) => GraphicSet::DrCs,
-        _ => GraphicSet::Unknown,
+        _ => GraphicSet::Unknown(width),
+    }
+}
+
+fn drcs_from_final(final_byte: u8, width: CodeWidth) -> GraphicSet {
+    match (width, final_byte) {
+        (CodeWidth::Two, 0x40) => GraphicSet::drcs(0),
+        (CodeWidth::One, 0x41..=0x4F) => GraphicSet::drcs(final_byte - 0x40),
+        _ => GraphicSet::Unknown(width),
     }
 }
 
@@ -583,5 +636,35 @@ mod tests {
     fn decodes_jis_x0213_planes() {
         assert_eq!(decode(&[0x1B, 0x24, 0x39, 0x21, 0x21]), "　");
         assert_eq!(decode(&[0x1B, 0x24, 0x3A, 0x21, 0x21]), "𠂉");
+    }
+
+    #[test]
+    fn preserves_unknown_multibyte_set_width() {
+        assert_eq!(
+            decode(&[
+                0x1B, 0x24, 0x29, 0x7F, 0x0E, 0x21, 0x22, 0x1B, 0x29, 0x4A, 0x41,
+            ]),
+            "�A"
+        );
+    }
+
+    #[test]
+    fn treats_default_macro_drcs_as_one_byte() {
+        assert_eq!(
+            decode(&[0x1D, 0x62, 0x0E, 0x21, 0x1D, 0x60, 0x0E, 0x41]),
+            "�A"
+        );
+    }
+
+    #[test]
+    fn parses_one_and_two_byte_drcs_designations() {
+        assert_eq!(
+            decode(&[
+                0x1B, 0x29, 0x20, 0x41, 0x0E, 0x21, // DRCS-1 in G1.
+                0x1B, 0x24, 0x29, 0x20, 0x40, 0x0E, 0x21, 0x22, // DRCS-0 in G1.
+                0x1B, 0x29, 0x4A, 0x0E, 0x41,
+            ]),
+            "��A"
+        );
     }
 }
