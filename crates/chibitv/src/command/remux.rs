@@ -129,10 +129,21 @@ fn remux_m2ts(input: Box<dyn Read + Send + Sync>, options: &Options) -> anyhow::
             remux.run(None)
         }
         OutputFormat::Mp4 => {
-            todo!("MP4 remux from ISDB-T MPEG-TS is not supported yet");
+            let Some(path) = options.output.as_deref() else {
+                anyhow::bail!("Output path is required for MP4 format.");
+            };
+
+            let mux = Mp4Muxer::new(BufWriter::new(File::create(path)?));
+            let mut remux = Remuxer::new(demux, mux, None, None);
+
+            remux.run(None)
         }
         OutputFormat::Fmp4 => {
-            todo!("fragmented MP4 remux from ISDB-T MPEG-TS is not supported yet");
+            let output = open_output(options)?;
+            let mux = FragmentedMp4Muxer::new(BufWriter::new(output));
+            let mut remux = Remuxer::new(demux, mux, None, None);
+
+            remux.run(None)
         }
     }
 }

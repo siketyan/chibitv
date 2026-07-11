@@ -102,6 +102,10 @@ pub struct AdtsParser {
 }
 
 impl AdtsParser {
+    pub fn is_empty(&self) -> bool {
+        self.buf.is_empty()
+    }
+
     /// Appends bytes and returns the oldest complete ADTS frame, including its
     /// header. Pass an empty slice to drain additional buffered frames.
     pub fn push(&mut self, data: &[u8]) -> Option<Bytes> {
