@@ -2,13 +2,13 @@
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, ErrorKind, Read, Result};
+use std::sync::Arc;
 
-use anyhow::bail;
 use apdu_core::{Command, Response};
 use byteorder::{BE, ReadBytesExt};
-use pcsc::{Card, Context, Protocols, Scope, ShareMode};
 use strum::FromRepr;
-use tracing::debug;
+
+use crate::CasModule;
 
 trait ReadExt: Read {
     fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N]> {
@@ -144,56 +144,37 @@ impl EcmReceptionResponse {
     }
 }
 
-/// A CAS module, backed by the PC/SC interface.
-pub struct CasModule {
-    card: Card,
+/// ARIB STD-B25 commands executed on a physical CAS module.
+pub(crate) struct CasClient {
+    module: Arc<dyn CasModule>,
     acas: bool,
     tx_buf: Vec<u8>,
     rx_buf: Vec<u8>,
 }
 
-impl Debug for CasModule {
+impl Debug for CasClient {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CasModule").finish()
     }
 }
 
-impl CasModule {
-    pub fn open() -> anyhow::Result<Self> {
-        Self::open_with_acas_mode(false)
-    }
-
-    pub fn open_acas() -> anyhow::Result<Self> {
-        Self::open_with_acas_mode(true)
-    }
-
-    pub fn open_with_acas_mode(acas: bool) -> anyhow::Result<Self> {
-        let ctx = Context::establish(Scope::System)?;
-        let mut buf = vec![0u8; 4096];
-        let Some(reader_name) = ctx.list_readers(&mut buf)?.next() else {
-            bail!("reader not found");
-        };
-
-        debug!(
-            "Using reader: {}",
-            String::from_utf8_lossy(reader_name.to_bytes())
-        );
-
-        let card = ctx.connect(reader_name, ShareMode::Shared, Protocols::ANY)?;
-
-        Ok(Self {
-            card,
+impl CasClient {
+    pub fn new(module: Arc<dyn CasModule>, acas: bool) -> Self {
+        Self {
+            module,
             acas,
             tx_buf: vec![0u8; 2048],
             rx_buf: vec![0u8; 4096],
-        })
+        }
     }
 
     pub fn initial_setting_condition(&mut self) -> anyhow::Result<InitialSettingConditionResponse> {
         let cmd = InitialSettingConditionCommand { acas: self.acas };
         let len = cmd.write(&mut self.tx_buf);
-        let response = self.card.transmit(&self.tx_buf[..len], &mut self.rx_buf)?;
-        let response = InitialSettingConditionResponse::read(response)?;
+        let response_len = self
+            .module
+            .transmit(&self.tx_buf[..len], &mut self.rx_buf)?;
+        let response = InitialSettingConditionResponse::read(&self.rx_buf[..response_len])?;
 
         Ok(response)
     }
@@ -204,8 +185,10 @@ impl CasModule {
             acas: self.acas,
         };
         let len = cmd.write(&mut self.tx_buf);
-        let response = self.card.transmit(&self.tx_buf[..len], &mut self.rx_buf)?;
-        let response = EcmReceptionResponse::read(response)?;
+        let response_len = self
+            .module
+            .transmit(&self.tx_buf[..len], &mut self.rx_buf)?;
+        let response = EcmReceptionResponse::read(&self.rx_buf[..response_len])?;
 
         Ok(response)
     }

@@ -335,6 +335,7 @@ dependencies = [
  "libc",
  "mpeg2ts",
  "papaya",
+ "pcsc",
  "protoc-bin-vendored",
  "serde",
  "shiguredo_mp4",
@@ -373,7 +374,6 @@ dependencies = [
  "apdu-core",
  "byteorder",
  "mpeg2ts",
- "pcsc",
  "strum",
  "tracing",
 ]
@@ -402,7 +402,6 @@ dependencies = [
  "chibitv_b60",
  "ctr",
  "hex",
- "pcsc",
  "rand",
  "sha2",
  "strum",

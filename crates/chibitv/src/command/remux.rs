@@ -1,12 +1,12 @@
 use std::fs::File;
 use std::io::{BufReader, BufWriter, Read, Write, stdin, stdout};
-use std::sync::{Arc, Mutex};
 
 use chibitv_b25::B25Descrambler;
-use chibitv_b61::{B61CasModule, Descrambler};
+use chibitv_b61::Descrambler;
 use clap::{Parser, ValueEnum};
 use mpeg2ts::ts::TsPacketWriter;
 
+use crate::cas::PcscCasModule;
 use crate::config::Config;
 use crate::demux::Demux;
 use crate::m2ts::{M2tsDemuxer, M2tsMuxer};
@@ -80,10 +80,11 @@ fn remux_mmts(
     options: &Options,
     config: &Config,
 ) -> anyhow::Result<()> {
-    let cas_module = Arc::new(Mutex::new(B61CasModule::open(
+    let descrambler = Descrambler::init(
+        PcscCasModule::open_shared()?,
         config.cas.master_key.into(),
-    )?));
-    let descrambler = Descrambler::init(cas_module, false)?;
+        false,
+    )?;
     let reader = BufReader::new(input);
     let demux = MmtDemuxer::new(reader, descrambler);
 
@@ -111,7 +112,7 @@ fn remux_mmts(
 }
 
 fn remux_m2ts(input: Box<dyn Read + Send + Sync>, options: &Options) -> anyhow::Result<()> {
-    let descrambler = B25Descrambler::open()?;
+    let descrambler = B25Descrambler::init(PcscCasModule::open_shared()?)?;
     let demux = M2tsDemuxer::new(input, descrambler);
 
     match options.format.unwrap_or_default() {

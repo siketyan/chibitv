@@ -1,12 +1,12 @@
 use std::io::{BufReader, BufWriter, stdout};
-use std::sync::{Arc, Mutex};
 
 use chibitv_b25::B25Descrambler;
-use chibitv_b61::{B61CasModule, Descrambler};
+use chibitv_b61::Descrambler;
 use clap::Parser;
 use mpeg2ts::ts::TsPacketWriter;
 use tracing::info;
 
+use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
 use crate::config::Config;
 use crate::demux::Demux;
@@ -48,6 +48,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
     let output = stdout();
     let writer = TsPacketWriter::new(BufWriter::new(output));
     let mux = M2tsMuxer::new(writer);
+    let cas = PcscCasModule::open_shared()?;
 
     let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel::<Signal>(1);
 
@@ -69,15 +70,12 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
     let service_information = ServiceInformationProcessor::new(channel.id, None, Some(signal_tx));
     match channel.inner {
         ChannelInner::IsdbS { .. } => {
-            let cas_module = Arc::new(Mutex::new(B61CasModule::open(
-                config.cas.master_key.into(),
-            )?));
-            let descrambler = Descrambler::init(cas_module, false)?;
+            let descrambler = Descrambler::init(cas, config.cas.master_key.into(), false)?;
             let demux = MmtDemuxer::new(BufReader::new(input), descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }
         ChannelInner::IsdbT { .. } => {
-            let descrambler = B25Descrambler::open()?;
+            let descrambler = B25Descrambler::init(cas)?;
             let demux = M2tsDemuxer::new(input, descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }

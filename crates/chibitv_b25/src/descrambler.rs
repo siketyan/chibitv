@@ -1,12 +1,13 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use mpeg2ts::ts::payload::Bytes;
 use mpeg2ts::ts::{TransportScramblingControl, TsPacket, TsPayload};
 
 use crate::CasModule;
+use crate::cas::CasClient;
 use crate::multi2::Multi2;
 
 #[derive(Copy, Clone, Debug)]
@@ -21,7 +22,7 @@ impl Display for NoDecryptionKeyError {
 impl Error for NoDecryptionKeyError {}
 
 pub struct B25Descrambler {
-    cas: Mutex<CasModule>,
+    cas: Mutex<CasClient>,
     multi2: Mutex<Multi2>,
     ca_system_id: u16,
 }
@@ -33,8 +34,8 @@ impl Debug for B25Descrambler {
 }
 
 impl B25Descrambler {
-    pub fn open() -> Result<Self> {
-        let mut cas = CasModule::open_acas()?;
+    pub fn init(module: Arc<dyn CasModule>) -> Result<Self> {
+        let mut cas = CasClient::new(module, true);
         let settings = cas.initial_setting_condition()?;
 
         Ok(Self {
@@ -96,5 +97,37 @@ impl B25Descrambler {
             .decrypt(scrambling_control, &mut payload)?;
 
         Ok(Bytes::new(&payload)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct FakeCasModule;
+
+    impl CasModule for FakeCasModule {
+        fn transmit(&self, command: &[u8], response: &mut [u8]) -> anyhow::Result<usize> {
+            assert_eq!(&command[..4], &[0x90, 0x30, 0x00, 0x02]);
+
+            let card_response = [
+                &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34][..],
+                &[0x00; 6],
+                &[0x02, 0x00],
+                &[0x00; 32],
+                &[0x00; 8],
+                &[0x00, 0x90, 0x00],
+            ]
+            .concat();
+            response[..card_response.len()].copy_from_slice(&card_response);
+            Ok(card_response.len())
+        }
+    }
+
+    #[test]
+    fn initializes_with_a_caller_supplied_cas_module() {
+        let descrambler = B25Descrambler::init(Arc::new(FakeCasModule)).unwrap();
+
+        assert_eq!(descrambler.ca_system_id(), 0x1234);
     }
 }

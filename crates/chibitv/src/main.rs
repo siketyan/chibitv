@@ -1,4 +1,5 @@
 mod aac;
+mod cas;
 mod channel;
 mod command;
 mod config;

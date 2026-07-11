@@ -11,6 +11,7 @@ use tracing::info;
 use chibitv_b25::B25Descrambler;
 use chibitv_b61::Descrambler;
 
+use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
 use crate::demux::Demux;
 use crate::m2ts::M2tsDemuxer;
@@ -56,6 +57,7 @@ pub struct StreamState {
 pub struct Stream {
     registry: Arc<Registry>,
     tuners: Arc<Tuners>,
+    cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
     state: Arc<RwLock<StreamState>>,
     fmp4_tx: Sender<Bytes>,
@@ -67,6 +69,7 @@ impl Stream {
     pub fn open(
         registry: Arc<Registry>,
         tuners: Arc<Tuners>,
+        cas: Arc<PcscCasModule>,
         b61_descrambler: Option<Descrambler>,
     ) -> anyhow::Result<Self> {
         let (fmp4_tx, _) = channel::<Bytes>(BROADCAST_CAPACITY);
@@ -97,6 +100,7 @@ impl Stream {
         Ok(Self {
             registry,
             tuners,
+            cas,
             b61_descrambler,
             state,
             fmp4_tx,
@@ -161,7 +165,7 @@ impl Stream {
                 self.spawn_remuxer(MmtDemuxer::new(reader, descrambler), channel.id)?
             }
             ChannelInner::IsdbT { .. } => {
-                let descrambler = B25Descrambler::open()?;
+                let descrambler = B25Descrambler::init(self.cas.clone())?;
                 let demux = if service_id == 0 {
                     M2tsDemuxer::new(reader, descrambler)
                 } else {

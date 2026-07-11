@@ -1,9 +1,10 @@
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 
 use anyhow::bail;
-use chibitv_b61::{B61CasModule, Descrambler};
+use chibitv_b61::Descrambler;
 use clap::Parser;
 
+use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
 use crate::config::{ChannelConfig, Config};
 use crate::registry::Registry;
@@ -33,14 +34,16 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         bail!("No channels are defined in the config. At least one channel is required.");
     };
 
+    let cas = PcscCasModule::open_shared()?;
     let b61_descrambler = if channels
         .iter()
         .any(|channel| matches!(channel.inner, ChannelInner::IsdbS { .. }))
     {
-        let cas = Arc::new(Mutex::new(B61CasModule::open(
+        Some(Descrambler::init(
+            cas.clone(),
             config.cas.master_key.into(),
-        )?));
-        Some(Descrambler::init(cas, true)?)
+            true,
+        )?)
     } else {
         None
     };
@@ -56,7 +59,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     });
 
     let streams = {
-        let stream = Stream::open(registry.clone(), Arc::clone(&tuners), b61_descrambler)?;
+        let stream = Stream::open(registry.clone(), Arc::clone(&tuners), cas, b61_descrambler)?;
         let mut streams = Streams::new();
 
         let default_service_id = config

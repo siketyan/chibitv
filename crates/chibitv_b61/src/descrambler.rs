@@ -13,7 +13,8 @@ use rand::{Rng, SeedableRng};
 use sha2::{Digest, Sha256};
 use tracing::{debug, error, info};
 
-use crate::{CasModule as CasModuleInner, EncryptionFlag};
+use crate::cas::CasClient;
+use crate::{CasModule, EncryptionFlag};
 
 #[derive(Copy, Clone, Debug)]
 pub struct NoDecryptionKeyError;
@@ -32,69 +33,46 @@ struct DecryptionKey {
     even: [u8; 16],
 }
 
-#[derive(Debug)]
-pub struct B61CasModule {
-    inner: CasModuleInner,
-    master_key: [u8; 32],
-    rng: StdRng,
+fn decrypt_ecm(
+    cas: &mut CasClient,
+    master_key: &[u8; 32],
+    rng: &mut StdRng,
+    ecm: [u8; 148],
+) -> Result<DecryptionKey> {
+    let mut a0_init = [0u8; 8];
+    rng.fill_bytes(&mut a0_init);
+
+    let setting_data = [
+        &[0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x8A, 0xF7],
+        &a0_init[..],
+    ]
+    .concat();
+
+    let (setting_response, ecm_response) =
+        cas.scrambling_key_protection_setting_and_ecm_reception(&setting_data, &ecm)?;
+    let (a0_response, a0_hash) = setting_response.setting_response_data.split_at(8);
+    let kcl = Sha256::digest([&master_key[..], &a0_init[..], a0_response].concat());
+    let hash = Sha256::digest([&kcl, &a0_init[..]].concat());
+    assert_eq!(hash.as_slice(), a0_hash);
+
+    let ecm_init = &ecm[0x04..0x1B];
+    let mut hash = Sha256::digest([&kcl, ecm_init].concat()).to_vec();
+    for (i, byte) in hash.iter_mut().enumerate() {
+        *byte ^= ecm_response.ks[i];
+    }
+
+    let (odd, even) = hash.split_at(0x10);
+    info!(
+        "Decrypted ECM, Odd: {}, Even: {}",
+        hex::encode(odd),
+        hex::encode(even),
+    );
+
+    Ok(DecryptionKey {
+        odd: odd.try_into()?,
+        even: even.try_into()?,
+    })
 }
-
-impl B61CasModule {
-    pub fn open(master_key: [u8; 32]) -> Result<Self> {
-        Self::init(CasModuleInner::open()?, master_key)
-    }
-
-    fn init(mut inner: CasModuleInner, master_key: [u8; 32]) -> Result<Self> {
-        let response = inner.initial_setting_condition()?;
-        debug!("CAS module initialized: {:?}", response.cas_module_id);
-
-        Ok(Self {
-            inner,
-            master_key,
-            rng: StdRng::from_rng(&mut rand::rng()),
-        })
-    }
-
-    fn decrypt_ecm(&mut self, ecm: [u8; 148]) -> Result<DecryptionKey> {
-        let mut a0_init = [0u8; 8];
-        self.rng.fill_bytes(&mut a0_init);
-
-        let setting_data = [
-            &[0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x8A, 0xF7],
-            &a0_init[..],
-        ]
-        .concat();
-
-        let response = self
-            .inner
-            .scrambling_key_protection_setting(&setting_data)?;
-        let (a0_response, a0_hash) = response.setting_response_data.split_at(8);
-        let kcl = Sha256::digest([&self.master_key[..], &a0_init[..], a0_response].concat());
-        let hash = Sha256::digest([&kcl, &a0_init[..]].concat());
-        assert_eq!(hash.as_slice(), a0_hash);
-
-        let response = self.inner.ecm_reception(&ecm)?;
-        let ecm_init = &ecm[0x04..0x1B];
-        let mut hash = Sha256::digest([&kcl, ecm_init].concat()).to_vec();
-        for (i, byte) in hash.iter_mut().enumerate() {
-            *byte ^= response.ks[i];
-        }
-
-        let (odd, even) = hash.split_at(0x10);
-        info!(
-            "Decrypted ECM, Odd: {}, Even: {}",
-            hex::encode(odd),
-            hex::encode(even),
-        );
-
-        Ok(DecryptionKey {
-            odd: odd.try_into()?,
-            even: even.try_into()?,
-        })
-    }
-}
-
-pub type SharedCasModule = Arc<Mutex<B61CasModule>>;
 
 type EcmSender = mpsc::SyncSender<[u8; 148]>;
 type KeyReceiver = mpsc::Receiver<([u8; 148], Result<DecryptionKey>)>;
@@ -109,13 +87,18 @@ pub struct Descrambler {
 }
 
 impl Descrambler {
-    pub fn init(cas: SharedCasModule, is_async: bool) -> Result<Self> {
+    pub fn init(module: Arc<dyn CasModule>, master_key: [u8; 32], is_async: bool) -> Result<Self> {
+        let mut cas = CasClient::new(module);
+        let response = cas.initial_setting_condition()?;
+        debug!("CAS module initialized: {:?}", response.cas_module_id);
+        let mut rng = StdRng::from_rng(&mut rand::rng());
+
         let (ecm_tx, ecm_rx) = mpsc::sync_channel(16);
         let (key_tx, key_rx) = mpsc::sync_channel(16);
 
         std::thread::spawn(move || {
             for ecm in ecm_rx {
-                let key = cas.lock().unwrap().decrypt_ecm(ecm);
+                let key = decrypt_ecm(&mut cas, &master_key, &mut rng, ecm);
                 if key_tx.send((ecm, key)).is_err() {
                     break;
                 }
