@@ -1,3 +1,6 @@
 [submodule "third_party/mpeg2ts"]
 	path = third_party/mpeg2ts
 	url = https://github.com/siketyan/mpeg2ts.git
+[submodule "third_party/shiguredo_mp4"]
+	path = third_party/shiguredo_mp4
+	url = https://github.com/siketyan/mp4-rs.git

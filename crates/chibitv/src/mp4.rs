@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::num::{NonZeroU16, NonZeroU32};
 
@@ -7,8 +7,8 @@ use cros_codecs::codec::h265::parser::{
     Nalu, NaluType, Parser as H265Parser, Pps, ProfileTierLevel, Sps, Vps,
 };
 use shiguredo_mp4::boxes::{
-    AudioSampleEntryFields, EsdsBox, Hev1Box, HvccBox, HvccNalUintArray, Mp4aBox, SampleEntry,
-    VisualSampleEntryFields,
+    AudioSampleEntryFields, EsdsBox, Hev1Box, HvccBox, HvccNalUintArray, Mp4aBox, Mp4vBox,
+    SampleEntry, VisualSampleEntryFields,
 };
 use shiguredo_mp4::descriptors::{
     DecoderConfigDescriptor, DecoderSpecificInfo, EsDescriptor, SlConfigDescriptor,
@@ -17,7 +17,8 @@ use shiguredo_mp4::mux::{Fmp4SegmentMuxer, Mp4FileMuxer, Sample};
 use shiguredo_mp4::{FixedPointNumber, TrackKind, Uint};
 use tracing::{debug, error, info};
 
-use crate::aac::LoasFrame;
+use crate::aac::{AdtsHeader, AdtsParser, LoasFrame, SamplingFrequency};
+use crate::mp2::{Mp2Parser, PictureCodingType, SequenceHeader, picture_coding_type};
 use crate::remux::{Mux, TrackType};
 
 const VIDEO_TIMESCALE: u32 = 90_000;
@@ -90,6 +91,113 @@ trait Track {
         dts: Option<f64>,
         pts: Option<f64>,
     ) -> anyhow::Result<Vec<TrackSample>>;
+
+    fn finalize(&mut self) -> anyhow::Result<Vec<TrackSample>> {
+        Ok(vec![])
+    }
+}
+
+struct Mpeg2VideoTrack {
+    parser: Mp2Parser,
+    metadata: Option<TrackMetadata>,
+    timestamps: VecDeque<(Option<f64>, Option<f64>)>,
+    next_dts: Option<f64>,
+    next_pts: Option<f64>,
+}
+
+impl Mpeg2VideoTrack {
+    fn new() -> Self {
+        Self {
+            parser: Mp2Parser::default(),
+            metadata: None,
+            timestamps: VecDeque::new(),
+            next_dts: None,
+            next_pts: None,
+        }
+    }
+
+    fn write_frame(&mut self, data: Bytes) -> anyhow::Result<Vec<TrackSample>> {
+        let (dts, pts) = self
+            .timestamps
+            .pop_front()
+            .unwrap_or((self.next_dts, self.next_pts));
+        // MPEG-TS may omit DTS when it is equal to PTS. Keep a continuous
+        // decode timeline for fMP4's base media decode time in that case.
+        let dts = dts.or(self.next_dts).or(pts);
+        let mut sample_entry = None;
+
+        if self.metadata.is_none() {
+            let sequence = match SequenceHeader::parse(&data) {
+                Ok(sequence) => sequence,
+                Err(error) => {
+                    debug!(%error, "Waiting for an MPEG-2 sequence header");
+                    return Ok(vec![]);
+                }
+            };
+            sample_entry = Some(build_mp4v_sample_entry(&sequence));
+            self.metadata = Some(TrackMetadata {
+                sample_duration: sequence.sample_duration(VIDEO_TIMESCALE),
+                timescale: VIDEO_TIMESCALE,
+            });
+            info!(
+                width = sequence.width,
+                height = sequence.height,
+                frame_rate_numerator = sequence.frame_rate_numerator,
+                frame_rate_denominator = sequence.frame_rate_denominator,
+                "MPEG-2 video track is ready"
+            );
+        }
+
+        let metadata = self.metadata.as_ref().expect("metadata must be set");
+        let duration_seconds = f64::from(metadata.sample_duration) / f64::from(metadata.timescale);
+        self.next_dts = dts.map(|dts| dts + duration_seconds);
+        self.next_pts = pts.map(|pts| pts + duration_seconds);
+
+        let sample = Sample {
+            track_kind: TrackKind::Video,
+            sample_entry,
+            keyframe: picture_coding_type(&data) == Some(PictureCodingType::Intra),
+            timescale: NonZeroU32::new(metadata.timescale).unwrap(),
+            duration: metadata.sample_duration,
+            composition_time_offset: pts
+                .zip(dts)
+                .map(|(pts, dts)| seconds_to_timescale_units(pts - dts, metadata.timescale)),
+            data_offset: 0,
+            data_size: data.len(),
+        };
+
+        Ok(vec![TrackSample { sample, data, dts }])
+    }
+}
+
+impl Track for Mpeg2VideoTrack {
+    fn write_sample(
+        &mut self,
+        data: Bytes,
+        dts: Option<f64>,
+        pts: Option<f64>,
+    ) -> anyhow::Result<Vec<TrackSample>> {
+        self.timestamps.push_back((dts, pts));
+        let mut samples = Vec::new();
+        let mut input = Some(data);
+
+        while let Some(data) = self
+            .parser
+            .push(input.take().as_deref().unwrap_or_default())
+        {
+            samples.extend(self.write_frame(data)?);
+        }
+
+        Ok(samples)
+    }
+
+    fn finalize(&mut self) -> anyhow::Result<Vec<TrackSample>> {
+        let mut samples = Vec::new();
+        if let Some(data) = self.parser.flush() {
+            samples.extend(self.write_frame(data)?);
+        }
+        Ok(samples)
+    }
 }
 
 struct H265Track {
@@ -221,6 +329,101 @@ impl Track for H265Track {
             dts: Some(pending.dts),
         }])
     }
+
+    fn finalize(&mut self) -> anyhow::Result<Vec<TrackSample>> {
+        Ok(self
+            .pending
+            .take()
+            .map(|pending| TrackSample {
+                sample: pending.sample,
+                data: pending.data,
+                dts: Some(pending.dts),
+            })
+            .into_iter()
+            .collect())
+    }
+}
+
+struct AacAdtsTrack {
+    parser: AdtsParser,
+    metadata: Option<TrackMetadata>,
+    next_dts: Option<f64>,
+}
+
+impl AacAdtsTrack {
+    fn new() -> Self {
+        Self {
+            parser: AdtsParser::default(),
+            metadata: None,
+            next_dts: None,
+        }
+    }
+}
+
+impl Track for AacAdtsTrack {
+    fn write_sample(
+        &mut self,
+        data: Bytes,
+        dts: Option<f64>,
+        pts: Option<f64>,
+    ) -> anyhow::Result<Vec<TrackSample>> {
+        if self.parser.is_empty() {
+            // AAC has no frame reordering, so its PTS is also its decode
+            // timestamp when an MPEG-TS PES omits DTS.
+            self.next_dts = dts.or(pts);
+        }
+
+        let mut samples = Vec::new();
+        let mut input = Some(data);
+        while let Some(frame) = self
+            .parser
+            .push(input.take().as_deref().unwrap_or_default())
+        {
+            let header = AdtsHeader::parse(&frame)?;
+            let sample_entry = self.metadata.is_none().then(|| {
+                self.metadata = Some(TrackMetadata {
+                    sample_duration: u32::from(header.sample_count()),
+                    timescale: header.sampling_frequency as u32,
+                });
+                info!(
+                    audio_object_type = header.audio_object_type,
+                    sampling_frequency = header.sampling_frequency as u32,
+                    channel_configuration = header.channel_configuration,
+                    "AAC-ADTS track is ready"
+                );
+                build_mp4a_sample_entry(
+                    header.audio_object_type,
+                    header.sampling_frequency_index,
+                    header.sampling_frequency,
+                    header.channel_configuration,
+                )
+            });
+
+            let metadata = self.metadata.as_ref().expect("metadata must be set");
+            let data = Bytes::copy_from_slice(header.payload(&frame)?);
+            let sample = Sample {
+                track_kind: TrackKind::Audio,
+                sample_entry,
+                keyframe: false,
+                timescale: NonZeroU32::new(metadata.timescale).unwrap(),
+                duration: u32::from(header.sample_count()),
+                composition_time_offset: None,
+                data_offset: 0,
+                data_size: data.len(),
+            };
+            let sample_dts = self.next_dts;
+            self.next_dts = self
+                .next_dts
+                .map(|dts| dts + f64::from(header.sample_count()) / f64::from(metadata.timescale));
+            samples.push(TrackSample {
+                sample,
+                data,
+                dts: sample_dts,
+            });
+        }
+
+        Ok(samples)
+    }
 }
 
 struct AacLatmTrack {
@@ -251,56 +454,6 @@ impl Track for AacLatmTrack {
             let sample_duration = 1024;
             let timescale = sample.sampling_frequency as u32;
             let sample_entry = self.metadata.is_none().then(|| {
-                let audio = AudioSampleEntryFields {
-                    data_reference_index: NonZeroU16::new(1).unwrap(),
-                    channelcount: u16::from(sample.channel_configuration),
-                    samplesize: 16,
-                    samplerate: FixedPointNumber::new(sample.sampling_frequency as u16, 0),
-                };
-
-                let dec_specific_info = DecoderSpecificInfo {
-                    payload: {
-                        let sampling_index = sample.sampling_frequency_index;
-                        let audio_object_type = sample.audio_object_type;
-                        let extension_sampling_index = sampling_index.saturating_sub(3);
-
-                        let mut config = vec![0; 4];
-
-                        config[0] = audio_object_type << 3 | (sampling_index & 0x0F) >> 1;
-                        config[1] = (sampling_index & 0x0F) << 7 | (sample.channel_configuration & 0x0F) << 3;
-
-                        if audio_object_type == 5 {
-                            config[1] |= (extension_sampling_index & 0x0F) >> 1;
-                            config[2] = (extension_sampling_index & 0x01) << 7 | 2 << 2;
-
-                            config
-                        } else {
-                            config.resize(2, 0);
-                            config
-                        }
-                    }
-                };
-
-                let esds_box = EsdsBox {
-                    es: EsDescriptor {
-                        es_id: EsDescriptor::MIN_ES_ID,
-                        stream_priority: EsDescriptor::LOWEST_STREAM_PRIORITY,
-                        depends_on_es_id: None,
-                        url_string: None,
-                        ocr_es_id: None,
-                        dec_config_descr: DecoderConfigDescriptor {
-                            object_type_indication: DecoderConfigDescriptor::OBJECT_TYPE_INDICATION_AUDIO_ISO_IEC_14496_3,
-                            stream_type: DecoderConfigDescriptor::STREAM_TYPE_AUDIO,
-                            up_stream: DecoderConfigDescriptor::UP_STREAM_FALSE,
-                            buffer_size_db: Uint::new(0),
-                            max_bitrate: 0,
-                            avg_bitrate: 0,
-                            dec_specific_info: Some(dec_specific_info),
-                        },
-                        sl_config_descr: SlConfigDescriptor,
-                    },
-                };
-
                 self.metadata = Some(TrackMetadata {
                     sample_duration,
                     timescale,
@@ -313,11 +466,12 @@ impl Track for AacLatmTrack {
                     "AAC-LATM track is ready"
                 );
 
-                SampleEntry::Mp4a(Mp4aBox {
-                    audio,
-                    esds_box,
-                    unknown_boxes: vec![],
-                })
+                build_mp4a_sample_entry(
+                    sample.audio_object_type,
+                    sample.sampling_frequency_index,
+                    sample.sampling_frequency,
+                    sample.channel_configuration,
+                )
             });
 
             let Some(data) = sample.data else {
@@ -368,6 +522,19 @@ impl<W: Write + Seek> Mp4Muxer<W> {
             track_map: BTreeMap::new(),
         }
     }
+
+    fn append_track_samples(&mut self, samples: Vec<TrackSample>) -> anyhow::Result<()> {
+        for TrackSample {
+            mut sample, data, ..
+        } in samples
+        {
+            sample.data_offset = self.data_offset;
+            self.writer.write_all(&data)?;
+            self.muxer.append_sample(&sample)?;
+            self.data_offset += sample.data_size as u64;
+        }
+        Ok(())
+    }
 }
 
 impl<W: Write + Seek> Mux for Mp4Muxer<W> {
@@ -377,8 +544,15 @@ impl<W: Write + Seek> Mux for Mp4Muxer<W> {
         }
 
         match ty {
-            TrackType::Mpeg2Video | TrackType::AacAdts => {
-                todo!()
+            TrackType::Mpeg2Video => {
+                self.track_map
+                    .insert(track_id, Box::new(Mpeg2VideoTrack::new()));
+                info!(track_id, "Added an MPEG-2 video track");
+            }
+            TrackType::AacAdts => {
+                self.track_map
+                    .insert(track_id, Box::new(AacAdtsTrack::new()));
+                info!(track_id, "Added an AAC-ADTS audio track");
             }
             TrackType::H265 => {
                 self.track_map.insert(track_id, Box::new(H265Track::new()));
@@ -412,22 +586,17 @@ impl<W: Write + Seek> Mux for Mp4Muxer<W> {
             return Ok(());
         };
 
-        for TrackSample {
-            mut sample, data, ..
-        } in track.write_sample(data, dts, pts)?
-        {
-            sample.data_offset = self.data_offset;
-
-            self.writer.write_all(&data)?;
-            self.muxer.append_sample(&sample)?;
-
-            self.data_offset += sample.data_size as u64;
-        }
-
-        Ok(())
+        let samples = track.write_sample(data, dts, pts)?;
+        self.append_track_samples(samples)
     }
 
     fn finalize(&mut self) -> anyhow::Result<()> {
+        let track_ids = self.track_map.keys().copied().collect::<Vec<_>>();
+        for track_id in track_ids {
+            let samples = self.track_map.get_mut(&track_id).unwrap().finalize()?;
+            self.append_track_samples(samples)?;
+        }
+
         for (offset, bytes) in self.muxer.finalize()?.offset_and_bytes_pairs() {
             self.writer.seek(SeekFrom::Start(offset))?;
             self.writer.write_all(bytes)?;
@@ -478,44 +647,12 @@ impl<W: WriteMp4Fragment> FragmentedMp4Muxer<W> {
             init_segment_written: false,
         }
     }
-}
 
-impl<W: WriteMp4Fragment> Mux for FragmentedMp4Muxer<W> {
-    fn add_track(&mut self, track_id: u16, ty: TrackType) {
-        if self.track_map.contains_key(&track_id) {
-            return;
-        }
-
-        match ty {
-            TrackType::Mpeg2Video | TrackType::AacAdts => {
-                todo!()
-            }
-            TrackType::H265 => {
-                self.track_map.insert(track_id, Box::new(H265Track::new()));
-                self.track_states.entry(track_id).or_default();
-                info!(track_id, "Added a H265 video track");
-            }
-            TrackType::AacLatm => {
-                self.track_map
-                    .insert(track_id, Box::new(AacLatmTrack::new()));
-                self.track_states.entry(track_id).or_default();
-                info!(track_id, "Added an AAC-LATM audio track");
-            }
-        }
-    }
-
-    fn write_sample(
+    fn write_track_samples(
         &mut self,
         track_id: u16,
-        data: Bytes,
-        dts: Option<f64>,
-        pts: Option<f64>,
+        mut samples: Vec<TrackSample>,
     ) -> anyhow::Result<()> {
-        let Some(track) = self.track_map.get_mut(&track_id) else {
-            return Ok(());
-        };
-
-        let mut samples = track.write_sample(data, dts, pts)?;
         if samples.is_empty() {
             return Ok(());
         }
@@ -598,8 +735,162 @@ impl<W: WriteMp4Fragment> Mux for FragmentedMp4Muxer<W> {
     }
 }
 
+impl<W: WriteMp4Fragment> Mux for FragmentedMp4Muxer<W> {
+    fn add_track(&mut self, track_id: u16, ty: TrackType) {
+        if self.track_map.contains_key(&track_id) {
+            return;
+        }
+
+        match ty {
+            TrackType::Mpeg2Video => {
+                self.track_map
+                    .insert(track_id, Box::new(Mpeg2VideoTrack::new()));
+                self.track_states.entry(track_id).or_default();
+                info!(track_id, "Added an MPEG-2 video track");
+            }
+            TrackType::AacAdts => {
+                self.track_map
+                    .insert(track_id, Box::new(AacAdtsTrack::new()));
+                self.track_states.entry(track_id).or_default();
+                info!(track_id, "Added an AAC-ADTS audio track");
+            }
+            TrackType::H265 => {
+                self.track_map.insert(track_id, Box::new(H265Track::new()));
+                self.track_states.entry(track_id).or_default();
+                info!(track_id, "Added a H265 video track");
+            }
+            TrackType::AacLatm => {
+                self.track_map
+                    .insert(track_id, Box::new(AacLatmTrack::new()));
+                self.track_states.entry(track_id).or_default();
+                info!(track_id, "Added an AAC-LATM audio track");
+            }
+        }
+    }
+
+    fn write_sample(
+        &mut self,
+        track_id: u16,
+        data: Bytes,
+        dts: Option<f64>,
+        pts: Option<f64>,
+    ) -> anyhow::Result<()> {
+        let Some(track) = self.track_map.get_mut(&track_id) else {
+            return Ok(());
+        };
+
+        let samples = track.write_sample(data, dts, pts)?;
+        self.write_track_samples(track_id, samples)
+    }
+
+    fn finalize(&mut self) -> anyhow::Result<()> {
+        let track_ids = self.track_map.keys().copied().collect::<Vec<_>>();
+        for track_id in track_ids {
+            let samples = self.track_map.get_mut(&track_id).unwrap().finalize()?;
+            self.write_track_samples(track_id, samples)?;
+        }
+        Ok(())
+    }
+}
+
 fn seconds_to_timescale_units(seconds: f64, timescale: u32) -> i64 {
     (seconds * f64::from(timescale)).round() as i64
+}
+
+fn build_mp4v_sample_entry(sequence: &SequenceHeader) -> SampleEntry {
+    let visual = VisualSampleEntryFields {
+        data_reference_index: VisualSampleEntryFields::DEFAULT_DATA_REFERENCE_INDEX,
+        width: sequence.width,
+        height: sequence.height,
+        horizresolution: VisualSampleEntryFields::DEFAULT_HORIZRESOLUTION,
+        vertresolution: VisualSampleEntryFields::DEFAULT_VERTRESOLUTION,
+        frame_count: VisualSampleEntryFields::DEFAULT_FRAME_COUNT,
+        compressorname: compressor_name(),
+        depth: VisualSampleEntryFields::DEFAULT_DEPTH,
+    };
+    let esds_box = EsdsBox {
+        es: EsDescriptor {
+            es_id: EsDescriptor::MIN_ES_ID,
+            stream_priority: EsDescriptor::LOWEST_STREAM_PRIORITY,
+            depends_on_es_id: None,
+            url_string: None,
+            ocr_es_id: None,
+            dec_config_descr: DecoderConfigDescriptor {
+                object_type_indication: sequence.object_type_indication(),
+                stream_type: Uint::new(0x04), // VisualStream
+                up_stream: DecoderConfigDescriptor::UP_STREAM_FALSE,
+                buffer_size_db: Uint::new(sequence.vbv_buffer_size),
+                max_bitrate: sequence.bit_rate,
+                avg_bitrate: sequence.bit_rate,
+                dec_specific_info: Some(DecoderSpecificInfo {
+                    payload: sequence.decoder_config.to_vec(),
+                }),
+            },
+            sl_config_descr: SlConfigDescriptor,
+        },
+    };
+
+    SampleEntry::Mp4v(Mp4vBox {
+        visual,
+        esds_box,
+        unknown_boxes: vec![],
+    })
+}
+
+fn build_mp4a_sample_entry(
+    audio_object_type: u8,
+    sampling_frequency_index: u8,
+    sampling_frequency: SamplingFrequency,
+    channel_configuration: u8,
+) -> SampleEntry {
+    let audio = AudioSampleEntryFields {
+        data_reference_index: NonZeroU16::new(1).unwrap(),
+        channelcount: u16::from(channel_configuration),
+        samplesize: 16,
+        samplerate: FixedPointNumber::new(sampling_frequency as u16, 0),
+    };
+    let extension_sampling_index = sampling_frequency_index.saturating_sub(3);
+    let mut config = vec![0; 4];
+    config[0] = audio_object_type << 3 | (sampling_frequency_index & 0x0F) >> 1;
+    config[1] = (sampling_frequency_index & 0x0F) << 7 | (channel_configuration & 0x0F) << 3;
+    if audio_object_type == 5 {
+        config[1] |= (extension_sampling_index & 0x0F) >> 1;
+        config[2] = (extension_sampling_index & 0x01) << 7 | 2 << 2;
+    } else {
+        config.resize(2, 0);
+    }
+    let esds_box = EsdsBox {
+        es: EsDescriptor {
+            es_id: EsDescriptor::MIN_ES_ID,
+            stream_priority: EsDescriptor::LOWEST_STREAM_PRIORITY,
+            depends_on_es_id: None,
+            url_string: None,
+            ocr_es_id: None,
+            dec_config_descr: DecoderConfigDescriptor {
+                object_type_indication:
+                    DecoderConfigDescriptor::OBJECT_TYPE_INDICATION_AUDIO_ISO_IEC_14496_3,
+                stream_type: DecoderConfigDescriptor::STREAM_TYPE_AUDIO,
+                up_stream: DecoderConfigDescriptor::UP_STREAM_FALSE,
+                buffer_size_db: Uint::new(0),
+                max_bitrate: 0,
+                avg_bitrate: 0,
+                dec_specific_info: Some(DecoderSpecificInfo { payload: config }),
+            },
+            sl_config_descr: SlConfigDescriptor,
+        },
+    };
+
+    SampleEntry::Mp4a(Mp4aBox {
+        audio,
+        esds_box,
+        unknown_boxes: vec![],
+    })
+}
+
+fn compressor_name() -> [u8; 32] {
+    let mut value = [0; 32];
+    value[..27].copy_from_slice(b"github.com/siketyan/chibitv");
+    value
 }
 
 fn build_hev1_sample_entry(
@@ -667,11 +958,7 @@ fn build_hev1_sample_entry(
         horizresolution: VisualSampleEntryFields::DEFAULT_HORIZRESOLUTION,
         vertresolution: VisualSampleEntryFields::DEFAULT_VERTRESOLUTION,
         frame_count: VisualSampleEntryFields::DEFAULT_FRAME_COUNT,
-        compressorname: {
-            let mut value = [0u8; 32];
-            value[..27].copy_from_slice(b"github.com/siketyan/chibitv");
-            value
-        },
+        compressorname: compressor_name(),
         depth: VisualSampleEntryFields::DEFAULT_DEPTH,
     };
 
@@ -718,4 +1005,152 @@ fn convert_general_constraint_indicator_flags(ptl: &ProfileTierLevel) -> Uint<u6
     // 16 bits reserved
 
     Uint::new(u64::from_be_bytes(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mpeg2_picture(coding_type: u8) -> Vec<u8> {
+        vec![
+            0x00,
+            0x00,
+            0x01,
+            0x00,
+            0x00,
+            coding_type << 3,
+            0x00,
+            0x00,
+            0x01,
+            0x01,
+            0xAA,
+        ]
+    }
+
+    fn mpeg2_sequence_and_picture() -> Bytes {
+        let mut data = vec![
+            0x00, 0x00, 0x01, 0xB3, 0x78, 0x04, 0x38, 0x34, 0x09, 0xC4, 0x23, 0x80,
+        ];
+        data.extend_from_slice(&mpeg2_picture(1));
+        Bytes::from(data)
+    }
+
+    fn adts_frame(payload: &[u8]) -> Bytes {
+        let frame_length = 7 + payload.len();
+        let mut data = vec![
+            0xFF,
+            0xF1,
+            0x50, // AAC-LC, 44.1 kHz, channel_configuration high bit
+            0x80 | ((frame_length >> 11) & 0x03) as u8,
+            (frame_length >> 3) as u8,
+            ((frame_length & 0x07) << 5) as u8 | 0x1F,
+            0xFC,
+        ];
+        data.extend_from_slice(payload);
+        Bytes::from(data)
+    }
+
+    #[test]
+    fn creates_mp4v_samples_from_mpeg2_video() {
+        let mut track = Mpeg2VideoTrack::new();
+
+        assert!(
+            track
+                .write_sample(mpeg2_sequence_and_picture(), Some(0.0), Some(0.0))
+                .unwrap()
+                .is_empty()
+        );
+        let samples = track
+            .write_sample(Bytes::from(mpeg2_picture(2)), None, None)
+            .unwrap();
+
+        assert_eq!(samples.len(), 1);
+        assert!(samples[0].sample.keyframe);
+        assert!(matches!(
+            samples[0].sample.sample_entry,
+            Some(SampleEntry::Mp4v(_))
+        ));
+        assert!(samples[0].data.starts_with(&[0x00, 0x00, 0x01, 0xB3]));
+    }
+
+    #[test]
+    fn creates_mp4a_samples_from_adts_without_the_adts_header() {
+        let mut track = AacAdtsTrack::new();
+        let samples = track
+            .write_sample(adts_frame(&[0xDE, 0xAD]), Some(1.0), None)
+            .unwrap();
+
+        assert_eq!(samples.len(), 1);
+        assert_eq!(&samples[0].data[..], &[0xDE, 0xAD]);
+        assert_eq!(samples[0].sample.duration, 1024);
+        assert!(matches!(
+            samples[0].sample.sample_entry,
+            Some(SampleEntry::Mp4a(_))
+        ));
+    }
+
+    #[test]
+    fn writes_mpeg2_video_to_a_fragmented_mp4() {
+        let mut mux = FragmentedMp4Muxer::new(Vec::new());
+        mux.add_track(1, TrackType::Mpeg2Video);
+
+        mux.write_sample(1, mpeg2_sequence_and_picture(), Some(0.0), Some(0.0))
+            .unwrap();
+        assert!(mux.writer.is_empty());
+        mux.finalize().unwrap();
+
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"ftyp"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"mp4v"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"moof"));
+    }
+
+    #[test]
+    fn writes_the_first_mp4v_sample_entry_when_dts_is_missing_later() {
+        let mut mux = Mp4Muxer::new(Cursor::new(Vec::new()));
+        mux.add_track(1, TrackType::Mpeg2Video);
+        mux.begin().unwrap();
+
+        mux.write_sample(1, mpeg2_sequence_and_picture(), Some(0.0), Some(0.0))
+            .unwrap();
+        mux.write_sample(1, Bytes::from(mpeg2_picture(2)), None, None)
+            .unwrap();
+        mux.finalize().unwrap();
+
+        let output = mux.writer.into_inner();
+        assert!(output.windows(4).any(|bytes| bytes == b"mp4v"));
+    }
+
+    #[test]
+    fn writes_adts_audio_to_a_fragmented_mp4() {
+        let mut mux = FragmentedMp4Muxer::new(Vec::new());
+        mux.add_track(1, TrackType::AacAdts);
+        mux.write_sample(1, adts_frame(&[0xDE, 0xAD]), Some(0.0), None)
+            .unwrap();
+
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"ftyp"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"mp4a"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"moof"));
+    }
+
+    #[test]
+    fn writes_fragmented_mp4_when_adts_has_only_pts() {
+        let mut mux = FragmentedMp4Muxer::new(Vec::new());
+        mux.add_track(1, TrackType::Mpeg2Video);
+        mux.add_track(2, TrackType::AacAdts);
+
+        mux.write_sample(1, mpeg2_sequence_and_picture(), Some(0.0), Some(0.0))
+            .unwrap();
+        mux.write_sample(1, Bytes::from(mpeg2_picture(2)), Some(1.0 / 30.0), None)
+            .unwrap();
+        mux.write_sample(2, adts_frame(&[0xDE, 0xAD]), None, Some(0.0))
+            .unwrap();
+        mux.write_sample(1, Bytes::from(mpeg2_picture(2)), Some(2.0 / 30.0), None)
+            .unwrap();
+        mux.finalize().unwrap();
+
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"ftyp"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"mp4v"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"mp4a"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"moof"));
+    }
 }
