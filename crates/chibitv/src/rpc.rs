@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use chrono::NaiveDateTime;
+use chrono::{FixedOffset, NaiveDateTime};
 use connectrpc::{
     ConnectError, RequestContext, Response, Router, ServiceRequest, ServiceResult, ServiceStream,
 };
@@ -230,11 +230,39 @@ impl From<&registry::Event> for Event {
 
 impl From<NaiveDateTime> for DateTime {
     fn from(value: NaiveDateTime) -> Self {
-        let value = value.and_utc();
+        let jst = FixedOffset::east_opt(9 * 60 * 60).expect("JST offset must be valid");
+        let value = value
+            .and_local_timezone(jst)
+            .single()
+            .expect("a fixed timezone offset must be unambiguous");
+
         Self {
             seconds: value.timestamp(),
             nanos: value.timestamp_subsec_nanos(),
             ..Default::default()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::NaiveDate;
+
+    use super::*;
+
+    #[test]
+    fn converts_broadcast_time_from_jst_to_unix_timestamp() {
+        let local_time = NaiveDate::from_ymd_opt(2026, 7, 11)
+            .unwrap()
+            .and_hms_nano_opt(18, 30, 0, 123_000_000)
+            .unwrap();
+
+        let converted = DateTime::from(local_time);
+
+        assert_eq!(
+            converted.seconds,
+            local_time.and_utc().timestamp() - 9 * 60 * 60
+        );
+        assert_eq!(converted.nanos, 123_000_000);
     }
 }
