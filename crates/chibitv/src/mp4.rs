@@ -121,6 +121,9 @@ impl Mpeg2VideoTrack {
             .timestamps
             .pop_front()
             .unwrap_or((self.next_dts, self.next_pts));
+        // MPEG-TS may omit DTS when it is equal to PTS. Keep a continuous
+        // decode timeline for fMP4's base media decode time in that case.
+        let dts = dts.or(self.next_dts).or(pts);
         let mut sample_entry = None;
 
         if self.metadata.is_none() {
@@ -362,10 +365,12 @@ impl Track for AacAdtsTrack {
         &mut self,
         data: Bytes,
         dts: Option<f64>,
-        _pts: Option<f64>,
+        pts: Option<f64>,
     ) -> anyhow::Result<Vec<TrackSample>> {
         if self.parser.is_empty() {
-            self.next_dts = dts;
+            // AAC has no frame reordering, so its PTS is also its decode
+            // timestamp when an MPEG-TS PES omits DTS.
+            self.next_dts = dts.or(pts);
         }
 
         let mut samples = Vec::new();
@@ -1123,6 +1128,28 @@ mod tests {
             .unwrap();
 
         assert!(mux.writer.windows(4).any(|bytes| bytes == b"ftyp"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"mp4a"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"moof"));
+    }
+
+    #[test]
+    fn writes_fragmented_mp4_when_adts_has_only_pts() {
+        let mut mux = FragmentedMp4Muxer::new(Vec::new());
+        mux.add_track(1, TrackType::Mpeg2Video);
+        mux.add_track(2, TrackType::AacAdts);
+
+        mux.write_sample(1, mpeg2_sequence_and_picture(), Some(0.0), Some(0.0))
+            .unwrap();
+        mux.write_sample(1, Bytes::from(mpeg2_picture(2)), Some(1.0 / 30.0), None)
+            .unwrap();
+        mux.write_sample(2, adts_frame(&[0xDE, 0xAD]), None, Some(0.0))
+            .unwrap();
+        mux.write_sample(1, Bytes::from(mpeg2_picture(2)), Some(2.0 / 30.0), None)
+            .unwrap();
+        mux.finalize().unwrap();
+
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"ftyp"));
+        assert!(mux.writer.windows(4).any(|bytes| bytes == b"mp4v"));
         assert!(mux.writer.windows(4).any(|bytes| bytes == b"mp4a"));
         assert!(mux.writer.windows(4).any(|bytes| bytes == b"moof"));
     }
