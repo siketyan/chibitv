@@ -1,4 +1,5 @@
-use encoding_rs::EUC_JP;
+use std::collections::BTreeMap;
+
 use kradical_jis::jis213_to_utf8;
 
 mod additional_symbols;
@@ -59,10 +60,22 @@ impl GraphicSet {
 }
 
 #[derive(Clone, Debug)]
+pub enum DrcsMapping {
+    /// Assign encountered DRCS glyphs to the BMP private-use area from U+EC00.
+    PrivateUse,
+    /// Replace DRCS glyphs with U+FFFD for clients without a matching glyph registry.
+    Replacement,
+}
+
+#[derive(Clone, Debug)]
 pub struct Decoder {
     g: [GraphicSet; 4],
     gl: usize,
     gr: usize,
+    drcs_mapping: DrcsMapping,
+    drcs_characters: BTreeMap<(u8, u16), char>,
+    next_drcs_code_point: u32,
+    pending_nonspacing: String,
 }
 
 impl Default for Decoder {
@@ -76,11 +89,22 @@ impl Default for Decoder {
             ],
             gl: 0,
             gr: 2,
+            drcs_mapping: DrcsMapping::PrivateUse,
+            drcs_characters: BTreeMap::new(),
+            next_drcs_code_point: 0xEC00,
+            pending_nonspacing: String::new(),
         }
     }
 }
 
 impl Decoder {
+    pub fn with_drcs_mapping(drcs_mapping: DrcsMapping) -> Self {
+        Self {
+            drcs_mapping,
+            ..Self::default()
+        }
+    }
+
     pub fn decode(&mut self, bytes: &[u8]) -> String {
         let mut output = String::new();
         let mut index = 0;
@@ -97,7 +121,7 @@ impl Decoder {
                 0x1C => Self::skip_bytes(bytes, &mut index, 2),
                 0x1B => self.decode_escape(bytes, &mut index),
                 0x1D => self.decode_single_shift(bytes, &mut index, 3, &mut output),
-                0x20 => output.push(' '),
+                0x20 => self.push_graphic(&mut output, " "),
                 0x0A | 0x0D => output.push('\n'),
                 0x21..=0x7E => self.decode_graphic(bytes, &mut index, self.gl, byte, &mut output),
                 0xA1..=0xFE => {
@@ -107,6 +131,9 @@ impl Decoder {
                 _ => {}
             }
         }
+
+        output.push_str(&self.pending_nonspacing);
+        self.pending_nonspacing.clear();
 
         output
     }
@@ -145,6 +172,21 @@ impl Decoder {
             return;
         }
 
+        if let GraphicSet::DrCs { set, width } = set {
+            let code = if width == CodeWidth::Two {
+                let Some(trail) = bytes.get(*index).copied() else {
+                    return;
+                };
+                *index += 1;
+                (u16::from(byte) << 8) | u16::from(trail & 0x7F)
+            } else {
+                u16::from(byte)
+            };
+            let decoded = self.decode_drcs(set, code);
+            self.push_graphic(output, &decoded);
+            return;
+        }
+
         if set.is_two_byte() {
             let Some(trail) = bytes.get(*index).copied() else {
                 return;
@@ -152,10 +194,41 @@ impl Decoder {
             *index += 1;
 
             let trail = trail & 0x7F;
-            output.push_str(&decode_two_byte(set, byte, trail));
+            self.push_graphic(output, &decode_two_byte(set, byte, trail));
         } else {
-            output.push_str(&decode_one_byte(set, byte));
+            self.push_graphic(output, &decode_one_byte(set, byte));
         }
+    }
+
+    fn decode_drcs(&mut self, set: u8, code: u16) -> String {
+        if matches!(self.drcs_mapping, DrcsMapping::Replacement) {
+            return replacement();
+        }
+        if let Some(character) = self.drcs_characters.get(&(set, code)) {
+            return character.to_string();
+        }
+        if self.next_drcs_code_point > 0xF8FF {
+            return replacement();
+        }
+
+        let character = char::from_u32(self.next_drcs_code_point).unwrap();
+        self.next_drcs_code_point += 1;
+        self.drcs_characters.insert((set, code), character);
+        character.to_string()
+    }
+
+    fn push_graphic(&mut self, output: &mut String, decoded: &str) {
+        if decoded.is_empty() {
+            return;
+        }
+        if decoded.chars().count() == 1 && decoded.chars().all(is_arib_nonspacing) {
+            self.pending_nonspacing.push_str(decoded);
+            return;
+        }
+
+        output.push_str(decoded);
+        output.push_str(&self.pending_nonspacing);
+        self.pending_nonspacing.clear();
     }
 
     fn apply_default_macro(&mut self, byte: u8) {
@@ -404,6 +477,7 @@ fn drcs_from_final(final_byte: u8, width: CodeWidth) -> GraphicSet {
 
 fn decode_one_byte(set: GraphicSet, byte: u8) -> String {
     match set {
+        GraphicSet::Mosaic => String::new(),
         GraphicSet::Alphanumeric | GraphicSet::ProportionalAlphanumeric => {
             decode_alphanumeric(byte)
                 .map(|c| c.to_string())
@@ -424,7 +498,7 @@ fn decode_one_byte(set: GraphicSet, byte: u8) -> String {
 
 fn decode_two_byte(set: GraphicSet, lead: u8, trail: u8) -> String {
     match set {
-        GraphicSet::Kanji => decode_jis(lead, trail).unwrap_or_else(replacement),
+        GraphicSet::Kanji => decode_kanji(lead, trail).unwrap_or_else(replacement),
         GraphicSet::JisX0213Plane1 => {
             decode_jis_x0213(false, lead, trail).unwrap_or_else(replacement)
         }
@@ -478,14 +552,32 @@ fn decode_arib_kana(
     }
 }
 
-fn decode_jis(lead: u8, trail: u8) -> Option<String> {
-    if !(0x21..=0x7E).contains(&lead) || !(0x21..=0x7E).contains(&trail) {
-        return None;
+fn decode_kanji(lead: u8, trail: u8) -> Option<String> {
+    let nonspacing = match (lead, trail) {
+        (0x21, 0x2D) => Some('\u{0301}'),
+        (0x21, 0x2E) => Some('\u{0300}'),
+        (0x21, 0x2F) => Some('\u{0308}'),
+        (0x21, 0x30) => Some('\u{0302}'),
+        (0x21, 0x31) => Some('\u{0305}'),
+        (0x21, 0x32) => Some('\u{0332}'),
+        (0x22, 0x7E) => Some('\u{20DD}'),
+        _ => None,
+    };
+    if let Some(nonspacing) = nonspacing {
+        return Some(nonspacing.to_string());
+    }
+    if (0x7A..=0x7E).contains(&lead) {
+        return decode_additional_symbol(lead, trail).map(|c| c.to_string());
     }
 
-    let euc = [lead | 0x80, trail | 0x80];
-    let (decoded, _, had_errors) = EUC_JP.decode(&euc);
-    (!had_errors).then(|| decoded.into_owned())
+    decode_jis_x0213(false, lead, trail)
+}
+
+fn is_arib_nonspacing(character: char) -> bool {
+    matches!(
+        character,
+        '\u{0301}' | '\u{0300}' | '\u{0308}' | '\u{0302}' | '\u{0305}' | '\u{0332}' | '\u{20DD}'
+    )
 }
 
 fn decode_jis_x0213(plane_two: bool, lead: u8, trail: u8) -> Option<String> {
@@ -652,7 +744,7 @@ mod tests {
     fn treats_default_macro_drcs_as_one_byte() {
         assert_eq!(
             decode(&[0x1D, 0x62, 0x0E, 0x21, 0x1D, 0x60, 0x0E, 0x41]),
-            "�A"
+            "\u{EC00}A"
         );
     }
 
@@ -664,7 +756,40 @@ mod tests {
                 0x1B, 0x24, 0x29, 0x20, 0x40, 0x0E, 0x21, 0x22, // DRCS-0 in G1.
                 0x1B, 0x29, 0x4A, 0x0E, 0x41,
             ]),
-            "��A"
+            "\u{EC00}\u{EC01}A"
         );
+    }
+
+    #[test]
+    fn can_replace_drcs_instead_of_using_private_use_characters() {
+        let mut decoder = Decoder::with_drcs_mapping(DrcsMapping::Replacement);
+        assert_eq!(decoder.decode(&[0x1D, 0x62, 0x0E, 0x21]), "�");
+    }
+
+    #[test]
+    fn reuses_private_use_character_for_the_same_drcs_code() {
+        assert_eq!(
+            decode(&[0x1D, 0x62, 0x0E, 0x21, 0x21, 0x22]),
+            "\u{EC00}\u{EC00}\u{EC01}"
+        );
+    }
+
+    #[test]
+    fn ignores_mosaic_characters_when_converting_to_unicode() {
+        assert_eq!(
+            decode(&[0x1B, 0x29, 0x32, 0x0E, 0x21, 0x1B, 0x29, 0x4A, 0x41]),
+            "A"
+        );
+    }
+
+    #[test]
+    fn converts_and_reorders_nonspacing_characters() {
+        assert_eq!(decode(&[0x21, 0x2D, 0x24, 0x22]), "あ\u{0301}");
+        assert_eq!(decode(&[0x22, 0x7E, 0x24, 0x22]), "あ\u{20DD}");
+    }
+
+    #[test]
+    fn maps_kanji_rows_90_to_94_as_additional_symbols() {
+        assert_eq!(decode(&[0x7A, 0x23]), "❗");
     }
 }
