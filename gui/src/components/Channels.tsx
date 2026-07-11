@@ -19,6 +19,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
   } = useQuery({
     queryKey: queryKeys.services,
     queryFn: async () => (await chibitvClient.listServices({})).services,
+    refetchInterval: (query) => (query.state.data?.length ? false : 1000),
   });
   const { mutate, variables, isPending } = useMutation({
     mutationFn: (serviceId: number) => chibitvClient.updateStream({ streamId: 0, serviceId }),

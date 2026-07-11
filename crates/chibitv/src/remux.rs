@@ -5,11 +5,15 @@ use tokio::sync::broadcast::Sender;
 use tokio::sync::oneshot::Receiver;
 use tracing::error;
 
-use chibitv_b10::table::{Eit, Table as B10Table};
+use chibitv_b10::table::{Eit, Sdt, Table as B10Table};
 use chibitv_b60::message::{M2SectionMessage, Message};
 use chibitv_b60::table::{MhBit, MhEit, MhSdt, Table};
 
 use crate::registry::Registry;
+
+const SDT_ACTUAL_TABLE_ID: u8 = 0x42;
+const EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID: u8 = 0x4E;
+const EIT_ACTUAL_SCHEDULE_TABLE_IDS: std::ops::RangeInclusive<u8> = 0x50..=0x5F;
 
 #[derive(Clone, Debug)]
 #[allow(unused)]
@@ -82,6 +86,7 @@ pub struct Remuxer<D: Demux, M: Mux> {
     mux: M,
     signal_tx: Option<Sender<Signal>>,
     registry: Option<Arc<Registry>>,
+    channel_id: Option<usize>,
     current_event_id: Option<u16>,
 }
 
@@ -131,8 +136,14 @@ impl<D: Demux, M: Mux> Remuxer<D, M> {
             mux,
             signal_tx,
             registry,
+            channel_id: None,
             current_event_id: None,
         }
+    }
+
+    pub fn with_channel_id(mut self, channel_id: usize) -> Self {
+        self.channel_id = Some(channel_id);
+        self
     }
 
     fn read_packet(&mut self, packet: Packet) -> anyhow::Result<()> {
@@ -153,22 +164,40 @@ impl<D: Demux, M: Mux> Remuxer<D, M> {
                     self.read_m2_section_message(message)?;
                 }
             }
-            Packet::B10Table { table, .. } => self.read_b10_table(table)?,
+            Packet::B10Table { table_id, table } => self.read_b10_table(table_id, table)?,
         }
 
         Ok(())
     }
 
-    fn read_b10_table(&mut self, table: B10Table) -> anyhow::Result<()> {
+    fn read_b10_table(&mut self, table_id: u8, table: B10Table) -> anyhow::Result<()> {
         match table {
-            B10Table::Eit(table) => self.read_eit(table),
+            B10Table::Eit(table)
+                if table_id == EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID
+                    || EIT_ACTUAL_SCHEDULE_TABLE_IDS.contains(&table_id) =>
+            {
+                self.read_eit(table)
+            }
+            B10Table::Sdt(table) if table_id == SDT_ACTUAL_TABLE_ID => self.read_sdt(table),
             _ => Ok(()),
         }
     }
 
+    fn read_sdt(&mut self, table: Sdt) -> anyhow::Result<()> {
+        if let (Some(registry), Some(channel_id)) = (&self.registry, self.channel_id) {
+            for service in &table.services {
+                registry.put_b10_service(channel_id, table.transport_stream_id, service);
+            }
+        }
+
+        Ok(())
+    }
+
     fn read_eit(&mut self, table: Eit) -> anyhow::Result<()> {
-        for event in table.events {
-            // TODO: Put event to the registry
+        for event in &table.events {
+            if let Some(registry) = &self.registry {
+                registry.put_b10_event(table.service_id, event);
+            }
 
             let Some((start_time, duration)) = event.start_time.zip(event.duration) else {
                 continue;

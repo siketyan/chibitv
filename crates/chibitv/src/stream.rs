@@ -8,13 +8,15 @@ use bytes::Bytes;
 use tokio::sync::broadcast::{Receiver, Sender, channel};
 use tracing::info;
 
+use chibitv_b25::B25Descrambler;
 use chibitv_b61::Descrambler;
 
-use crate::channel::Channel;
+use crate::channel::{Channel, ChannelInner};
+use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
 use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
 use crate::registry::Registry;
-use crate::remux::{Remux, Remuxer, Signal};
+use crate::remux::{Demux, Remux, Remuxer, Signal};
 use crate::tuner::Tuner;
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
@@ -52,7 +54,7 @@ pub struct StreamState {
 pub struct Stream {
     registry: Arc<Registry>,
     tuner: Arc<dyn Tuner>,
-    descrambler: Descrambler,
+    b61_descrambler: Option<Descrambler>,
     state: Arc<RwLock<StreamState>>,
     fmp4_tx: Sender<Bytes>,
     fmp4_init_segment: Arc<Mutex<Option<Bytes>>>,
@@ -63,7 +65,7 @@ impl Stream {
     pub fn open(
         registry: Arc<Registry>,
         tuner: Arc<dyn Tuner>,
-        descrambler: Descrambler,
+        b61_descrambler: Option<Descrambler>,
     ) -> anyhow::Result<Self> {
         let (fmp4_tx, _) = channel::<Bytes>(BROADCAST_CAPACITY);
         let fmp4_init_segment = Arc::new(Mutex::new(None));
@@ -93,7 +95,7 @@ impl Stream {
         Ok(Self {
             registry,
             tuner,
-            descrambler,
+            b61_descrambler,
             state,
             fmp4_tx,
             fmp4_init_segment,
@@ -101,25 +103,51 @@ impl Stream {
         })
     }
 
-    fn start_remuxer(&self) -> anyhow::Result<()> {
-        let reader = BufReader::with_capacity(READ_BUFFER_SIZE, self.tuner.open()?);
-        let demux = MmtDemuxer::new(reader, self.descrambler.clone());
-        let fmp4_writer = Fmp4ChannelWriter {
+    fn fmp4_writer(&self) -> Fmp4ChannelWriter {
+        Fmp4ChannelWriter {
             tx: self.fmp4_tx.clone(),
             init_segment: Arc::clone(&self.fmp4_init_segment),
-        };
+        }
+    }
+
+    fn spawn_remuxer<D>(&self, demux: D, channel_id: usize) -> RemuxerHandle
+    where
+        D: Demux + Send + 'static,
+    {
+        let fmp4_writer = self.fmp4_writer();
         let mux = FragmentedMp4Muxer::new(fmp4_writer);
         let mut remuxer = Remuxer::new(
             demux,
             mux,
             Some(self.signal_tx.clone()),
             Some(Arc::clone(&self.registry)),
-        );
+        )
+        .with_channel_id(channel_id);
 
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel();
         let handle = std::thread::spawn(move || remuxer.run(Some(kill_rx)));
 
-        self.state.write().unwrap().handle = Some((handle, kill_tx));
+        (handle, kill_tx)
+    }
+
+    fn start_remuxer(&self, channel: &Channel) -> anyhow::Result<()> {
+        let reader = self.tuner.open()?;
+        let handle = match &channel.inner {
+            ChannelInner::IsdbS { .. } => {
+                let descrambler = self
+                    .b61_descrambler
+                    .clone()
+                    .ok_or_else(|| anyhow::anyhow!("B61 descrambler is not configured"))?;
+                let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
+                self.spawn_remuxer(MmtDemuxer::new(reader, descrambler), channel.id)
+            }
+            ChannelInner::IsdbT { .. } => {
+                let descrambler = B25Descrambler::open()?;
+                self.spawn_remuxer(M2tsDemuxer::new(reader, descrambler), channel.id)
+            }
+        };
+
+        self.state.write().unwrap().handle = Some(handle);
 
         Ok(())
     }
@@ -151,7 +179,7 @@ impl Stream {
         self.tuner.tune(channel.clone())?;
 
         *self.fmp4_init_segment.lock().unwrap() = None;
-        self.start_remuxer()?;
+        self.start_remuxer(channel)?;
 
         let mut state = self.state.write().unwrap();
         state.service_id = Some(service_id);
