@@ -57,12 +57,112 @@ The output of `id -nG` should include both `pcsc` and `video`, and `pcsc_scan` s
 
 ## Usage
 
+Every subcommand loads `./config.toml` from the current directory. Copy the example and configure the CAS master key,
+tuners, and channels before running chibitv:
+
 ```shell
-cargo run
+cp config.toml.example config.toml
+```
+
+Run a subcommand with `cargo run -- <COMMAND>`. The channel arguments used by `live`, `record`, and `status` are
+zero-based indices into the `[[channels]]` entries in `config.toml`. Tuner commands currently use the first entry in
+`[[tuners]]`. Place the global `--verbose` option before the subcommand to enable trace logging:
+
+```shell
+cargo run -- --verbose live --channel 0
+```
+
+### `live`
+
+Tune to a configured channel, descramble it, remux it to MPEG-2 Transport Stream, and write the result to stdout. The
+stream continues until interrupted with <kbd>Ctrl</kbd>+<kbd>C</kbd>.
+
+```shell
+# Watch the first configured channel with a player that accepts stdin.
+cargo run -- live --channel 0 | mpv -
+
+# Alternatively, save the remuxed stream.
+cargo run -- live --channel 0 > live.m2ts
+```
+
+Both ISDB-S channels using MMT/TLV and ISDB-T channels using MPEG-2 TS are supported.
+
+### `record`
+
+Tune to a configured channel and copy the raw tuner stream without descrambling or remuxing it. `--output` defaults
+to stdout; pass a path to write directly to a file.
+
+```shell
+cargo run -- record --channel 0 --output capture.mmts
+
+# The explicit output value `-` also means stdout.
+cargo run -- record --channel 0 --output - > capture.mmts
+```
+
+### `remux`
+
+Descramble and remux an existing stream. The input defaults to stdin and MMT/TLV (`mmts`), while the output defaults
+to stdout and MPEG-2 TS (`m2ts`). Pass `-` as the input or output path to select standard input or output explicitly.
+
+```shell
+# MMT/TLV to MPEG-2 TS.
+cargo run -- remux capture.mmts --output program.m2ts
+
+# MMT/TLV to a regular MP4 file.
+cargo run -- remux capture.mmts --format mp4 --output program.mp4
+
+# ISDB-T MPEG-2 TS descrambling/remuxing.
+cargo run -- remux terrestrial.m2ts --input-format m2ts --format m2ts --output descrambled.m2ts
+
+# MMT/TLV to fragmented MP4 on stdout.
+cargo run -- remux capture.mmts --format fmp4 > program.fmp4
+```
+
+Supported input formats are `mmts` and `m2ts`; supported output format names are `m2ts`, `mp4`, and `fmp4`. A regular
+MP4 requires an output path. MP4 and fragmented MP4 output from an `m2ts` input are not currently supported.
+
+### `scan`
+
+Scan terrestrial UHF physical channels and print discovered ISDB-T `[[channels]]` entries as TOML. The default range
+is channels 13 through 52, with a maximum wait of 12 seconds per channel.
+
+```shell
+cargo run -- scan > scanned-channels.toml
+
+# Scan a smaller range and wait up to 5 seconds per channel.
+cargo run -- scan --start-channel 20 --end-channel 30 --timeout 5 > scanned-channels.toml
+```
+
+Review the generated file and merge its `[[channels]]` entries into `config.toml`.
+
+### `status`
+
+Tune to a configured ISDB-T channel and print its network, services, and current events from the B10 SI tables. The
+command waits up to 3 seconds by default for the required tables.
+
+```shell
+cargo run -- status --channel 1
+cargo run -- status --channel 1 --timeout 10
+```
+
+This command currently supports ISDB-T channels only.
+
+### `serve`
+
+Start the HTTP API and live-streaming server at `server.address` from `config.toml`. The default address is
+`[::1]:3001`, and the first configured channel is selected when the server starts.
+
+```shell
+# Terminal 1: start the backend.
+cargo run -- serve
+
+# Terminal 2: start the GUI development server.
 pnpm -C gui dev
 ```
 
 Open http://localhost:3000/ in your browser and enjoy!
+
+The server currently supports ISDB-S channels only and requires at least one configured tuner and channel.
 
 ## References
 
