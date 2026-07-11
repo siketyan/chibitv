@@ -77,9 +77,9 @@ impl Workspace {
             .iter()
             .find(|channel| match &channel.inner {
                 ChannelInner::IsdbS { stream_id, .. } => {
-                    *stream_id == (service.tlv_stream_id as u32)
+                    *stream_id == u32::from(service.transport_stream_id)
                 }
-                ChannelInner::IsdbT { .. } => false,
+                ChannelInner::IsdbT { .. } => service.channel_id == Some(channel.id),
             })
             .ok_or_else(|| WorkspaceError::ChannelNotFound)?;
 

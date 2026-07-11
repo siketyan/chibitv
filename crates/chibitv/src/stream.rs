@@ -110,7 +110,7 @@ impl Stream {
         }
     }
 
-    fn spawn_remuxer<D>(&self, demux: D) -> RemuxerHandle
+    fn spawn_remuxer<D>(&self, demux: D, channel_id: usize) -> RemuxerHandle
     where
         D: Demux + Send + 'static,
     {
@@ -121,7 +121,8 @@ impl Stream {
             mux,
             Some(self.signal_tx.clone()),
             Some(Arc::clone(&self.registry)),
-        );
+        )
+        .with_channel_id(channel_id);
 
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel();
         let handle = std::thread::spawn(move || remuxer.run(Some(kill_rx)));
@@ -138,11 +139,11 @@ impl Stream {
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("B61 descrambler is not configured"))?;
                 let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
-                self.spawn_remuxer(MmtDemuxer::new(reader, descrambler))
+                self.spawn_remuxer(MmtDemuxer::new(reader, descrambler), channel.id)
             }
             ChannelInner::IsdbT { .. } => {
                 let descrambler = B25Descrambler::open()?;
-                self.spawn_remuxer(M2tsDemuxer::new(reader, descrambler))
+                self.spawn_remuxer(M2tsDemuxer::new(reader, descrambler), channel.id)
             }
         };
 
