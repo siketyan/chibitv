@@ -1,0 +1,42 @@
+{
+  "name": "@chibitv/mediabunny-mpeg2",
+  "version": "0.1.0",
+  "description": "MPEG-2 video decoder for Mediabunny backed by a minimal FFmpeg WebAssembly build",
+  "type": "module",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "lib/dist",
+    "lib/SOURCE.md",
+    "lib/build.sh",
+    "lib/build-in-container.sh",
+    "lib/adapter.c",
+    "LICENCE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "peerDependencies": {
+    "mediabunny": "1.50.8"
+  },
+  "devDependencies": {
+    "@types/node": "24.0.13",
+    "mediabunny": "1.50.8",
+    "typescript": "6.0.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json",
+    "lib:build": "bash ./lib/build.sh",
+    "prepack": "pnpm build"
+  }
+}

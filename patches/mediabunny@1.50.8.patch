@@ -1,0 +1,178 @@
+diff --git a/dist/mediabunny.d.ts b/dist/mediabunny.d.ts
+index 0d2596cdfda4244cde06fce3554a8e41bf4f111e..9ad777c141393d24a482328f2e0a4017cb683557 100644
+--- a/dist/mediabunny.d.ts
++++ b/dist/mediabunny.d.ts
+@@ -4282,7 +4282,7 @@ export declare type UrlSourceOptions = {
+  * @group Codecs
+  * @public
+  */
+-export declare const VIDEO_CODECS: readonly ["avc", "hevc", "vp9", "av1", "vp8", "prores"];
++export declare const VIDEO_CODECS: readonly ["avc", "hevc", "vp9", "av1", "vp8", "prores", "mpeg2"];
+ 
+ /**
+  * The list of {@link VideoSample} pixel formats.
+diff --git a/dist/modules/src/codec-data.js b/dist/modules/src/codec-data.js
+index 2b6ae659552a75aaf760453299132a71ada00471..7d2a3705d6084dc5ec8a90d64b7c9b1e49b9a150 100644
+--- a/dist/modules/src/codec-data.js
++++ b/dist/modules/src/codec-data.js
+@@ -1978,6 +1978,28 @@ export const determineVideoPacketType = (codec, decoderConfig, packetData) => {
+                 return null;
+             }
+             ;
++        case 'mpeg2':
++            {
++                // picture_start_code is followed by temporal_reference (10 bits) and
++                // picture_coding_type (3 bits). An I-picture is a random access point;
++                // P-, B-, and MPEG-1 D-pictures depend on other pictures.
++                for (let i = 0; i + 5 < packetData.length; i++) {
++                    if (packetData[i] !== 0x00
++                        || packetData[i + 1] !== 0x00
++                        || packetData[i + 2] !== 0x01
++                        || packetData[i + 3] !== 0x00) {
++                        continue;
++                    }
++                    const pictureCodingType = (packetData[i + 5] >> 3) & 0b111;
++                    if (pictureCodingType === 1)
++                        return 'key';
++                    if (pictureCodingType >= 2 && pictureCodingType <= 4)
++                        return 'delta';
++                    return null;
++                }
++                return null;
++            }
++            ;
+         case 'prores':
+             {
+                 return 'key';
+diff --git a/dist/modules/src/codec.d.ts b/dist/modules/src/codec.d.ts
+index 164aa274a02d80aeb57c1787815242bb76c8b144..8bbd45a584f70114ef18973fdf6b7b27c8d7cdc0 100644
+--- a/dist/modules/src/codec.d.ts
++++ b/dist/modules/src/codec.d.ts
+@@ -12,7 +12,7 @@ import { SubtitleMetadata } from './subtitles.js';
+  * @group Codecs
+  * @public
+  */
+-export declare const VIDEO_CODECS: readonly ["avc", "hevc", "vp9", "av1", "vp8", "prores"];
++export declare const VIDEO_CODECS: readonly ["avc", "hevc", "vp9", "av1", "vp8", "prores", "mpeg2"];
+ /**
+  * List of known PCM (uncompressed) audio codecs, ordered by encoding preference.
+  * @group Codecs
+diff --git a/dist/modules/src/codec.js b/dist/modules/src/codec.js
+index a207683005de64a4f03bf811783e49ded13e7b28..f46df4e1394043da50ce47b28845542849b52969 100644
+--- a/dist/modules/src/codec.js
++++ b/dist/modules/src/codec.js
+@@ -19,6 +19,7 @@ export const VIDEO_CODECS = [
+     'av1',
+     'vp8',
+     'prores',
++    'mpeg2',
+ ];
+ /**
+  * List of known PCM (uncompressed) audio codecs, ordered by encoding preference.
+@@ -427,6 +428,9 @@ export const extractVideoCodecString = (trackInfo) => {
+     else if (codec === 'prores') {
+         return proresFormat ?? 'apch';
+     }
++    else if (codec === 'mpeg2') {
++        return 'mpeg2';
++    }
+     else if (codec !== null) {
+         assertNever(codec);
+     }
+@@ -591,6 +595,9 @@ export const inferCodecFromCodecString = (codecString) => {
+     else if (PRORES_FOURCCS.includes(codecString)) {
+         return 'prores';
+     }
++    else if (codecString === 'mpeg2' || codecString === 'mp2v') {
++        return 'mpeg2';
++    }
+     // Audio codecs
+     if (codecString === 'mp3'
+         || codecString === 'mp4a.69'
+diff --git a/dist/modules/src/isobmff/isobmff-demuxer.js b/dist/modules/src/isobmff/isobmff-demuxer.js
+index ad4f675e6b7adfd593e40ca243c4e54b67c30439..aa93c20c6a2bca28d8789278a59c7cdb5da89eac 100644
+--- a/dist/modules/src/isobmff/isobmff-demuxer.js
++++ b/dist/modules/src/isobmff/isobmff-demuxer.js
+@@ -708,10 +708,15 @@ export class IsobmffDemuxer extends Demuxer {
+                             else if (codecName === 'av01') {
+                                 track.info.codec = 'av1';
+                             }
+-                            else if (PRORES_FOURCCS.includes(lowercaseBoxName)) {
+-                                track.info.codec = 'prores';
+-                                track.info.proresFormat = lowercaseBoxName;
+-                            }
++                        else if (PRORES_FOURCCS.includes(lowercaseBoxName)) {
++                            track.info.codec = 'prores';
++                            track.info.proresFormat = lowercaseBoxName;
++                        }
++                        else if (codecName === 'mp4v' && track.info.codec === 'mpeg2') {
++                        }
++                        else if (codecName === 'mp2v' || codecName === 'mpeg') {
++                            track.info.codec = 'mpeg2';
++                        }
+                             else if (codecName === null) {
+                                 Logging._warn(`Unknown encrypted video codec due to missing frma box.`);
+                             }
+@@ -1139,7 +1144,7 @@ export class IsobmffDemuxer extends Demuxer {
+                     if (!track) {
+                         break;
+                     }
+-                    assert(track.info?.type === 'audio');
++                    assert(track.info !== null);
+                     slice.skip(4); // Version + flags
+                     const tag = readU8(slice);
+                     assert(tag === 0x03); // ES Descriptor
+@@ -1164,6 +1169,15 @@ export class IsobmffDemuxer extends Demuxer {
+                     const decoderConfigDescriptorLength = readIsomVariableInteger(slice); // Length
+                     const payloadStart = slice.filePos;
+                     const objectTypeIndication = readU8(slice);
++                    if (track.info.type === 'video') {
++                        if (objectTypeIndication >= 0x60 && objectTypeIndication <= 0x65) {
++                            track.info.codec = 'mpeg2';
++                        }
++                        else {
++                            Logging._warn(`Unsupported video codec (objectTypeIndication ${objectTypeIndication}) - discarding track.`);
++                        }
++                        break;
++                    }
+                     if (objectTypeIndication === 0x40 || objectTypeIndication === 0x67) {
+                         track.info.codec = 'aac';
+                         track.info.aacCodecInfo = {
+@@ -2587,7 +2601,7 @@ class IsobmffTrackBacking {
+         const timestamp = (sampleInfo.presentationTimestamp - this.internalTrack.editListOffset)
+             / this.internalTrack.timescale;
+         const duration = sampleInfo.duration / this.internalTrack.timescale;
+-        const packet = new EncodedPacket(data, sampleInfo.isKeyFrame ? 'key' : 'delta', timestamp, duration, sampleIndex, sampleInfo.sampleSize);
++        const packet = new EncodedPacket(data, this.internalTrack.info?.type === 'audio' || sampleInfo.isKeyFrame ? 'key' : 'delta', timestamp, duration, sampleIndex, sampleInfo.sampleSize);
+         this.packetToSampleIndex.set(packet, sampleIndex);
+         return packet;
+     }
+@@ -2617,7 +2631,7 @@ class IsobmffTrackBacking {
+         const timestamp = (fragmentSample.presentationTimestamp - this.internalTrack.editListOffset)
+             / this.internalTrack.timescale;
+         const duration = fragmentSample.duration / this.internalTrack.timescale;
+-        const packet = new EncodedPacket(data, fragmentSample.isKeyFrame ? 'key' : 'delta', timestamp, duration, fragment.moofOffset + sampleIndex, fragmentSample.byteSize);
++        const packet = new EncodedPacket(data, this.internalTrack.info?.type === 'audio' || fragmentSample.isKeyFrame ? 'key' : 'delta', timestamp, duration, fragment.moofOffset + sampleIndex, fragmentSample.byteSize);
+         this.packetToFragmentLocation.set(packet, { fragment, sampleIndex });
+         return packet;
+     }
+diff --git a/dist/modules/src/media-source.js b/dist/modules/src/media-source.js
+index 0a3ce3152219dc9780a41ba93952606fd204b2c5..c534484681765eb2247b45dabaa29db30ba8d5c2 100644
+--- a/dist/modules/src/media-source.js
++++ b/dist/modules/src/media-source.js
+@@ -543,6 +543,15 @@ class VideoEncoderWrapper {
+                 let encodedAlphaChunkCount = 0;
+                 let alphaEncoderQueue = 0;
+                 const addPacket = (colorChunk, alphaChunk, meta) => {
++                    // Some WebCodecs implementations omit the configured display size
++                    // from EncodedVideoChunkMetadata. Preserve it so ISOBMFF can write
++                    // a pasp box for non-square-pixel video such as 1440x1080 MPEG-2.
++                    if (meta?.decoderConfig
++                        && encoderConfig.displayWidth !== undefined
++                        && encoderConfig.displayHeight !== undefined) {
++                        meta.decoderConfig.displayAspectWidth ??= encoderConfig.displayWidth;
++                        meta.decoderConfig.displayAspectHeight ??= encoderConfig.displayHeight;
++                    }
+                     const sideData = {};
+                     if (alphaChunk) {
+                         const alphaData = new Uint8Array(alphaChunk.byteLength);
