@@ -53,13 +53,9 @@ impl ChibitvService for ChibitvServiceImpl {
         _ctx: RequestContext,
         _request: ServiceRequest<'_, ListServicesRequest>,
     ) -> ServiceResult<ListServicesResponse> {
-        let services = self
-            .workspace
-            .registry()
-            .get_all_services()
-            .iter()
-            .map(Service::from)
-            .collect();
+        let mut services = self.workspace.registry().get_all_services();
+        services.sort_by_key(|service| service.id);
+        let services = services.iter().map(Service::from).collect();
 
         Response::ok(ListServicesResponse {
             services,

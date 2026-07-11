@@ -65,21 +65,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn lists_cached_services_from_untuned_channels() {
+    async fn lists_cached_services_from_untuned_channels_by_service_id() {
         let registry = Arc::new(Registry::default());
-        registry.put_cached_service(
-            0,
-            100,
-            101,
-            "Service A".to_string(),
-            "Provider A".to_string(),
-        );
         registry.put_cached_service(
             1,
             200,
             201,
             "Service B".to_string(),
             "Provider B".to_string(),
+        );
+        registry.put_cached_service(
+            0,
+            100,
+            101,
+            "Service A".to_string(),
+            "Provider A".to_string(),
         );
         let workspace = Arc::new(Workspace::new(
             registry,
@@ -101,8 +101,9 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body = std::str::from_utf8(&body).unwrap();
-        assert!(body.contains("Service A"));
-        assert!(body.contains("Service B"));
+        let service_a = body.find("Service A").unwrap();
+        let service_b = body.find("Service B").unwrap();
+        assert!(service_a < service_b);
     }
 
     #[tokio::test]
