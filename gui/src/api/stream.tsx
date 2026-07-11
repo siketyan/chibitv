@@ -19,6 +19,8 @@ const MAX_PENDING_FMP4 = 256;
 interface StreamContextValue {
   state: StreamState | undefined;
   subscribeFmp4: (listener: Fmp4Listener) => () => void;
+  playbackGeneration: number;
+  updateService: (serviceId: number) => Promise<void>;
 }
 
 const StreamContext = createContext<StreamContextValue | undefined>(undefined);
@@ -29,8 +31,11 @@ interface StreamProviderProps {
 
 export function StreamProvider({ children }: StreamProviderProps): JSX.Element {
   const [state, setState] = useState<StreamState>();
+  const [connectionGeneration, setConnectionGeneration] = useState(0);
+  const [playbackGeneration, setPlaybackGeneration] = useState(0);
   const listeners = useRef(new Set<Fmp4Listener>());
   const pendingFmp4 = useRef<Uint8Array[]>([]);
+  const connectionAbortController = useRef<AbortController | null>(null);
 
   const subscribeFmp4 = useCallback((listener: Fmp4Listener) => {
     listeners.current.add(listener);
@@ -42,8 +47,23 @@ export function StreamProvider({ children }: StreamProviderProps): JSX.Element {
     return () => listeners.current.delete(listener);
   }, []);
 
+  const updateService = useCallback(async (serviceId: number) => {
+    connectionAbortController.current?.abort();
+    listeners.current.clear();
+    pendingFmp4.current = [];
+    setPlaybackGeneration((generation) => generation + 1);
+
+    try {
+      await chibitvClient.updateStream({ streamId: 0, serviceId });
+    } finally {
+      setConnectionGeneration((generation) => generation + 1);
+    }
+  }, []);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the generation deliberately reconnects the stream after tuning.
   useEffect(() => {
     const abortController = new AbortController();
+    connectionAbortController.current = abortController;
 
     const receive = async () => {
       try {
@@ -93,11 +113,17 @@ export function StreamProvider({ children }: StreamProviderProps): JSX.Element {
 
     return () => {
       abortController.abort();
+      if (connectionAbortController.current === abortController) {
+        connectionAbortController.current = null;
+      }
       pendingFmp4.current = [];
     };
-  }, []);
+  }, [connectionGeneration]);
 
-  const value = useMemo(() => ({ state, subscribeFmp4 }), [state, subscribeFmp4]);
+  const value = useMemo(
+    () => ({ state, subscribeFmp4, playbackGeneration, updateService }),
+    [state, subscribeFmp4, playbackGeneration, updateService],
+  );
 
   return <StreamContext value={value}>{children}</StreamContext>;
 }

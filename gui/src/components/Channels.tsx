@@ -12,7 +12,7 @@ interface ChannelsProps {
 }
 
 export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
-  const { state } = useStream();
+  const { state, updateService } = useStream();
   const [expandedChannelId, setExpandedChannelId] = useState<number>();
   const {
     data: services = [],
@@ -32,7 +32,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     queryFn: async () => (await chibitvClient.listChannels({})).channels,
   });
   const { mutate, variables, isPending } = useMutation({
-    mutationFn: (serviceId: number) => chibitvClient.updateStream({ streamId: 0, serviceId }),
+    mutationFn: updateService,
     onSuccess: () => {
       onServiceChange?.();
     },
@@ -93,7 +93,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         const channelServices = servicesByChannel.get(channel.id) ?? [];
 
         return (
-          <Disclosure key={channel.id} id={channel.id} isDisabled={channelServices.length === 0}>
+          <Disclosure key={channel.id} id={channel.id} isDisabled={channelServices.length === 0 || isPending}>
             <Disclosure.Heading>
               <Disclosure.Trigger className="flex min-h-12 w-full flex-row items-center gap-2 rounded-xl px-3 text-sm font-semibold data-[expanded=true]:bg-accent-soft data-[expanded=true]:text-accent-soft-foreground">
                 <span className="min-w-0 flex-1 truncate text-start">{channel.name}</span>

@@ -6,8 +6,9 @@ import { startMpeg2Playback } from "../player/playback";
 export function Player(): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string>();
-  const { subscribeFmp4 } = useStream();
+  const { subscribeFmp4, playbackGeneration } = useStream();
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the generation deliberately restarts playback without remounting the video element.
   useEffect(() => {
     const video = ref.current;
     if (!video) return;
@@ -19,7 +20,7 @@ export function Player(): JSX.Element {
         setError(playbackError.message);
       },
     });
-  }, [subscribeFmp4]);
+  }, [subscribeFmp4, playbackGeneration]);
 
   return (
     <div className="relative grid min-h-0 min-w-0 place-items-center overflow-hidden bg-black">
