@@ -145,9 +145,6 @@ impl Registry {
     ) {
         let service_id = service.service_id;
         let services = self.services.pin();
-        if services.contains_key(&service_id) {
-            return;
-        }
 
         let Some(descriptor) = service.descriptors.iter().find_map(|descriptor| {
             if let B10Descriptor::Service(descriptor) = descriptor {
@@ -164,17 +161,47 @@ impl Registry {
             return;
         }
 
+        let events = services
+            .get(&service_id)
+            .map(|service| Arc::clone(&service.events))
+            .unwrap_or_default();
         let service = Service {
             id: service_id,
             name: decode_b24(&descriptor.service_name),
             provider_name: decode_b24(&descriptor.service_provider_name),
             transport_stream_id,
             channel_id: Some(channel_id),
-            events: Arc::new(HashMap::new()),
+            events,
         };
 
         debug!(?service, "Added a new ISDB-T service");
         services.insert(service_id, service);
+    }
+
+    pub fn put_cached_service(
+        &self,
+        channel_id: usize,
+        transport_stream_id: u16,
+        service_id: u16,
+        name: String,
+        provider_name: String,
+    ) {
+        let services = self.services.pin();
+        if services.contains_key(&service_id) {
+            return;
+        }
+
+        services.insert(
+            service_id,
+            Service {
+                id: service_id,
+                name,
+                provider_name,
+                transport_stream_id,
+                channel_id: Some(channel_id),
+                events: Arc::new(HashMap::new()),
+            },
+        );
     }
 
     pub fn put_event(&self, service_id: u16, event: &EventInformation) {
@@ -299,6 +326,13 @@ mod tests {
     #[test]
     fn registers_isdb_t_service_and_event() {
         let registry = Registry::default();
+        registry.put_cached_service(
+            3,
+            0x1234,
+            0x5678,
+            "Cached Channel".to_string(),
+            "Cached Provider".to_string(),
+        );
         registry.put_b10_service(
             3,
             0x1234,

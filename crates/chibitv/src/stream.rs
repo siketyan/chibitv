@@ -130,7 +130,7 @@ impl Stream {
         (handle, kill_tx)
     }
 
-    fn start_remuxer(&self, channel: &Channel) -> anyhow::Result<()> {
+    fn start_remuxer(&self, service_id: u16, channel: &Channel) -> anyhow::Result<()> {
         let reader = self.tuner.open()?;
         let handle = match &channel.inner {
             ChannelInner::IsdbS { .. } => {
@@ -143,7 +143,12 @@ impl Stream {
             }
             ChannelInner::IsdbT { .. } => {
                 let descrambler = B25Descrambler::open()?;
-                self.spawn_remuxer(M2tsDemuxer::new(reader, descrambler), channel.id)
+                let demux = if service_id == 0 {
+                    M2tsDemuxer::new(reader, descrambler)
+                } else {
+                    M2tsDemuxer::new_for_service(reader, descrambler, service_id)
+                };
+                self.spawn_remuxer(demux, channel.id)
             }
         };
 
@@ -179,7 +184,7 @@ impl Stream {
         self.tuner.tune(channel.clone())?;
 
         *self.fmp4_init_segment.lock().unwrap() = None;
-        self.start_remuxer(channel)?;
+        self.start_remuxer(service_id, channel)?;
 
         let mut state = self.state.write().unwrap();
         state.service_id = Some(service_id);

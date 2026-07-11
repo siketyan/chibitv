@@ -5,7 +5,7 @@ use chibitv_b61::{B61CasModule, Descrambler};
 use clap::Parser;
 
 use crate::channel::{Channel, ChannelInner};
-use crate::config::Config;
+use crate::config::{ChannelConfig, Config};
 use crate::registry::Registry;
 use crate::stream::{Stream, Streams};
 use crate::tuner::Tuners;
@@ -16,6 +16,7 @@ pub struct Options {}
 
 pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let registry = Arc::new(Registry::default());
+    seed_registry(&registry, &config.channels);
 
     let channels = config
         .channels
@@ -60,7 +61,13 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         let stream = Stream::open(registry.clone(), tuner, b61_descrambler)?;
         let mut streams = Streams::new();
 
-        stream.set_channel(0, default_channel)?;
+        let default_service_id = config
+            .channels
+            .first()
+            .and_then(|channel| channel.services.first())
+            .map(|service| service.id)
+            .unwrap_or_default();
+        stream.set_channel(default_service_id, default_channel)?;
         streams.add_stream(0, stream);
 
         RwLock::new(streams)
@@ -70,4 +77,71 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let state = Arc::new(Workspace::new(registry, channels, streams));
 
     crate::server::serve(address, state).await
+}
+
+fn seed_registry(registry: &Registry, channels: &[ChannelConfig]) {
+    for (channel_id, channel) in channels.iter().enumerate() {
+        let Some(transport_stream_id) = channel.transport_stream_id else {
+            continue;
+        };
+        for service in &channel.services {
+            registry.put_cached_service(
+                channel_id,
+                transport_stream_id,
+                service.id,
+                service.name.clone(),
+                service.provider_name.clone(),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::{ChannelConfigInner, ServiceConfig};
+
+    use super::*;
+
+    #[test]
+    fn seeds_services_from_every_configured_physical_channel() {
+        let channels = [
+            ChannelConfig {
+                name: "UHF 20".to_string(),
+                transport_stream_id: Some(100),
+                services: vec![ServiceConfig {
+                    id: 101,
+                    name: "Service A".to_string(),
+                    provider_name: "Provider A".to_string(),
+                }],
+                inner: ChannelConfigInner::IsdbT {
+                    frequency: 515_142_857,
+                    bandwidth_hz: 6_000_000,
+                },
+            },
+            ChannelConfig {
+                name: "UHF 21".to_string(),
+                transport_stream_id: Some(200),
+                services: vec![ServiceConfig {
+                    id: 201,
+                    name: "Service B".to_string(),
+                    provider_name: "Provider B".to_string(),
+                }],
+                inner: ChannelConfigInner::IsdbT {
+                    frequency: 521_142_857,
+                    bandwidth_hz: 6_000_000,
+                },
+            },
+        ];
+        let registry = Registry::default();
+
+        seed_registry(&registry, &channels);
+
+        assert_eq!(registry.get_all_services().len(), 2);
+        let first = registry.get_service_by_id(101).unwrap();
+        assert_eq!(first.channel_id, Some(0));
+        assert_eq!(first.transport_stream_id, 100);
+        let second = registry.get_service_by_id(201).unwrap();
+        assert_eq!(second.channel_id, Some(1));
+        assert_eq!(second.transport_stream_id, 200);
+    }
 }

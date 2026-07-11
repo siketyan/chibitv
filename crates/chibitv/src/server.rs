@@ -65,6 +65,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lists_cached_services_from_untuned_channels_by_service_id() {
+        let registry = Arc::new(Registry::default());
+        registry.put_cached_service(
+            1,
+            200,
+            201,
+            "Service B".to_string(),
+            "Provider B".to_string(),
+        );
+        registry.put_cached_service(
+            0,
+            100,
+            101,
+            "Service A".to_string(),
+            "Provider A".to_string(),
+        );
+        let workspace = Arc::new(Workspace::new(
+            registry,
+            vec![],
+            RwLock::new(Streams::new()),
+        ));
+
+        let response = app(workspace)
+            .oneshot(
+                Request::post("/chibitv.v1.ChibitvService/ListServices")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("connect-protocol-version", "1")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        let service_a = body.find("Service A").unwrap();
+        let service_b = body.find("Service B").unwrap();
+        assert!(service_a < service_b);
+    }
+
+    #[tokio::test]
     async fn does_not_serve_legacy_http_api() {
         let response = app(empty_workspace())
             .oneshot(Request::get("/api/channels").body(Body::empty()).unwrap())

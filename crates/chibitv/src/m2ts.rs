@@ -38,6 +38,7 @@ struct TrackState {
 pub struct M2tsDemuxer<R> {
     reader: TsPacketReader<AlignedTsReader<R>>,
     descrambler: Arc<Mutex<B25Descrambler>>,
+    target_service_id: Option<u16>,
     ecm_pids: BTreeSet<Pid>,
     tracks: BTreeMap<Pid, TrackState>,
     section_buffers: BTreeMap<Pid, Vec<u8>>,
@@ -45,6 +46,14 @@ pub struct M2tsDemuxer<R> {
 
 impl<R: Read> M2tsDemuxer<R> {
     pub fn new(reader: R, descrambler: B25Descrambler) -> Self {
+        Self::new_inner(reader, descrambler, None)
+    }
+
+    pub fn new_for_service(reader: R, descrambler: B25Descrambler, service_id: u16) -> Self {
+        Self::new_inner(reader, descrambler, Some(service_id))
+    }
+
+    fn new_inner(reader: R, descrambler: B25Descrambler, target_service_id: Option<u16>) -> Self {
         let descrambler = Arc::new(Mutex::new(descrambler));
         let mut reader = TsPacketReader::new(AlignedTsReader::new(reader));
 
@@ -55,6 +64,7 @@ impl<R: Read> M2tsDemuxer<R> {
         Self {
             reader,
             descrambler,
+            target_service_id,
             ecm_pids: BTreeSet::new(),
             tracks: BTreeMap::new(),
             section_buffers: BTreeMap::new(),
@@ -125,6 +135,13 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
 
             match payload {
                 TsPayload::Pmt(pmt) => {
+                    if self
+                        .target_service_id
+                        .is_some_and(|service_id| service_id != pmt.program_num)
+                    {
+                        continue;
+                    }
+
                     let ca_system_id = self.descrambler.lock().unwrap().ca_system_id();
 
                     for info in pmt.program_info {

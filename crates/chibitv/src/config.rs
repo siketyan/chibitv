@@ -61,7 +61,10 @@ pub enum ChannelConfigInner {
     IsdbT {
         frequency: u32,
 
-        #[serde(default = "default_isdb_t_bandwidth_hz")]
+        #[serde(
+            default = "default_isdb_t_bandwidth_hz",
+            skip_serializing_if = "is_default_isdb_t_bandwidth_hz"
+        )]
         bandwidth_hz: u32,
     },
 }
@@ -70,12 +73,31 @@ fn default_isdb_t_bandwidth_hz() -> u32 {
     6_000_000
 }
 
+fn is_default_isdb_t_bandwidth_hz(value: &u32) -> bool {
+    *value == default_isdb_t_bandwidth_hz()
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ChannelConfig {
     pub name: String,
 
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transport_stream_id: Option<u16>,
+
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub services: Vec<ServiceConfig>,
+
     #[serde(flatten)]
     pub inner: ChannelConfigInner,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ServiceConfig {
+    pub id: u16,
+    pub name: String,
+
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub provider_name: String,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -98,5 +120,60 @@ impl Config {
         let config = toml::from_str(&file)?;
 
         Ok(config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde::Deserialize;
+
+    use super::*;
+
+    #[derive(Deserialize)]
+    struct ChannelList {
+        channels: Vec<ChannelConfig>,
+    }
+
+    #[test]
+    fn reads_scanned_services_from_channel_config() {
+        let config = toml::from_str::<ChannelList>(
+            r#"
+                [[channels]]
+                name = "TOKYO MX"
+                delivery_system = "ISDB-T"
+                frequency = 515142857
+                bandwidth_hz = 6000000
+                transport_stream_id = 12345
+
+                [[channels.services]]
+                id = 23608
+                name = "TOKYO MX1"
+                provider_name = "TOKYO MX"
+            "#,
+        )
+        .unwrap();
+
+        let channel = &config.channels[0];
+        assert_eq!(channel.transport_stream_id, Some(12345));
+        assert_eq!(channel.services.len(), 1);
+        assert_eq!(channel.services[0].id, 23608);
+        assert_eq!(channel.services[0].name, "TOKYO MX1");
+    }
+
+    #[test]
+    fn keeps_legacy_channel_config_compatible() {
+        let config = toml::from_str::<ChannelList>(
+            r#"
+                [[channels]]
+                name = "Legacy"
+                delivery_system = "ISDB-T"
+                frequency = 515142857
+            "#,
+        )
+        .unwrap();
+
+        let channel = &config.channels[0];
+        assert_eq!(channel.transport_stream_id, None);
+        assert!(channel.services.is_empty());
     }
 }
