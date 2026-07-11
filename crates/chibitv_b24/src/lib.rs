@@ -200,14 +200,16 @@ fn graphic_set_from_final(final_byte: u8, multibyte: bool) -> GraphicSet {
 fn decode_one_byte(set: GraphicSet, byte: u8) -> String {
     match set {
         GraphicSet::Alphanumeric | GraphicSet::ProportionalAlphanumeric => {
-            decode_alphanumeric(byte).to_string()
+            decode_alphanumeric(byte)
+                .map(|c| c.to_string())
+                .unwrap_or_else(replacement)
         }
-        GraphicSet::Hiragana | GraphicSet::ProportionalHiragana => {
-            decode_jis_row(0x24, byte).unwrap_or_else(replacement)
-        }
-        GraphicSet::Katakana | GraphicSet::ProportionalKatakana => {
-            decode_jis_row(0x25, byte).unwrap_or_else(replacement)
-        }
+        GraphicSet::Hiragana | GraphicSet::ProportionalHiragana => decode_hiragana(byte)
+            .map(|c| c.to_string())
+            .unwrap_or_else(replacement),
+        GraphicSet::Katakana | GraphicSet::ProportionalKatakana => decode_katakana(byte)
+            .map(|c| c.to_string())
+            .unwrap_or_else(replacement),
         GraphicSet::JisX0201Katakana => decode_jis_x0201_katakana(byte)
             .map(|c| c.to_string())
             .unwrap_or_else(replacement),
@@ -225,15 +227,44 @@ fn decode_two_byte(set: GraphicSet, lead: u8, trail: u8) -> String {
     }
 }
 
-fn decode_alphanumeric(byte: u8) -> char {
+fn decode_alphanumeric(byte: u8) -> Option<char> {
     match byte {
-        0x21..=0x7E => byte as char,
-        _ => '\u{FFFD}',
+        0x5C => Some('¥'),
+        0x21..=0x7E => Some(byte as char),
+        _ => None,
     }
 }
 
-fn decode_jis_row(row: u8, cell: u8) -> Option<String> {
-    decode_jis(row, cell)
+fn decode_hiragana(byte: u8) -> Option<char> {
+    const TABLE: &str = "ぁあぃいぅうぇえぉおかがきぎくぐけげこござざしじすずせぜそぞただちぢっつづてでとどなにぬねのはばぱひびぴふぶぷへべぺほぼぽまみむめもゃやゅゆょよらりるれろゎわゐゑをん";
+
+    decode_arib_kana(TABLE, byte, 'ゝ', 'ゞ')
+}
+
+fn decode_katakana(byte: u8) -> Option<char> {
+    const TABLE: &str = "ァアィイゥウェエォオカガキギクグケゲコゴサザシジスズセゼソゾタダチヂッツヅテデトドナニヌネノハバパヒビピフブプヘベペホボポマミムメモャヤュユョヨラリルレロヮワヰヱヲン";
+
+    decode_arib_kana(TABLE, byte, 'ヽ', 'ヾ')
+}
+
+fn decode_arib_kana(
+    table: &str,
+    byte: u8,
+    iteration: char,
+    voiced_iteration: char,
+) -> Option<char> {
+    match byte {
+        0x21..=0x73 => table.chars().nth((byte - 0x21) as usize),
+        0x77 => Some(iteration),
+        0x78 => Some(voiced_iteration),
+        0x79 => Some('ー'),
+        0x7A => Some('。'),
+        0x7B => Some('「'),
+        0x7C => Some('」'),
+        0x7D => Some('、'),
+        0x7E => Some('・'),
+        _ => None,
+    }
 }
 
 fn decode_jis(lead: u8, trail: u8) -> Option<String> {
@@ -310,5 +341,25 @@ mod tests {
     #[test]
     fn replaces_undefined_additional_symbol_cells() {
         assert_eq!(decode(&[0x1B, 0x24, 0x3B, 0x77, 0x21]), "�");
+    }
+
+    #[test]
+    fn decodes_arib_alphanumeric_yen_sign() {
+        assert_eq!(decode(b"\x0E\\"), "¥");
+    }
+
+    #[test]
+    fn decodes_arib_kana_tail() {
+        assert_eq!(decode(&[0x19, 0x77, 0x19, 0x79, 0x19, 0x7A]), "ゝー。");
+        assert_eq!(
+            decode(&[0x1B, 0x29, 0x31, 0x0E, 0x77, 0x79, 0x7A]),
+            "ヽー。"
+        );
+    }
+
+    #[test]
+    fn rejects_undefined_arib_kana_cells() {
+        assert_eq!(decode(&[0x19, 0x74]), "�");
+        assert_eq!(decode(&[0x1B, 0x29, 0x31, 0x0E, 0x74]), "�");
     }
 }
