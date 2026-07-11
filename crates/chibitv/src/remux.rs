@@ -15,6 +15,7 @@ use crate::registry::Registry;
 #[allow(unused)]
 pub enum Signal {
     EventChanged { event_id: u16 },
+    ChannelChanged { service_id: u16 },
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

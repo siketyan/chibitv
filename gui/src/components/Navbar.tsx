@@ -2,7 +2,7 @@ import { CalendarDaysIcon, InformationCircleIcon, XMarkIcon } from "@heroicons/r
 import { Button, Link, Tooltip } from "@heroui/react";
 import type { JSX } from "react";
 
-import { $api } from "../api";
+import { useStream } from "../api/stream";
 import { MobileChannels } from "./MobileChannels";
 
 interface NavbarProps {
@@ -11,16 +11,8 @@ interface NavbarProps {
 }
 
 export function Navbar({ isScheduleOpen, onChangeScheduleOpen }: NavbarProps): JSX.Element {
-  const { data: stream = {} } = $api.useQuery(
-    "get",
-    "/streams/{id}",
-    { params: { path: { id: 0 } } },
-    {
-      refetchInterval: 5000,
-      refetchIntervalInBackground: true,
-    },
-  );
-  const event = stream.event ?? undefined;
+  const { state } = useStream();
+  const event = state?.event;
   const description = event?.description.filter(({ content }) => content.length > 0) ?? [];
 
   return (

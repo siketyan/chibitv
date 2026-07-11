@@ -1,13 +1,10 @@
 import { type JSX, useEffect, useRef } from "react";
 
-import { $api } from "../api";
+import { useStream } from "../api/stream";
 
 export function Player(): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
-  const { data: stream = {} } = $api.useQuery("get", "/streams/{id}", {
-    params: { path: { id: 0 } },
-  });
-  const serviceId = stream.service?.id;
+  const { subscribeFmp4 } = useStream();
 
   useEffect(() => {
     const video = ref.current;
@@ -31,6 +28,7 @@ export function Player(): JSX.Element {
     const queue: ArrayBuffer[] = [];
     let sourceBuffer: SourceBuffer | undefined;
     let initialSeekDone = false;
+    let unsubscribe: (() => void) | undefined;
 
     const seekToBufferedStart = () => {
       if (initialSeekDone || !sourceBuffer || sourceBuffer.buffered.length === 0) {
@@ -61,31 +59,6 @@ export function Player(): JSX.Element {
       }
     };
 
-    const readStream = async () => {
-      const streamUrl = new URL("/api/streams/0/stream.mp4", location.href);
-      streamUrl.searchParams.set("v", (serviceId ?? 0).toString());
-
-      const response = await fetch(streamUrl, {
-        signal: abortController.signal,
-      });
-      if (!response.ok || !response.body) {
-        throw new Error(`Stream request failed: ${response.status}`);
-      }
-
-      const reader = response.body.getReader();
-      while (!abortController.signal.aborted) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
-        }
-
-        if (value) {
-          queue.push(value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer);
-          appendNext();
-        }
-      }
-    };
-
     const handleSourceOpen = () => {
       sourceBuffer = mediaSource.addSourceBuffer(mimeType);
       sourceBuffer.mode = "segments";
@@ -95,10 +68,9 @@ export function Player(): JSX.Element {
         abortController.abort();
       });
 
-      void readStream().catch((error) => {
-        if (!abortController.signal.aborted) {
-          console.error("Failed to read stream", error);
-        }
+      unsubscribe = subscribeFmp4((data) => {
+        queue.push(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer);
+        appendNext();
       });
     };
 
@@ -108,13 +80,14 @@ export function Player(): JSX.Element {
 
     return () => {
       abortController.abort();
+      unsubscribe?.();
       mediaSource.removeEventListener("sourceopen", handleSourceOpen);
       sourceBuffer?.removeEventListener("updateend", appendNext);
       video.removeAttribute("src");
       video.load();
       URL.revokeObjectURL(objectUrl);
     };
-  }, [serviceId]);
+  }, [subscribeFmp4]);
 
   return (
     <div className="min-h-0 min-w-0 overflow-hidden bg-black">

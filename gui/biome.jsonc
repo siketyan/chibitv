@@ -7,7 +7,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!src/api/schema.d.ts"]
+    "includes": ["**", "!src/gen"]
   },
   "formatter": {
     "enabled": true,

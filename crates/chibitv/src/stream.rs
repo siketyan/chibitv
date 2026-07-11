@@ -67,7 +67,7 @@ impl Stream {
     ) -> anyhow::Result<Self> {
         let (fmp4_tx, _) = channel::<Bytes>(BROADCAST_CAPACITY);
         let fmp4_init_segment = Arc::new(Mutex::new(None));
-        let (signal_tx, mut signal_rx) = channel::<Signal>(1);
+        let (signal_tx, mut signal_rx) = channel::<Signal>(16);
         let state = Arc::new(RwLock::new(StreamState::default()));
 
         {
@@ -84,6 +84,7 @@ impl Stream {
                             info!(event_id, "Event changed");
                             state.write().unwrap().event_id = Some(event_id);
                         }
+                        Signal::ChannelChanged { .. } => {}
                     }
                 }
             });
@@ -133,6 +134,10 @@ impl Stream {
         (init_segment.clone(), rx)
     }
 
+    pub fn subscribe_signal(&self) -> Receiver<Signal> {
+        self.signal_tx.subscribe()
+    }
+
     pub fn set_channel(&self, service_id: u16, channel: &Channel) -> anyhow::Result<()> {
         let state = std::mem::take(self.state.write().unwrap().deref_mut());
 
@@ -151,6 +156,8 @@ impl Stream {
         let mut state = self.state.write().unwrap();
         state.service_id = Some(service_id);
         state.event_id = None;
+        drop(state);
+        self.signal_tx.send(Signal::ChannelChanged { service_id })?;
 
         Ok(())
     }
