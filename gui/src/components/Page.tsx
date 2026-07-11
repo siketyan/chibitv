@@ -2,6 +2,7 @@ import { type JSX, useState } from "react";
 
 import { Channels } from "./Channels";
 import { Events } from "./Events";
+import { OverlayNavbar } from "./OverlayNavbar";
 import { Player } from "./Player";
 
 const isNarrowScreen = () => window.matchMedia("(max-width: 767px)").matches;
@@ -26,7 +27,8 @@ export function Page(): JSX.Element {
 
   return (
     <main className="relative h-dvh overflow-hidden bg-black text-foreground">
-      <Player
+      <Player />
+      <OverlayNavbar
         isChannelsOpen={isChannelsOpen}
         isScheduleOpen={isScheduleOpen}
         onChangeChannelsOpen={changeChannelsOpen}
