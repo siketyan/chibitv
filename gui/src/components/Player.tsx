@@ -1,19 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
 import { type JSX, useEffect, useRef } from "react";
 
-import { chibitvClient, queryKeys } from "../api";
+import { useStream } from "../api/stream";
 
 export function Player(): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
-  const { data: stream } = useQuery({
-    queryKey: queryKeys.stream(0),
-    queryFn: () => chibitvClient.getStream({ streamId: 0 }),
-  });
-  const serviceId = stream?.service?.id;
+  const { subscribeFmp4 } = useStream();
 
   useEffect(() => {
     const video = ref.current;
-    if (!video || serviceId === undefined) {
+    if (!video) {
       return;
     }
 
@@ -33,6 +28,7 @@ export function Player(): JSX.Element {
     const queue: ArrayBuffer[] = [];
     let sourceBuffer: SourceBuffer | undefined;
     let initialSeekDone = false;
+    let unsubscribe: (() => void) | undefined;
 
     const seekToBufferedStart = () => {
       if (initialSeekDone || !sourceBuffer || sourceBuffer.buffered.length === 0) {
@@ -63,14 +59,6 @@ export function Player(): JSX.Element {
       }
     };
 
-    const readStream = async () => {
-      const stream = chibitvClient.streamFmp4({ streamId: 0 }, { signal: abortController.signal });
-      for await (const { data } of stream) {
-        queue.push(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer);
-        appendNext();
-      }
-    };
-
     const handleSourceOpen = () => {
       sourceBuffer = mediaSource.addSourceBuffer(mimeType);
       sourceBuffer.mode = "segments";
@@ -80,10 +68,9 @@ export function Player(): JSX.Element {
         abortController.abort();
       });
 
-      void readStream().catch((error) => {
-        if (!abortController.signal.aborted) {
-          console.error("Failed to read stream", error);
-        }
+      unsubscribe = subscribeFmp4((data) => {
+        queue.push(data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer);
+        appendNext();
       });
     };
 
@@ -93,13 +80,14 @@ export function Player(): JSX.Element {
 
     return () => {
       abortController.abort();
+      unsubscribe?.();
       mediaSource.removeEventListener("sourceopen", handleSourceOpen);
       sourceBuffer?.removeEventListener("updateend", appendNext);
       video.removeAttribute("src");
       video.load();
       URL.revokeObjectURL(objectUrl);
     };
-  }, [serviceId]);
+  }, [subscribeFmp4]);
 
   return (
     <div className="min-h-0 min-w-0 overflow-hidden bg-black">

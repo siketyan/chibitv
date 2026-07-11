@@ -11,6 +11,5 @@ export const chibitvClient = createClient(ChibitvService, transport);
 
 export const queryKeys = {
   services: ["services"] as const,
-  stream: (streamId: number) => ["stream", streamId] as const,
   events: (serviceId: number) => ["events", serviceId] as const,
 };

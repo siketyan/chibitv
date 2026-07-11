@@ -61,6 +61,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
                 Signal::EventChanged { event_id, .. } => {
                     info!(event_id, "Event changed");
                 }
+                Signal::ChannelChanged { .. } => {}
             }
         }
     });

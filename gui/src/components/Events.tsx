@@ -4,6 +4,7 @@ import clsx from "clsx";
 import type { JSX } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
+import { useStream } from "../api/stream";
 import type { DateTime } from "../gen/chibitv/v1/chibitv_pb";
 
 const timeFormatter = new Intl.DateTimeFormat("en-GB", {
@@ -36,11 +37,8 @@ function toDate(value: DateTime | undefined): Date | undefined {
 
 export function Events(): JSX.Element {
   const now = new Date();
-  const { data: stream } = useQuery({
-    queryKey: queryKeys.stream(0),
-    queryFn: () => chibitvClient.getStream({ streamId: 0 }),
-  });
-  const serviceId = stream?.service?.id;
+  const { state } = useStream();
+  const serviceId = state?.service?.id;
   const { data: events = [] } = useQuery({
     queryKey: queryKeys.events(serviceId ?? 0),
     queryFn: async () => (await chibitvClient.listEvents({ serviceId: serviceId ?? 0 })).events,

@@ -8,6 +8,7 @@ use tokio_stream::StreamExt;
 
 use crate::proto::chibitv::v1::*;
 use crate::registry;
+use crate::remux::Signal;
 use crate::workspace::{Workspace, WorkspaceError};
 
 pub struct ChibitvServiceImpl {
@@ -91,13 +92,13 @@ impl ChibitvService for ChibitvServiceImpl {
         &self,
         _ctx: RequestContext,
         request: ServiceRequest<'_, GetStreamRequest>,
-    ) -> ServiceResult<GetStreamResponse> {
+    ) -> ServiceResult<StreamState> {
         let (service, event) = self
             .workspace
             .get_current_event(request.stream_id)
             .ok_or_else(|| ConnectError::not_found("stream not found"))?;
 
-        Response::ok(GetStreamResponse {
+        Response::ok(StreamState {
             service: service.as_ref().map(Service::from).into(),
             event: event.as_ref().map(Event::from).into(),
             ..Default::default()
@@ -120,26 +121,62 @@ impl ChibitvService for ChibitvServiceImpl {
         Response::ok(UpdateStreamResponse::default())
     }
 
-    async fn stream_fmp4(
+    async fn stream(
         &self,
         _ctx: RequestContext,
-        request: ServiceRequest<'_, StreamFmp4Request>,
-    ) -> ServiceResult<ServiceStream<StreamFmp4Response>> {
-        let (init_segment, stream) = self
+        request: ServiceRequest<'_, StreamRequest>,
+    ) -> ServiceResult<ServiceStream<StreamResponse>> {
+        let stream_id = request.stream_id;
+        let (init_segment, fmp4, signals) = self
             .workspace
-            .get_fmp4_stream(request.stream_id)
+            .subscribe_stream(stream_id)
+            .ok_or_else(|| ConnectError::not_found("stream not found"))?;
+        let initial_state = stream_state(&self.workspace, stream_id)
             .ok_or_else(|| ConnectError::not_found("stream not found"))?;
 
+        let initial_state = tokio_stream::iter([initial_state]);
         let init_segment = tokio_stream::iter(init_segment.into_iter().map(fmp4_response));
-        let stream = stream.filter_map(|data| data.ok().map(fmp4_response));
+        let fmp4 = fmp4.filter_map(|data| data.ok().map(fmp4_response));
+        let workspace = Arc::clone(&self.workspace);
+        let states = signals.filter_map(move |signal| match signal.ok()? {
+            Signal::EventChanged { event_id } => {
+                stream_state_with_id(&workspace, stream_id, Some(event_id))
+            }
+            Signal::ChannelChanged { .. } => stream_state(&workspace, stream_id),
+        });
 
-        Response::stream_ok(init_segment.chain(stream).map(Ok))
+        Response::stream_ok(
+            initial_state
+                .chain(init_segment.chain(fmp4).merge(states))
+                .map(Ok),
+        )
     }
 }
 
-fn fmp4_response(data: bytes::Bytes) -> StreamFmp4Response {
-    StreamFmp4Response {
-        data: data.to_vec(),
+fn stream_state(workspace: &Workspace, stream_id: u32) -> Option<StreamResponse> {
+    stream_state_with_id(workspace, stream_id, None)
+}
+
+fn stream_state_with_id(
+    workspace: &Workspace,
+    stream_id: u32,
+    event_id: Option<u16>,
+) -> Option<StreamResponse> {
+    let (service, event) = workspace.get_current_event_with_id(stream_id, event_id)?;
+
+    Some(StreamResponse {
+        payload: Some(stream_response::Payload::State(Box::new(StreamState {
+            service: service.as_ref().map(Service::from).into(),
+            event: event.as_ref().map(Event::from).into(),
+            ..Default::default()
+        }))),
+        ..Default::default()
+    })
+}
+
+fn fmp4_response(data: bytes::Bytes) -> StreamResponse {
+    StreamResponse {
+        payload: Some(stream_response::Payload::Fmp4(data.to_vec())),
         ..Default::default()
     }
 }

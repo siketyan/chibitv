@@ -7,9 +7,9 @@ service ChibitvService {
   rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
-  rpc GetStream(GetStreamRequest) returns (GetStreamResponse);
+  rpc GetStream(GetStreamRequest) returns (StreamState);
   rpc UpdateStream(UpdateStreamRequest) returns (UpdateStreamResponse);
-  rpc StreamFmp4(StreamFmp4Request) returns (stream StreamFmp4Response);
+  rpc Stream(StreamRequest) returns (stream StreamResponse);
 }
 
 message ListChannelsRequest {}
@@ -61,13 +61,24 @@ message Event {
   optional DateTime end_time = 5;
 }
 
+message StreamRequest {
+  uint32 stream_id = 1;
+}
+
 message GetStreamRequest {
   uint32 stream_id = 1;
 }
 
-message GetStreamResponse {
+message StreamState {
   optional Service service = 1;
   optional Event event = 2;
+}
+
+message StreamResponse {
+  oneof payload {
+    StreamState state = 1;
+    bytes fmp4 = 2;
+  }
 }
 
 message UpdateStreamRequest {
@@ -76,11 +87,3 @@ message UpdateStreamRequest {
 }
 
 message UpdateStreamResponse {}
-
-message StreamFmp4Request {
-  uint32 stream_id = 1;
-}
-
-message StreamFmp4Response {
-  bytes data = 1;
-}

@@ -1,16 +1,17 @@
 import { CheckIcon } from "@heroicons/react/24/outline";
 import { ListBox, Spinner } from "@heroui/react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type { JSX } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
+import { useStream } from "../api/stream";
 
 interface ChannelsProps {
   onServiceChange?: () => void;
 }
 
 export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
-  const queryClient = useQueryClient();
+  const { state } = useStream();
   const {
     data: services = [],
     isLoading,
@@ -19,18 +20,13 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     queryKey: queryKeys.services,
     queryFn: async () => (await chibitvClient.listServices({})).services,
   });
-  const { data: stream } = useQuery({
-    queryKey: queryKeys.stream(0),
-    queryFn: () => chibitvClient.getStream({ streamId: 0 }),
-  });
   const { mutate, variables, isPending } = useMutation({
     mutationFn: (serviceId: number) => chibitvClient.updateStream({ streamId: 0, serviceId }),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.stream(0) });
+    onSuccess: () => {
       onServiceChange?.();
     },
   });
-  const serviceId = stream?.service?.id;
+  const serviceId = state?.service?.id;
 
   if (isLoading) {
     return (
