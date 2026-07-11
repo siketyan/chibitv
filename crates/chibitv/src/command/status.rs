@@ -11,8 +11,8 @@ use chibitv_b25::B25Descrambler;
 
 use crate::channel::{Channel, ChannelInner};
 use crate::config::Config;
+use crate::demux::{Demux, Packet, SignalingEvent};
 use crate::m2ts::M2tsDemuxer;
-use crate::remux::{Demux, Packet};
 use crate::tuner::Tuners;
 
 #[derive(Clone, Debug, Parser)]
@@ -64,22 +64,20 @@ pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     let deadline = Instant::now() + Duration::from_secs(options.timeout);
     while Instant::now() < deadline && !state.is_ready() {
-        let packets = match demux.read() {
-            Ok(Some(packets)) => packets,
+        let packet = match demux.next_packet() {
+            Ok(Some(packet)) => packet,
             Ok(None) => break,
             Err(_) => continue,
         };
 
-        for packet in packets {
-            let Packet::B10Table { table_id, table } = packet else {
-                continue;
-            };
+        let Packet::Signaling(SignalingEvent::B10Table { table_id, table }) = packet else {
+            continue;
+        };
 
-            state.read_table(Some(table_id), table);
+        state.read_table(Some(table_id), table);
 
-            if state.is_ready() {
-                break;
-            }
+        if state.is_ready() {
+            break;
         }
     }
 

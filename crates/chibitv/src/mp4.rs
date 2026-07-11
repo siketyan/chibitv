@@ -18,8 +18,9 @@ use shiguredo_mp4::{FixedPointNumber, TrackKind, Uint};
 use tracing::{debug, error, info};
 
 use crate::aac::{AdtsHeader, AdtsParser, LoasFrame, SamplingFrequency};
+use crate::demux::TrackType;
 use crate::mp2::{Mp2Parser, PictureCodingType, SequenceHeader, picture_coding_type};
-use crate::remux::{Mux, TrackType};
+use crate::remux::Mux;
 
 const VIDEO_TIMESCALE: u32 = 90_000;
 

@@ -8,10 +8,11 @@ use clap::{Parser, ValueEnum};
 use mpeg2ts::ts::TsPacketWriter;
 
 use crate::config::Config;
+use crate::demux::Demux;
 use crate::m2ts::{M2tsDemuxer, M2tsMuxer};
 use crate::mmt::MmtDemuxer;
 use crate::mp4::{FragmentedMp4Muxer, Mp4Muxer};
-use crate::remux::{Remux, Remuxer};
+use crate::remux::{Mux, Remuxer};
 
 #[derive(Copy, Clone, Debug, Default, ValueEnum)]
 pub enum InputFormat {
@@ -91,9 +92,7 @@ fn remux_mmts(
             let output = open_output(options)?;
             let writer = TsPacketWriter::new(BufWriter::new(output));
             let mux = M2tsMuxer::new(writer);
-            let mut remux = Remuxer::new(demux, mux, None, None);
-
-            remux.run(None)
+            run_remuxer(Remuxer::new(demux, mux)?)
         }
         OutputFormat::Mp4 => {
             let Some(path) = options.output.as_deref() else {
@@ -101,16 +100,12 @@ fn remux_mmts(
             };
 
             let mux = Mp4Muxer::new(BufWriter::new(File::create(path)?));
-            let mut remux = Remuxer::new(demux, mux, None, None);
-
-            remux.run(None)
+            run_remuxer(Remuxer::new(demux, mux)?)
         }
         OutputFormat::Fmp4 => {
             let output = open_output(options)?;
             let mux = FragmentedMp4Muxer::new(BufWriter::new(output));
-            let mut remux = Remuxer::new(demux, mux, None, None);
-
-            remux.run(None)
+            run_remuxer(Remuxer::new(demux, mux)?)
         }
     }
 }
@@ -124,9 +119,7 @@ fn remux_m2ts(input: Box<dyn Read + Send + Sync>, options: &Options) -> anyhow::
             let output = open_output(options)?;
             let writer = TsPacketWriter::new(BufWriter::new(output));
             let mux = M2tsMuxer::new(writer);
-            let mut remux = Remuxer::new(demux, mux, None, None);
-
-            remux.run(None)
+            run_remuxer(Remuxer::new(demux, mux)?)
         }
         OutputFormat::Mp4 => {
             let Some(path) = options.output.as_deref() else {
@@ -134,16 +127,17 @@ fn remux_m2ts(input: Box<dyn Read + Send + Sync>, options: &Options) -> anyhow::
             };
 
             let mux = Mp4Muxer::new(BufWriter::new(File::create(path)?));
-            let mut remux = Remuxer::new(demux, mux, None, None);
-
-            remux.run(None)
+            run_remuxer(Remuxer::new(demux, mux)?)
         }
         OutputFormat::Fmp4 => {
             let output = open_output(options)?;
             let mux = FragmentedMp4Muxer::new(BufWriter::new(output));
-            let mut remux = Remuxer::new(demux, mux, None, None);
-
-            remux.run(None)
+            run_remuxer(Remuxer::new(demux, mux)?)
         }
     }
+}
+
+fn run_remuxer<D: Demux, M: Mux>(mut remuxer: Remuxer<D, M>) -> anyhow::Result<()> {
+    while remuxer.next()?.is_some() {}
+    remuxer.finish()
 }

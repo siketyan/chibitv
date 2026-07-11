@@ -20,7 +20,8 @@ use chibitv_b10::descriptor::Descriptor as B10Descriptor;
 use chibitv_b10::table::Table as B10Table;
 use chibitv_b25::{B25Descrambler, NoDecryptionKeyError};
 
-use crate::remux::{Demux, Mux, Packet, TrackType};
+use crate::demux::{Demux, MediaPacket, Packet, PacketQueue, SignalingEvent, TrackType};
+use crate::remux::Mux;
 
 #[derive(Debug, Default)]
 struct PesBuffer {
@@ -42,6 +43,7 @@ pub struct M2tsDemuxer<R> {
     ecm_pids: BTreeSet<Pid>,
     tracks: BTreeMap<Pid, TrackState>,
     section_buffers: BTreeMap<Pid, Vec<u8>>,
+    pending_packets: PacketQueue,
 }
 
 impl<R: Read> M2tsDemuxer<R> {
@@ -68,6 +70,7 @@ impl<R: Read> M2tsDemuxer<R> {
             ecm_pids: BTreeSet::new(),
             tracks: BTreeMap::new(),
             section_buffers: BTreeMap::new(),
+            pending_packets: PacketQueue::default(),
         }
     }
 
@@ -93,8 +96,8 @@ impl<R: Read> M2tsDemuxer<R> {
     }
 }
 
-impl<R: Read> Demux for M2tsDemuxer<R> {
-    fn read(&mut self) -> anyhow::Result<Option<Vec<Packet>>> {
+impl<R: Read> M2tsDemuxer<R> {
+    fn read_packets(&mut self) -> anyhow::Result<Option<Vec<Packet>>> {
         let mut out = Vec::new();
         loop {
             let mut packet = match self.reader.read_ts_packet() {
@@ -188,10 +191,10 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
                                 pes: PesBuffer::default(),
                             },
                         );
-                        out.push(Packet::Track {
+                        out.push(Packet::Media(MediaPacket::Track {
                             track_id: pid.as_u16(),
                             ty: track_type,
-                        });
+                        }));
                     }
                 }
                 TsPayload::Section(section) => {
@@ -219,7 +222,10 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
                         let mut bytes = Bytes::from(section);
                         let table = B10Table::read(&mut bytes)?;
                         if !matches!(table, B10Table::Unknown(_, _)) {
-                            out.push(Packet::B10Table { table_id, table });
+                            out.push(Packet::Signaling(SignalingEvent::B10Table {
+                                table_id,
+                                table,
+                            }));
                         }
                     }
                 }
@@ -229,12 +235,13 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
                     };
 
                     let buffer = std::mem::take(&mut state.pes);
-                    let finished = (!buffer.data.is_empty()).then_some(Packet::Sample {
-                        track_id: pid.as_u16(),
-                        data: buffer.data.freeze(),
-                        dts: buffer.dts,
-                        pts: buffer.pts,
-                    });
+                    let finished =
+                        (!buffer.data.is_empty()).then_some(Packet::Media(MediaPacket::Sample {
+                            track_id: pid.as_u16(),
+                            data: buffer.data.freeze(),
+                            dts: buffer.dts,
+                            pts: buffer.pts,
+                        }));
 
                     state.pes = PesBuffer {
                         data: BytesMut::from(Bytes::from(pes.data.to_vec())),
@@ -264,30 +271,40 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
             }
         }
 
-        let flushed = self.flush_pes_buffers();
-        if !flushed.is_empty() {
-            return Ok(Some(flushed));
-        }
-
         Ok(None)
     }
 }
 
-impl<R: Read> M2tsDemuxer<R> {
-    fn flush_pes_buffers(&mut self) -> Vec<Packet> {
-        self.tracks
-            .iter_mut()
-            .filter_map(|(&track_id, state)| {
-                let buffer = std::mem::take(&mut state.pes);
-                (!buffer.data.is_empty()).then_some(Packet::Sample {
-                    track_id: track_id.as_u16(),
-                    data: buffer.data.freeze(),
-                    dts: buffer.dts,
-                    pts: buffer.pts,
-                })
-            })
-            .collect()
+impl<R: Read> Demux for M2tsDemuxer<R> {
+    fn next_packet(&mut self) -> anyhow::Result<Option<Packet>> {
+        loop {
+            if let Some(packet) = self.pending_packets.pop() {
+                return Ok(Some(packet));
+            }
+
+            let Some(packets) = self.read_packets()? else {
+                let flushed = flush_pes_buffers(&mut self.tracks);
+                self.pending_packets.extend(flushed);
+                return Ok(self.pending_packets.pop());
+            };
+            self.pending_packets.extend(packets);
+        }
     }
+}
+
+fn flush_pes_buffers(tracks: &mut BTreeMap<Pid, TrackState>) -> Vec<Packet> {
+    tracks
+        .iter_mut()
+        .filter_map(|(&track_id, state)| {
+            let buffer = std::mem::take(&mut state.pes);
+            (!buffer.data.is_empty()).then_some(Packet::Media(MediaPacket::Sample {
+                track_id: track_id.as_u16(),
+                data: buffer.data.freeze(),
+                dts: buffer.dts,
+                pts: buffer.pts,
+            }))
+        })
+        .collect()
 }
 
 fn read_sections(
@@ -800,6 +817,47 @@ mod tests {
     use super::*;
 
     #[test]
+    fn flush_pes_buffers_drains_each_track_once() {
+        let mut tracks = BTreeMap::from([
+            (
+                Pid::new(0x0100).unwrap(),
+                TrackState {
+                    pes: PesBuffer {
+                        data: BytesMut::from(&b"video"[..]),
+                        dts: Some(1.0),
+                        pts: Some(1.5),
+                    },
+                },
+            ),
+            (
+                Pid::new(0x0110).unwrap(),
+                TrackState {
+                    pes: PesBuffer {
+                        data: BytesMut::from(&b"audio"[..]),
+                        dts: Some(2.0),
+                        pts: Some(2.5),
+                    },
+                },
+            ),
+        ]);
+
+        let packets = flush_pes_buffers(&mut tracks);
+
+        assert_eq!(packets.len(), 2);
+        assert!(matches!(
+            &packets[0],
+            Packet::Media(MediaPacket::Sample { track_id: 0x0100, data, .. })
+                if data.as_ref() == b"video"
+        ));
+        assert!(matches!(
+            &packets[1],
+            Packet::Media(MediaPacket::Sample { track_id: 0x0110, data, .. })
+                if data.as_ref() == b"audio"
+        ));
+        assert!(flush_pes_buffers(&mut tracks).is_empty());
+    }
+
+    #[test]
     fn read_sections_keeps_previous_section_tail_before_pointer_field() {
         let pid = Pid::new(0x0012).unwrap();
         let mut buffers = BTreeMap::new();
@@ -850,6 +908,6 @@ mod tests {
                 vec![0x4F, 0xB0, 0x03, 0x04, 0x05, 0x06],
             ]
         );
-        assert!(buffers.get(&pid).map_or(true, Vec::is_empty));
+        assert!(buffers.get(&pid).is_none_or(Vec::is_empty));
     }
 }

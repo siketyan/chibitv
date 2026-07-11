@@ -5,7 +5,7 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::channel::{Channel, ChannelInner};
 use crate::registry::{Event, Registry, Service};
-use crate::remux::Signal;
+use crate::service_information::Signal;
 use crate::stream::Streams;
 
 pub enum WorkspaceError {

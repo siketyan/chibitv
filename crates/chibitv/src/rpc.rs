@@ -8,7 +8,7 @@ use tokio_stream::StreamExt;
 
 use crate::proto::chibitv::v1::*;
 use crate::registry;
-use crate::remux::Signal;
+use crate::service_information::Signal;
 use crate::workspace::{Workspace, WorkspaceError};
 
 pub struct ChibitvServiceImpl {

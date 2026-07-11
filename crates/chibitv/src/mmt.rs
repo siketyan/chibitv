@@ -19,8 +19,8 @@ use chibitv_b60::table::Table;
 use chibitv_b60::tlv::{TlvPacket, TlvPacketType};
 use chibitv_b61::Descrambler;
 
+use crate::demux::{Demux, MediaPacket, Packet, PacketQueue, SignalingEvent, TrackType};
 use crate::hevc::HevcParser;
-use crate::remux::{Demux, Packet, TrackType};
 
 // TODO: parse the MMTP packet to get the ECM header
 const ECM_HEADER: [u8; 6] = [0x00, 0x00, 0x93, 0x2D, 0x1E, 0x01];
@@ -46,6 +46,7 @@ pub struct MmtDemuxer<R: BufRead> {
     reader: R,
     descrambler: Arc<Mutex<Descrambler>>,
     streams: BTreeMap<u16, Mutex<MmtStream>>,
+    pending_packets: PacketQueue,
 }
 
 impl<R: BufRead> MmtDemuxer<R> {
@@ -54,6 +55,7 @@ impl<R: BufRead> MmtDemuxer<R> {
             reader,
             descrambler: Arc::new(Mutex::new(descrambler)),
             streams: BTreeMap::new(),
+            pending_packets: PacketQueue::default(),
         }
     }
 
@@ -272,12 +274,12 @@ impl<R: BufRead> MmtDemuxer<R> {
 
                 let (dts, pts) = std::mem::take(&mut stream.dts_pts).unzip();
 
-                Some(Packet::Sample {
+                Some(Packet::Media(MediaPacket::Sample {
                     track_id: packet_id,
                     data,
                     dts,
                     pts,
-                })
+                }))
             })
             .collect())
     }
@@ -331,10 +333,10 @@ impl<R: BufRead> MmtDemuxer<R> {
                                     continue;
                                 }
 
-                                packets.push(Packet::Track {
+                                packets.push(Packet::Media(MediaPacket::Track {
                                     track_id: packet_id,
                                     ty: TrackType::H265,
-                                });
+                                }));
 
                                 has_video = true;
                             }
@@ -343,10 +345,10 @@ impl<R: BufRead> MmtDemuxer<R> {
                                     continue;
                                 }
 
-                                packets.push(Packet::Track {
+                                packets.push(Packet::Media(MediaPacket::Track {
                                     track_id: packet_id,
                                     ty: TrackType::AacLatm,
-                                });
+                                }));
 
                                 has_audio = true;
                             }
@@ -390,7 +392,7 @@ impl<R: BufRead> MmtDemuxer<R> {
                 }
             }
 
-            packets.push(Packet::Message(message));
+            packets.push(Packet::Signaling(SignalingEvent::B60Message(message)));
         }
 
         packets
@@ -398,7 +400,16 @@ impl<R: BufRead> MmtDemuxer<R> {
 }
 
 impl<R: BufRead> Demux for MmtDemuxer<R> {
-    fn read(&mut self) -> anyhow::Result<Option<Vec<Packet>>> {
-        self.read_packets()
+    fn next_packet(&mut self) -> anyhow::Result<Option<Packet>> {
+        loop {
+            if let Some(packet) = self.pending_packets.pop() {
+                return Ok(Some(packet));
+            }
+
+            let Some(packets) = self.read_packets()? else {
+                return Ok(None);
+            };
+            self.pending_packets.extend(packets);
+        }
     }
 }

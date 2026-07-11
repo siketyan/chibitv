@@ -9,9 +9,11 @@ use tracing::info;
 
 use crate::channel::{Channel, ChannelInner};
 use crate::config::Config;
+use crate::demux::Demux;
 use crate::m2ts::{M2tsDemuxer, M2tsMuxer};
 use crate::mmt::MmtDemuxer;
-use crate::remux::{Remux, Remuxer, Signal};
+use crate::remux::{Mux, Remuxer};
+use crate::service_information::{ServiceInformationProcessor, Signal};
 use crate::tuner::Tuners;
 
 #[derive(Clone, Debug, Parser)]
@@ -66,6 +68,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
         }
     });
 
+    let service_information = ServiceInformationProcessor::new(channel.id, None, Some(signal_tx));
     match channel.inner {
         ChannelInner::IsdbS { .. } => {
             let cas_module = Arc::new(Mutex::new(B61CasModule::open(
@@ -73,16 +76,22 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
             )?));
             let descrambler = Descrambler::init(cas_module, false)?;
             let demux = MmtDemuxer::new(BufReader::new(input), descrambler);
-            let mut remux = Remuxer::new(demux, mux, Some(signal_tx), None);
-
-            remux.run(None)
+            run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }
         ChannelInner::IsdbT { .. } => {
             let descrambler = B25Descrambler::open()?;
             let demux = M2tsDemuxer::new(input, descrambler);
-            let mut remux = Remuxer::new(demux, mux, Some(signal_tx), None);
-
-            remux.run(None)
+            run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }
     }
+}
+
+fn run_live_remuxer<D: Demux, M: Mux>(
+    mut remuxer: Remuxer<D, M>,
+    mut service_information: ServiceInformationProcessor,
+) -> anyhow::Result<()> {
+    while let Some(signaling) = remuxer.next()? {
+        service_information.process(signaling)?;
+    }
+    remuxer.finish()
 }

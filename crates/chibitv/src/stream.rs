@@ -12,11 +12,13 @@ use chibitv_b25::B25Descrambler;
 use chibitv_b61::Descrambler;
 
 use crate::channel::{Channel, ChannelInner};
+use crate::demux::Demux;
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
 use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
 use crate::registry::Registry;
-use crate::remux::{Demux, Remux, Remuxer, Signal};
+use crate::remux::Remuxer;
+use crate::service_information::{ServiceInformationProcessor, Signal};
 use crate::tuner::Tuner;
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
@@ -110,24 +112,37 @@ impl Stream {
         }
     }
 
-    fn spawn_remuxer<D>(&self, demux: D, channel_id: usize) -> RemuxerHandle
+    fn spawn_remuxer<D>(&self, demux: D, channel_id: usize) -> anyhow::Result<RemuxerHandle>
     where
         D: Demux + Send + 'static,
     {
         let fmp4_writer = self.fmp4_writer();
         let mux = FragmentedMp4Muxer::new(fmp4_writer);
-        let mut remuxer = Remuxer::new(
-            demux,
-            mux,
-            Some(self.signal_tx.clone()),
+        let mut remuxer = Remuxer::new(demux, mux)?;
+        let mut service_information = ServiceInformationProcessor::new(
+            channel_id,
             Some(Arc::clone(&self.registry)),
-        )
-        .with_channel_id(channel_id);
+            Some(self.signal_tx.clone()),
+        );
 
         let (kill_tx, kill_rx) = tokio::sync::oneshot::channel();
-        let handle = std::thread::spawn(move || remuxer.run(Some(kill_rx)));
+        let handle = std::thread::spawn(move || {
+            let mut kill_rx = kill_rx;
+            loop {
+                if kill_rx.try_recv().is_ok() {
+                    break;
+                }
 
-        (handle, kill_tx)
+                let Some(signaling) = remuxer.next()? else {
+                    break;
+                };
+                service_information.process(signaling)?;
+            }
+
+            remuxer.finish()
+        });
+
+        Ok((handle, kill_tx))
     }
 
     fn start_remuxer(&self, service_id: u16, channel: &Channel) -> anyhow::Result<()> {
@@ -139,7 +154,7 @@ impl Stream {
                     .clone()
                     .ok_or_else(|| anyhow::anyhow!("B61 descrambler is not configured"))?;
                 let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
-                self.spawn_remuxer(MmtDemuxer::new(reader, descrambler), channel.id)
+                self.spawn_remuxer(MmtDemuxer::new(reader, descrambler), channel.id)?
             }
             ChannelInner::IsdbT { .. } => {
                 let descrambler = B25Descrambler::open()?;
@@ -148,7 +163,7 @@ impl Stream {
                 } else {
                     M2tsDemuxer::new_for_service(reader, descrambler, service_id)
                 };
-                self.spawn_remuxer(demux, channel.id)
+                self.spawn_remuxer(demux, channel.id)?
             }
         };
 

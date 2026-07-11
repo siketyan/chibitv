@@ -1,63 +1,13 @@
-use std::sync::Arc;
-
 use bytes::Bytes;
-use tokio::sync::broadcast::Sender;
-use tokio::sync::oneshot::Receiver;
 use tracing::error;
 
-use chibitv_b10::table::{Eit, Sdt, Table as B10Table};
-use chibitv_b60::message::{M2SectionMessage, Message};
-use chibitv_b60::table::{MhBit, MhEit, MhSdt, Table};
-
-use crate::registry::Registry;
-
-const SDT_ACTUAL_TABLE_ID: u8 = 0x42;
-const EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID: u8 = 0x4E;
-const EIT_ACTUAL_SCHEDULE_TABLE_IDS: std::ops::RangeInclusive<u8> = 0x50..=0x5F;
-
-#[derive(Clone, Debug)]
-#[allow(unused)]
-pub enum Signal {
-    EventChanged { event_id: u16 },
-    ChannelChanged { service_id: u16 },
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum TrackType {
-    Mpeg2Video,
-    AacAdts,
-    H265,
-    AacLatm,
-}
-
-#[derive(Clone, Debug)]
-pub enum Packet {
-    Track {
-        track_id: u16,
-        ty: TrackType,
-    },
-    Sample {
-        track_id: u16,
-        data: Bytes,
-        dts: Option<f64>,
-        pts: Option<f64>,
-    },
-    B10Table {
-        table_id: u8,
-        table: B10Table,
-    },
-    Message(Message),
-}
-
-pub trait Demux {
-    fn read(&mut self) -> anyhow::Result<Option<Vec<Packet>>>;
-}
+use crate::demux::{Demux, MediaPacket, Packet, SignalingEvent, TrackType};
 
 pub trait Mux {
     /// Adds a track to the stream.
     fn add_track(&mut self, track_id: u16, ty: TrackType);
 
-    /// Starts the stream.
+    /// Writes any container data that must precede media samples.
     fn begin(&mut self) -> anyhow::Result<()> {
         Ok(())
     }
@@ -77,204 +27,145 @@ pub trait Mux {
     }
 }
 
-pub trait Remux {
-    fn run(&mut self, kill_rx: Option<Receiver<()>>) -> anyhow::Result<()>;
-}
-
 pub struct Remuxer<D: Demux, M: Mux> {
     demux: D,
     mux: M,
-    signal_tx: Option<Sender<Signal>>,
-    registry: Option<Arc<Registry>>,
-    channel_id: Option<usize>,
-    current_event_id: Option<u16>,
 }
 
-impl<D: Demux, M: Mux> Remux for Remuxer<D, M> {
-    fn run(&mut self, mut kill_rx: Option<Receiver<()>>) -> anyhow::Result<()> {
-        self.mux.begin()?;
+impl<D: Demux, M: Mux> Remuxer<D, M> {
+    pub fn new(demux: D, mut mux: M) -> anyhow::Result<Self> {
+        mux.begin()?;
+        Ok(Self { demux, mux })
+    }
 
+    pub fn next(&mut self) -> anyhow::Result<Option<SignalingEvent>> {
         loop {
-            if let Some(kill_rx) = kill_rx.as_mut()
-                && kill_rx.try_recv().is_ok()
-            {
-                break;
-            }
-
-            let packets = match self.demux.read() {
-                Ok(Some(packets)) => packets,
-                Ok(None) => {
-                    // No more data.
-                    break;
-                }
-                Err(e) => {
-                    error!("{}", e);
+            let packet = match self.demux.next_packet() {
+                Ok(Some(packet)) => packet,
+                Ok(None) => return Ok(None),
+                Err(error) => {
+                    error!(%error, "Failed to read demuxed packet");
                     continue;
                 }
             };
 
-            for packet in packets {
-                self.read_packet(packet)?;
+            match packet {
+                Packet::Media(packet) => self.write_media(packet)?,
+                Packet::Signaling(signaling) => return Ok(Some(signaling)),
             }
         }
+    }
 
-        self.mux.finalize()?;
+    pub fn finish(mut self) -> anyhow::Result<()> {
+        self.mux.finalize()
+    }
+
+    fn write_media(&mut self, packet: MediaPacket) -> anyhow::Result<()> {
+        match packet {
+            MediaPacket::Track { track_id, ty } => self.mux.add_track(track_id, ty),
+            MediaPacket::Sample {
+                track_id,
+                data,
+                dts,
+                pts,
+            } => self.mux.write_sample(track_id, data, dts, pts)?,
+        }
 
         Ok(())
     }
 }
 
-impl<D: Demux, M: Mux> Remuxer<D, M> {
-    pub fn new(
-        demux: D,
-        mux: M,
-        signal_tx: Option<Sender<Signal>>,
-        registry: Option<Arc<Registry>>,
-    ) -> Self {
-        Self {
-            demux,
-            mux,
-            signal_tx,
-            registry,
-            channel_id: None,
-            current_event_id: None,
+#[cfg(test)]
+mod tests {
+    use std::collections::VecDeque;
+
+    use chibitv_b10::table::Table as B10Table;
+
+    use super::*;
+
+    struct FakeDemux {
+        packets: VecDeque<Packet>,
+    }
+
+    impl Demux for FakeDemux {
+        fn next_packet(&mut self) -> anyhow::Result<Option<Packet>> {
+            Ok(self.packets.pop_front())
         }
     }
 
-    pub fn with_channel_id(mut self, channel_id: usize) -> Self {
-        self.channel_id = Some(channel_id);
-        self
+    #[derive(Default)]
+    struct RecordingMux {
+        began: bool,
+        finalized: bool,
+        tracks: Vec<(u16, TrackType)>,
+        samples: Vec<(u16, Bytes)>,
     }
 
-    fn read_packet(&mut self, packet: Packet) -> anyhow::Result<()> {
-        match packet {
-            Packet::Track { track_id, ty } => {
-                self.mux.add_track(track_id, ty);
-            }
-            Packet::Sample {
-                track_id,
-                data,
-                dts,
-                pts,
-            } => {
-                self.mux.write_sample(track_id, data, dts, pts)?;
-            }
-            Packet::Message(message) => {
-                if let Message::M2Section(message) = message {
-                    self.read_m2_section_message(message)?;
-                }
-            }
-            Packet::B10Table { table_id, table } => self.read_b10_table(table_id, table)?,
+    impl Mux for RecordingMux {
+        fn add_track(&mut self, track_id: u16, ty: TrackType) {
+            self.tracks.push((track_id, ty));
         }
 
-        Ok(())
-    }
+        fn begin(&mut self) -> anyhow::Result<()> {
+            self.began = true;
+            Ok(())
+        }
 
-    fn read_b10_table(&mut self, table_id: u8, table: B10Table) -> anyhow::Result<()> {
-        match table {
-            B10Table::Eit(table)
-                if table_id == EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID
-                    || EIT_ACTUAL_SCHEDULE_TABLE_IDS.contains(&table_id) =>
-            {
-                self.read_eit(table)
-            }
-            B10Table::Sdt(table) if table_id == SDT_ACTUAL_TABLE_ID => self.read_sdt(table),
-            _ => Ok(()),
+        fn write_sample(
+            &mut self,
+            track_id: u16,
+            data: Bytes,
+            _dts: Option<f64>,
+            _pts: Option<f64>,
+        ) -> anyhow::Result<()> {
+            self.samples.push((track_id, data));
+            Ok(())
+        }
+
+        fn finalize(&mut self) -> anyhow::Result<()> {
+            self.finalized = true;
+            Ok(())
         }
     }
 
-    fn read_sdt(&mut self, table: Sdt) -> anyhow::Result<()> {
-        if let (Some(registry), Some(channel_id)) = (&self.registry, self.channel_id) {
-            for service in &table.services {
-                registry.put_b10_service(channel_id, table.transport_stream_id, service);
-            }
-        }
+    #[test]
+    fn muxes_media_and_returns_signaling_to_the_caller() {
+        let signaling = SignalingEvent::B10Table {
+            table_id: 0x42,
+            table: B10Table::Unknown(0x42, vec![1, 2, 3]),
+        };
+        let demux = FakeDemux {
+            packets: VecDeque::from([
+                Packet::Media(MediaPacket::Track {
+                    track_id: 100,
+                    ty: TrackType::Mpeg2Video,
+                }),
+                Packet::Media(MediaPacket::Sample {
+                    track_id: 100,
+                    data: Bytes::from_static(b"sample"),
+                    dts: Some(1.0),
+                    pts: Some(1.5),
+                }),
+                Packet::Signaling(signaling),
+            ]),
+        };
+        let mut remuxer = Remuxer::new(demux, RecordingMux::default()).unwrap();
 
-        Ok(())
-    }
+        let returned = remuxer.next().unwrap().unwrap();
 
-    fn read_eit(&mut self, table: Eit) -> anyhow::Result<()> {
-        for event in &table.events {
-            if let Some(registry) = &self.registry {
-                registry.put_b10_event(table.service_id, event);
-            }
+        assert!(matches!(
+            returned,
+            SignalingEvent::B10Table { table_id: 0x42, .. }
+        ));
+        assert!(remuxer.mux.began);
+        assert_eq!(remuxer.mux.tracks, vec![(100, TrackType::Mpeg2Video)]);
+        assert_eq!(
+            remuxer.mux.samples,
+            vec![(100, Bytes::from_static(b"sample"))]
+        );
+        assert!(!remuxer.mux.finalized);
 
-            let Some((start_time, duration)) = event.start_time.zip(event.duration) else {
-                continue;
-            };
-
-            let end_time = start_time + duration;
-            let now = chrono::Local::now().naive_local();
-
-            if start_time <= now && now < end_time && self.current_event_id != Some(event.event_id)
-            {
-                if let Some(signal_tx) = &self.signal_tx {
-                    signal_tx.send(Signal::EventChanged {
-                        event_id: event.event_id,
-                    })?;
-                }
-
-                self.current_event_id = Some(event.event_id);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn read_m2_section_message(&mut self, message: M2SectionMessage) -> anyhow::Result<()> {
-        match message.table {
-            Table::MhEit(table) => self.read_mh_eit(table),
-            Table::MhBit(table) => self.read_mh_bit(table),
-            Table::MhSdt(table) => self.read_mh_sdt(table),
-            _ => Ok(()),
-        }
-    }
-
-    fn read_mh_eit(&mut self, table: MhEit) -> anyhow::Result<()> {
-        for event in &table.events {
-            if let Some(registry) = &self.registry {
-                registry.put_event(table.service_id, event);
-            }
-
-            let Some((start_time, duration)) = event.start_time.zip(event.duration) else {
-                continue;
-            };
-
-            let end_time = start_time + duration;
-            let now = chrono::Local::now().naive_local();
-
-            if start_time <= now && now < end_time && self.current_event_id != Some(event.event_id)
-            {
-                if let Some(signal_tx) = &self.signal_tx {
-                    signal_tx.send(Signal::EventChanged {
-                        event_id: event.event_id,
-                    })?;
-                }
-
-                self.current_event_id = Some(event.event_id);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn read_mh_bit(&mut self, table: MhBit) -> anyhow::Result<()> {
-        for broadcaster in &table.broadcasters {
-            if let Some(registry) = &self.registry {
-                registry.put_broadcaster(broadcaster);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn read_mh_sdt(&mut self, table: MhSdt) -> anyhow::Result<()> {
-        for service in &table.services {
-            if let (Some(registry), Some(channel_id)) = (&self.registry, self.channel_id) {
-                registry.put_service(channel_id, table.tlv_stream_id, service);
-            }
-        }
-
-        Ok(())
+        assert!(remuxer.next().unwrap().is_none());
+        remuxer.finish().unwrap();
     }
 }
