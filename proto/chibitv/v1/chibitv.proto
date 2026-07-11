@@ -1,0 +1,86 @@
+syntax = "proto3";
+
+package chibitv.v1;
+
+// ChibitvService exposes the backend operations used by the chibitv GUI.
+service ChibitvService {
+  rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+  rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  rpc GetStream(GetStreamRequest) returns (GetStreamResponse);
+  rpc UpdateStream(UpdateStreamRequest) returns (UpdateStreamResponse);
+  rpc StreamFmp4(StreamFmp4Request) returns (stream StreamFmp4Response);
+}
+
+message ListChannelsRequest {}
+
+message ListChannelsResponse {
+  repeated Channel channels = 1;
+}
+
+message Channel {
+  uint32 id = 1;
+  string name = 2;
+}
+
+message ListServicesRequest {}
+
+message ListServicesResponse {
+  repeated Service services = 1;
+}
+
+message Service {
+  uint32 id = 1;
+  string name = 2;
+  string provider_name = 3;
+}
+
+message ListEventsRequest {
+  uint32 service_id = 1;
+}
+
+message ListEventsResponse {
+  repeated Event events = 1;
+}
+
+message EventDescription {
+  string name = 1;
+  string content = 2;
+}
+
+message DateTime {
+  int64 seconds = 1;
+  uint32 nanos = 2;
+}
+
+message Event {
+  uint32 id = 1;
+  string title = 2;
+  repeated EventDescription description = 3;
+  optional DateTime start_time = 4;
+  optional DateTime end_time = 5;
+}
+
+message GetStreamRequest {
+  uint32 stream_id = 1;
+}
+
+message GetStreamResponse {
+  optional Service service = 1;
+  optional Event event = 2;
+}
+
+message UpdateStreamRequest {
+  uint32 stream_id = 1;
+  optional uint32 service_id = 2;
+}
+
+message UpdateStreamResponse {}
+
+message StreamFmp4Request {
+  uint32 stream_id = 1;
+}
+
+message StreamFmp4Response {
+  bytes data = 1;
+}

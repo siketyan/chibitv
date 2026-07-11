@@ -6,8 +6,12 @@ mod hevc;
 mod m2ts;
 mod mmt;
 mod mp4;
+mod proto {
+    connectrpc::include_generated!();
+}
 mod registry;
 mod remux;
+mod rpc;
 mod server;
 mod stream;
 mod tuner;

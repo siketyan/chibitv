@@ -15,6 +15,7 @@ use tokio_stream::StreamExt;
 use tracing::info;
 use utoipa::OpenApi;
 
+use crate::rpc::ChibitvServiceImpl;
 use crate::workspace::{Workspace, WorkspaceError};
 
 #[derive(OpenApi)]
@@ -32,16 +33,7 @@ use crate::workspace::{Workspace, WorkspaceError};
 pub struct ApiDoc;
 
 pub async fn serve(addr: SocketAddr, state: Arc<Workspace>) -> anyhow::Result<()> {
-    let router = Router::new()
-        .route("/channels", get(get_channels))
-        .route("/services", get(get_services))
-        .route("/services/{id}/events", get(get_events))
-        .route("/streams/{id}", get(get_stream).patch(update_stream))
-        .route("/streams/{id}/stream.mp4", get(get_fmp4_stream))
-        .route("/openapi.json", get(async || Json(ApiDoc::openapi())))
-        .with_state(state);
-
-    let router = Router::new().nest("/api", router);
+    let router = app(state);
 
     let listener = TcpListener::bind(&addr).await?;
 
@@ -50,6 +42,24 @@ pub async fn serve(addr: SocketAddr, state: Arc<Workspace>) -> anyhow::Result<()
     axum::serve(listener, router).await?;
 
     Ok(())
+}
+
+fn app(state: Arc<Workspace>) -> Router {
+    let router = Router::new()
+        .route("/channels", get(get_channels))
+        .route("/services", get(get_services))
+        .route("/services/{id}/events", get(get_events))
+        .route("/streams/{id}", get(get_stream).patch(update_stream))
+        .route("/streams/{id}/stream.mp4", get(get_fmp4_stream))
+        .route("/openapi.json", get(async || Json(ApiDoc::openapi())))
+        .with_state(Arc::clone(&state));
+
+    let connect = ChibitvServiceImpl::new(state).register(connectrpc::Router::new());
+    let router = Router::new()
+        .nest("/api", router)
+        .fallback_service(connect.into_axum_service());
+
+    router
 }
 
 mod model {
@@ -257,4 +267,74 @@ async fn get_fmp4_stream(
         .header("Content-Type", "video/mp4")
         .body(Body::new(StreamBody::new(init_segment.chain(stream))))
         .unwrap())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::RwLock;
+
+    use axum::http::{Request, header};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::registry::Registry;
+    use crate::stream::Streams;
+
+    fn empty_workspace() -> Arc<Workspace> {
+        Arc::new(Workspace::new(
+            Arc::new(Registry::default()),
+            vec![],
+            RwLock::new(Streams::new()),
+        ))
+    }
+
+    #[tokio::test]
+    async fn serves_connect_json_requests() {
+        let response = app(empty_workspace())
+            .oneshot(
+                Request::post("/chibitv.v1.ChibitvService/ListChannels")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("connect-protocol-version", "1")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body.as_ref(), b"{}");
+    }
+
+    #[tokio::test]
+    async fn keeps_legacy_http_api() {
+        let response = app(empty_workspace())
+            .oneshot(Request::get("/api/channels").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(body.as_ref(), b"[]");
+    }
+
+    #[tokio::test]
+    async fn maps_missing_stream_to_connect_not_found() {
+        let response = app(empty_workspace())
+            .oneshot(
+                Request::post("/chibitv.v1.ChibitvService/GetStream")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("connect-protocol-version", "1")
+                    .body(Body::from(r#"{"streamId":99}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains(r#""code":"not_found""#));
+    }
 }
