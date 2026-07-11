@@ -62,6 +62,8 @@ impl Decoder {
                 0x0E => self.gl = 1,
                 0x0F => self.gl = 0,
                 0x19 => self.decode_single_shift(bytes, &mut index, 2, &mut output),
+                0x16 => Self::skip_bytes(bytes, &mut index, 1),
+                0x1C => Self::skip_bytes(bytes, &mut index, 2),
                 0x1B => self.decode_escape(bytes, &mut index),
                 0x1D => self.decode_single_shift(bytes, &mut index, 3, &mut output),
                 0x20 => output.push(' '),
@@ -243,16 +245,73 @@ impl Decoder {
     }
 
     fn skip_c1(&self, bytes: &[u8], index: &mut usize, byte: u8) {
-        if byte != 0x9B {
-            return;
+        match byte {
+            0x8B | 0x91 | 0x93 | 0x94 | 0x97 | 0x98 => {
+                Self::skip_bytes(bytes, index, 1);
+            }
+            0x90 | 0x92 => {
+                let parameter_bytes = usize::from(bytes.get(*index) == Some(&0x20)) + 1;
+                Self::skip_bytes(bytes, index, parameter_bytes);
+            }
+            0x95 => Self::skip_macro(bytes, index),
+            0x9B => Self::skip_control_sequence(bytes, index),
+            0x9D => Self::skip_time_control(bytes, index),
+            _ => {}
         }
+    }
 
+    fn skip_bytes(bytes: &[u8], index: &mut usize, count: usize) {
+        *index = index.saturating_add(count).min(bytes.len());
+    }
+
+    fn skip_control_sequence(bytes: &[u8], index: &mut usize) {
         while let Some(byte) = bytes.get(*index).copied() {
             *index += 1;
             if (0x40..=0x7E).contains(&byte) {
                 break;
             }
         }
+    }
+
+    fn skip_time_control(bytes: &[u8], index: &mut usize) {
+        match bytes.get(*index).copied() {
+            Some(0x20 | 0x28) => Self::skip_bytes(bytes, index, 2),
+            Some(0x29) => Self::skip_control_sequence(bytes, index),
+            Some(_) => Self::skip_bytes(bytes, index, 1),
+            None => {}
+        }
+    }
+
+    fn skip_macro(bytes: &[u8], index: &mut usize) {
+        let Some(command) = bytes.get(*index).copied() else {
+            return;
+        };
+        *index += 1;
+
+        if !matches!(command, 0x40 | 0x41) {
+            return;
+        }
+
+        Self::skip_bytes(bytes, index, 1);
+        while *index + 1 < bytes.len() {
+            if bytes[*index] == 0x95 {
+                match bytes[*index + 1] {
+                    0x4F => {
+                        *index += 2;
+                        return;
+                    }
+                    0x40 | 0x41 => {
+                        *index += 2;
+                        Self::skip_bytes(bytes, index, 1);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            *index += 1;
+        }
+
+        *index = bytes.len();
     }
 }
 
@@ -458,6 +517,36 @@ mod tests {
                 0x0E, 0x41,
             ]),
             "A"
+        );
+    }
+
+    #[test]
+    fn consumes_parameterized_c0_controls() {
+        assert_eq!(
+            decode(&[0x0E, b'A', 0x16, 0x42, b'B', 0x1C, 0x41, 0x42, b'C',]),
+            "ABC"
+        );
+    }
+
+    #[test]
+    fn consumes_parameterized_c1_controls() {
+        assert_eq!(
+            decode(&[
+                0x0E, b'A', 0x8B, 0x45, 0x90, 0x20, 0x42, 0x91, 0x40, 0x92, 0x20, 0x42, 0x93, 0x40,
+                0x94, 0x40, 0x97, 0x40, 0x98, 0x42, 0x9D, 0x20, 0x41, b'B',
+            ]),
+            "AB"
+        );
+    }
+
+    #[test]
+    fn consumes_csi_and_macro_definitions() {
+        assert_eq!(
+            decode(&[
+                0x0E, b'A', 0x9B, 0x31, 0x3B, 0x32, 0x20, 0x53, b'B', 0x95, 0x40, 0x21, b'X', b'Y',
+                0x95, 0x4F, b'C',
+            ]),
+            "ABC"
         );
     }
 }
