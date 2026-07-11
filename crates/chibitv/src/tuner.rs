@@ -43,11 +43,15 @@ impl TunerLease {
     }
 
     pub fn open(self) -> anyhow::Result<TunerInput> {
-        let reader = self.slot.tuner.open()?;
+        let reader = self.open_reader()?;
         Ok(TunerInput {
             reader,
             _lease: self,
         })
+    }
+
+    pub(crate) fn open_reader(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+        self.slot.tuner.open()
     }
 }
 
@@ -175,6 +179,23 @@ mod tests {
         drop(input);
         assert_eq!(tuners.is_in_use(7), Some(false));
         assert!(tuners.try_acquire_by_id(7).is_ok());
+    }
+
+    #[test]
+    fn keeps_tuner_locked_while_reopening_inputs_from_a_lease() {
+        let mut tuners = Tuners::default();
+        tuners.add_tuner(7, FakeTuner);
+
+        let lease = tuners.try_acquire_by_id(7).unwrap();
+        let input = lease.open_reader().unwrap();
+        assert_eq!(tuners.is_in_use(7), Some(true));
+
+        drop(input);
+        assert_eq!(tuners.is_in_use(7), Some(true));
+        assert!(lease.open_reader().is_ok());
+
+        drop(lease);
+        assert_eq!(tuners.is_in_use(7), Some(false));
     }
 
     #[test]

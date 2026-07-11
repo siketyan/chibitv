@@ -7,6 +7,7 @@ service ChibitvService {
   rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
+  rpc RefreshEvents(RefreshEventsRequest) returns (stream Event);
   rpc GetStream(GetStreamRequest) returns (StreamState);
   rpc UpdateStream(UpdateStreamRequest) returns (UpdateStreamResponse);
   rpc Stream(StreamRequest) returns (stream StreamResponse);
@@ -37,11 +38,17 @@ message Service {
 }
 
 message ListEventsRequest {
-  uint32 service_id = 1;
+  optional uint32 service_id = 1;
 }
 
 message ListEventsResponse {
   repeated Event events = 1;
+}
+
+message RefreshEventsRequest {
+  // Time spent collecting events from each physical channel.
+  // Zero uses the server default.
+  uint32 dwell_time_seconds = 1;
 }
 
 message EventDescription {
@@ -60,6 +67,7 @@ message Event {
   repeated EventDescription description = 3;
   optional DateTime start_time = 4;
   optional DateTime end_time = 5;
+  uint32 service_id = 6;
 }
 
 message StreamRequest {

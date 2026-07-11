@@ -1,11 +1,14 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{FixedOffset, NaiveDateTime};
 use connectrpc::{
     ConnectError, RequestContext, Response, Router, ServiceRequest, ServiceResult, ServiceStream,
 };
 use tokio_stream::StreamExt;
+use tokio_stream::wrappers::ReceiverStream;
 
+use crate::event_crawler::CrawledEvent;
 use crate::proto::chibitv::v1::*;
 use crate::registry;
 use crate::service_information::Signal;
@@ -68,20 +71,85 @@ impl ChibitvService for ChibitvServiceImpl {
         _ctx: RequestContext,
         request: ServiceRequest<'_, ListEventsRequest>,
     ) -> ServiceResult<ListEventsResponse> {
-        let service_id = u16::try_from(request.service_id)
-            .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
-        let events = self
-            .workspace
-            .registry()
-            .get_events_by_service_id(service_id)
+        let mut events = if let Some(service_id) = request.service_id {
+            let service_id = u16::try_from(service_id)
+                .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
+            self.workspace
+                .registry()
+                .get_events_by_service_id(service_id)
+                .into_iter()
+                .map(|event| (service_id, event))
+                .collect::<Vec<_>>()
+        } else {
+            self.workspace
+                .registry()
+                .get_all_services()
+                .into_iter()
+                .flat_map(|service| {
+                    self.workspace
+                        .registry()
+                        .get_events_by_service_id(service.id)
+                        .into_iter()
+                        .map(move |event| (service.id, event))
+                })
+                .collect::<Vec<_>>()
+        };
+        events.sort_by_key(|(service_id, event)| (*service_id, event.start_time, event.id));
+        let events = events
             .iter()
-            .map(Event::from)
+            .map(|(service_id, event)| event_message(*service_id, event))
             .collect();
 
         Response::ok(ListEventsResponse {
             events,
             ..Default::default()
         })
+    }
+
+    async fn refresh_events(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, RefreshEventsRequest>,
+    ) -> ServiceResult<ServiceStream<Event>> {
+        const DEFAULT_DWELL_TIME_SECONDS: u32 = 10;
+        const MAX_DWELL_TIME_SECONDS: u32 = 60;
+
+        let dwell_time_seconds = match request.dwell_time_seconds {
+            0 => DEFAULT_DWELL_TIME_SECONDS,
+            seconds if seconds <= MAX_DWELL_TIME_SECONDS => seconds,
+            _ => {
+                return Err(ConnectError::invalid_argument(
+                    "dwell_time_seconds must be at most 60",
+                ));
+            }
+        };
+        let crawler = self
+            .workspace
+            .event_crawler()
+            .ok_or_else(|| ConnectError::failed_precondition("event crawler is unavailable"))?;
+        let channels = self
+            .workspace
+            .channels()
+            .map(|(_, channel)| channel.clone())
+            .collect::<Vec<_>>();
+        let registry = self.workspace.registry_arc();
+        let (tx, rx) = tokio::sync::mpsc::channel(16);
+
+        std::thread::spawn(move || {
+            let result = crawler.crawl(
+                &channels,
+                registry,
+                Duration::from_secs(u64::from(dwell_time_seconds)),
+                |event| tx.blocking_send(Ok(crawled_event_message(event))).is_ok(),
+            );
+
+            if let Err(error) = result {
+                tracing::error!(%error, "Event refresh failed");
+                let _ = tx.blocking_send(Err(ConnectError::unavailable("event refresh failed")));
+            }
+        });
+
+        Response::stream_ok(ReceiverStream::new(rx))
     }
 
     async fn get_stream(
@@ -96,7 +164,11 @@ impl ChibitvService for ChibitvServiceImpl {
 
         Response::ok(StreamState {
             service: service.as_ref().map(Service::from).into(),
-            event: event.as_ref().map(Event::from).into(),
+            event: service
+                .as_ref()
+                .zip(event.as_ref())
+                .map(|(service, event)| event_message(service.id, event))
+                .into(),
             ..Default::default()
         })
     }
@@ -149,6 +221,10 @@ impl ChibitvService for ChibitvServiceImpl {
     }
 }
 
+fn crawled_event_message(value: CrawledEvent) -> Event {
+    event_message(value.service_id, &value.event)
+}
+
 fn stream_state(workspace: &Workspace, stream_id: u32) -> Option<StreamResponse> {
     stream_state_with_id(workspace, stream_id, None)
 }
@@ -163,7 +239,11 @@ fn stream_state_with_id(
     Some(StreamResponse {
         payload: Some(stream_response::Payload::State(Box::new(StreamState {
             service: service.as_ref().map(Service::from).into(),
-            event: event.as_ref().map(Event::from).into(),
+            event: service
+                .as_ref()
+                .zip(event.as_ref())
+                .map(|(service, event)| event_message(service.id, event))
+                .into(),
             ..Default::default()
         }))),
         ..Default::default()
@@ -201,30 +281,29 @@ impl From<&registry::Service> for Service {
     }
 }
 
-impl From<&registry::Event> for Event {
-    fn from(value: &registry::Event) -> Self {
-        Self {
-            id: value.id.into(),
-            title: value.name.clone().unwrap_or_default(),
-            description: value
-                .description
-                .iter()
-                .flatten()
-                .cloned()
-                .map(|(name, content)| EventDescription {
-                    name,
-                    content,
-                    ..Default::default()
-                })
-                .collect(),
-            start_time: value.start_time.map(DateTime::from).into(),
-            end_time: value
-                .start_time
-                .zip(value.duration)
-                .map(|(start_time, duration)| DateTime::from(start_time + duration))
-                .into(),
-            ..Default::default()
-        }
+fn event_message(service_id: u16, value: &registry::Event) -> Event {
+    Event {
+        id: value.id.into(),
+        title: value.name.clone().unwrap_or_default(),
+        description: value
+            .description
+            .iter()
+            .flatten()
+            .cloned()
+            .map(|(name, content)| EventDescription {
+                name,
+                content,
+                ..Default::default()
+            })
+            .collect(),
+        start_time: value.start_time.map(DateTime::from).into(),
+        end_time: value
+            .start_time
+            .zip(value.duration)
+            .map(|(start_time, duration)| DateTime::from(start_time + duration))
+            .into(),
+        service_id: service_id.into(),
+        ..Default::default()
     }
 }
 

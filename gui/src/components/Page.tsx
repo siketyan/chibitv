@@ -45,7 +45,7 @@ export function Page(): JSX.Element {
         </aside>
       )}
       {isScheduleOpen && (
-        <aside className="absolute bottom-3 right-3 top-18 z-20 flex w-[min(24rem,calc(100%-1.5rem))] min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-surface/75 shadow-2xl backdrop-blur-xl sm:bottom-4 sm:right-4 sm:top-20">
+        <aside className="absolute inset-x-3 bottom-3 top-18 z-20 flex min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-surface/80 shadow-2xl backdrop-blur-xl sm:inset-x-4 sm:bottom-4 sm:top-20">
           <Events />
         </aside>
       )}

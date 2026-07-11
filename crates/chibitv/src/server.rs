@@ -32,6 +32,7 @@ mod tests {
 
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
+    use chibitv_b10::table::EventInformation;
     use tower::ServiceExt;
 
     use super::*;
@@ -105,6 +106,53 @@ mod tests {
         let service_b = body.find("Service B").unwrap();
         assert!(service_a < service_b);
         assert!(body.contains(r#""channelId":1"#));
+    }
+
+    #[tokio::test]
+    async fn lists_events_from_all_services_when_service_id_is_omitted() {
+        let registry = Arc::new(Registry::default());
+        for (channel_id, service_id, event_id) in [(0, 101, 1001), (1, 201, 2001)] {
+            registry.put_cached_service(
+                channel_id,
+                channel_id as u16,
+                service_id,
+                format!("Service {service_id}"),
+                String::new(),
+            );
+            registry.put_b10_event(
+                service_id,
+                &EventInformation {
+                    event_id,
+                    start_time: None,
+                    duration: None,
+                    running_status: 0,
+                    free_ca_mode: false,
+                    descriptors: vec![],
+                },
+            );
+        }
+        let workspace = Arc::new(Workspace::new(
+            registry,
+            vec![],
+            RwLock::new(Streams::new()),
+        ));
+
+        let response = app(workspace)
+            .oneshot(
+                Request::post("/chibitv.v1.ChibitvService/ListEvents")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("connect-protocol-version", "1")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains(r#""serviceId":101"#));
+        assert!(body.contains(r#""serviceId":201"#));
     }
 
     #[tokio::test]

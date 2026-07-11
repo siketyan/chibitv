@@ -7,6 +7,7 @@ use clap::Parser;
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
 use crate::config::{ChannelConfig, Config};
+use crate::event_crawler::EventCrawler;
 use crate::registry::Registry;
 use crate::stream::{Stream, Streams};
 use crate::tuner::Tuners;
@@ -59,7 +60,12 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     });
 
     let streams = {
-        let stream = Stream::open(registry.clone(), Arc::clone(&tuners), cas, b61_descrambler)?;
+        let stream = Stream::open(
+            registry.clone(),
+            Arc::clone(&tuners),
+            cas.clone(),
+            b61_descrambler,
+        )?;
         let mut streams = Streams::new();
 
         let default_service_id = config
@@ -75,7 +81,9 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     };
 
     let address = config.server.address;
-    let state = Arc::new(Workspace::new(registry, channels, streams));
+    let event_crawler = EventCrawler::new(tuners, cas, config.cas.master_key.into());
+    let state =
+        Arc::new(Workspace::new(registry, channels, streams).with_event_crawler(event_crawler));
 
     crate::server::serve(address, state).await
 }

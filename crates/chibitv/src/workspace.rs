@@ -4,6 +4,7 @@ use bytes::Bytes;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::channel::{Channel, ChannelInner};
+use crate::event_crawler::EventCrawler;
 use crate::registry::{Event, Registry, Service};
 use crate::service_information::Signal;
 use crate::stream::Streams;
@@ -19,6 +20,7 @@ pub struct Workspace {
     registry: Arc<Registry>,
     channels: Vec<Channel>,
     streams: RwLock<Streams>,
+    event_crawler: Option<Arc<EventCrawler>>,
 }
 
 impl Workspace {
@@ -27,7 +29,13 @@ impl Workspace {
             registry,
             channels,
             streams,
+            event_crawler: None,
         }
+    }
+
+    pub fn with_event_crawler(mut self, crawler: EventCrawler) -> Self {
+        self.event_crawler = Some(Arc::new(crawler));
+        self
     }
 
     pub fn channels(&self) -> impl Iterator<Item = (usize, &Channel)> {
@@ -36,6 +44,14 @@ impl Workspace {
 
     pub fn registry(&self) -> &Registry {
         &self.registry
+    }
+
+    pub fn registry_arc(&self) -> Arc<Registry> {
+        Arc::clone(&self.registry)
+    }
+
+    pub fn event_crawler(&self) -> Option<Arc<EventCrawler>> {
+        self.event_crawler.clone()
     }
 
     pub fn get_current_event(&self, stream_id: u32) -> Option<(Option<Service>, Option<Event>)> {
