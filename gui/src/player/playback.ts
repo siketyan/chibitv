@@ -1,6 +1,5 @@
 import type { TranscoderRequest, TranscoderResponse } from "./protocol";
 
-const AVC_BITRATE = 8_000_000;
 const MIN_START_BUFFER_SECONDS = 2;
 const MAX_BUFFER_AHEAD_SECONDS = 30;
 const RETAIN_BUFFER_BEHIND_SECONDS = 30;
@@ -208,7 +207,7 @@ export function startMpeg2Playback(
     messageChain.catch(fail);
   });
 
-  const startRequest: TranscoderRequest = { type: "start", bitrate: AVC_BITRATE };
+  const startRequest: TranscoderRequest = { type: "start" };
   worker.postMessage(startRequest);
   const unsubscribe = subscribeFmp4((data) => {
     if (stopped) return;

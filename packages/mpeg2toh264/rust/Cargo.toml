@@ -1,0 +1,23 @@
+[package]
+name = "chibitv-mpeg2toh264"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Browser bridge feeding MPEG-2 video access units into mpeg2toh264 and returning MSE-ready fMP4 fragments"
+
+# Standalone: the repository's root workspace only covers crates/*, and this
+# crate is built for wasm32 by the npm package's build.sh rather than by the
+# server build.
+[workspace]
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+mpeg2toh264 = { git = "https://github.com/otya128/mpeg2toh264.git", rev = "23a474f205205e98b1052d3ffc5707834dd21316" }
+wasm-bindgen = "=0.2.127"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

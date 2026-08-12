@@ -6,7 +6,7 @@
     "node": "24"
   },
   "dependencies": {
-    "@chibitv/mediabunny-mpeg2": "workspace:*",
+    "@chibitv/mpeg2toh264": "workspace:*",
     "@bufbuild/protobuf": "2.10.1",
     "@connectrpc/connect": "2.1.2",
     "@connectrpc/connect-web": "2.1.2",

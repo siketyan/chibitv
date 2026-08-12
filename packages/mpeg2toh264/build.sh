@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Build the WebAssembly bridge into wasm/.
+#
+# Needs the wasm32 target and a wasm-bindgen CLI matching the wasm-bindgen
+# crate version in rust/Cargo.lock:
+#
+#   rustup target add wasm32-unknown-unknown
+#   cargo install wasm-bindgen-cli
+set -euo pipefail
+
+root="$(cd "$(dirname "$0")" && pwd)"
+out="$root/wasm"
+
+# The generator and the crate have to agree, or the glue will not load.
+wanted="$(sed -n '/^name = "wasm-bindgen"$/,/^version/s/^version = "\(.*\)"/\1/p' "$root/rust/Cargo.lock" | head -1)"
+have="$(wasm-bindgen --version | awk '{print $2}')"
+if [ "$wanted" != "$have" ]; then
+  echo "wasm-bindgen CLI is $have but the crate is $wanted; they must match" >&2
+  exit 1
+fi
+
+cargo build --manifest-path "$root/rust/Cargo.toml" --release --target wasm32-unknown-unknown
+
+# The web target loads the module itself, from a URL the caller passes in,
+# which is what a bundler-served worker can provide via `new URL`.
+wasm-bindgen --target web --out-dir "$out" \
+  "$root/rust/target/wasm32-unknown-unknown/release/chibitv_mpeg2toh264.wasm"
+
+echo "wrote $out"

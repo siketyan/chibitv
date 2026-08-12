@@ -1,0 +1,35 @@
+{
+  "name": "@chibitv/mpeg2toh264",
+  "version": "0.1.0",
+  "description": "MPEG-2 to H.264 bitstream-domain transcoder for the browser, backed by mpeg2toh264 compiled to WebAssembly",
+  "type": "module",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "sideEffects": false,
+  "files": [
+    "dist",
+    "wasm",
+    "rust/Cargo.toml",
+    "rust/Cargo.lock",
+    "rust/src",
+    "build.sh",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "devDependencies": {
+    "typescript": "6.0.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "check": "tsc -p tsconfig.json",
+    "wasm:build": "bash ./build.sh",
+    "prepack": "pnpm build"
+  }
+}

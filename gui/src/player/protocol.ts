@@ -1,5 +1,5 @@
 export type TranscoderRequest =
-  | { type: "start"; bitrate: number }
+  | { type: "start" }
   | { type: "data"; data: ArrayBuffer }
   | { type: "ack"; chunkId: number }
   | { type: "cancel" };

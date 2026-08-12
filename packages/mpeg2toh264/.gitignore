@@ -1,0 +1,8 @@
+/dist/
+/wasm/
+/rust/target/
+
+# Repository-wide rules ignore TypeScript and generated dist directories.
+!/src/**/*.ts
+!/tsconfig.json
+!/tsconfig.build.json
