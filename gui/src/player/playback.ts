@@ -43,13 +43,32 @@ function waitForSourceBuffer(sourceBuffer: SourceBuffer, operation: () => void):
   });
 }
 
+// Safari for iOS exposes MSE only as ManagedMediaSource, and it is also preferable on the other
+// Safari platforms because the media stack then manages the buffer under memory pressure.
+function resolveMediaSourceConstructor(): MediaSourceConstructor {
+  const managed = window.ManagedMediaSource;
+  if (managed) return managed;
+  if (typeof MediaSource === "undefined") {
+    throw new Error("This browser does not support Media Source Extensions");
+  }
+
+  return MediaSource;
+}
+
+function isManagedMediaSource(mediaSource: MediaSource): mediaSource is ManagedMediaSource {
+  const managed = window.ManagedMediaSource;
+  return managed !== undefined && mediaSource instanceof managed;
+}
+
 class MediaSourcePlayback {
-  private readonly mediaSource = new MediaSource();
-  private readonly objectUrl = URL.createObjectURL(this.mediaSource);
+  private readonly mediaSourceConstructor = resolveMediaSourceConstructor();
+  private readonly mediaSource = new this.mediaSourceConstructor();
+  private readonly objectUrl: string | undefined;
   private readonly sourceOpen: Promise<void>;
   private sourceBuffer: SourceBuffer | undefined;
   private stopped = false;
   private playbackStarted = false;
+  private streaming = true;
 
   constructor(private readonly video: HTMLVideoElement) {
     this.sourceOpen = new Promise((resolve, reject) => {
@@ -65,12 +84,26 @@ class MediaSourcePlayback {
       );
     });
 
-    video.src = this.objectUrl;
+    if (isManagedMediaSource(this.mediaSource)) {
+      // A ManagedMediaSource may only be attached to an element that opts out of remote playback,
+      // and it tells us through these events when it wants to be fed.
+      video.disableRemotePlayback = true;
+      this.mediaSource.addEventListener("startstreaming", () => {
+        this.streaming = true;
+      });
+      this.mediaSource.addEventListener("endstreaming", () => {
+        this.streaming = false;
+      });
+      video.srcObject = this.mediaSource;
+    } else {
+      this.objectUrl = URL.createObjectURL(this.mediaSource);
+      video.src = this.objectUrl;
+    }
     video.load();
   }
 
   async initialize(mimeType: string): Promise<void> {
-    if (!MediaSource.isTypeSupported(mimeType)) {
+    if (!this.mediaSourceConstructor.isTypeSupported(mimeType)) {
       throw new Error(`MSE does not support the transcoder output: ${mimeType}`);
     }
 
@@ -113,9 +146,13 @@ class MediaSourcePlayback {
     } catch {
       // The SourceBuffer may already be detached.
     }
-    this.video.removeAttribute("src");
+    if (this.objectUrl) {
+      this.video.removeAttribute("src");
+      URL.revokeObjectURL(this.objectUrl);
+    } else {
+      this.video.srcObject = null;
+    }
     this.video.load();
-    URL.revokeObjectURL(this.objectUrl);
   }
 
   private getBufferedEnd(): number {
@@ -147,12 +184,17 @@ class MediaSourcePlayback {
     await waitForSourceBuffer(sourceBuffer, () => sourceBuffer.remove(0, removeEnd));
   }
 
+  private wantsMoreData(): boolean {
+    const bufferedAhead = this.getBufferedEnd() - this.video.currentTime;
+    if (bufferedAhead > MAX_BUFFER_AHEAD_SECONDS) return false;
+
+    // A ManagedMediaSource asks us to stop feeding it while it is satisfied, but keep the initial
+    // buffer flowing so that playback can start even if it never asks for data.
+    return this.streaming || bufferedAhead <= MIN_START_BUFFER_SECONDS;
+  }
+
   private async waitForBufferRoom(): Promise<void> {
-    while (
-      !this.stopped &&
-      this.mediaSource.readyState === "open" &&
-      this.getBufferedEnd() - this.video.currentTime > MAX_BUFFER_AHEAD_SECONDS
-    ) {
+    while (!this.stopped && this.mediaSource.readyState === "open" && !this.wantsMoreData()) {
       await new Promise((resolve) => window.setTimeout(resolve, 250));
     }
   }
