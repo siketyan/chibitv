@@ -42,22 +42,14 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     {
         Some(Descrambler::init(
             cas.clone(),
-            config.cas.master_key.into(),
+            config.cas_master_key()?,
             true,
         )?)
     } else {
         None
     };
 
-    let tuners = Arc::new({
-        let mut tuners = Tuners::default();
-
-        for (id, tuner) in config.tuners.iter().enumerate() {
-            tuners.add_tuner_from_config(id as u32, tuner)?;
-        }
-
-        tuners
-    });
+    let tuners = Arc::new(Tuners::from_config(&config.tuners)?);
 
     let streams = {
         let stream = Stream::open(
@@ -81,7 +73,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     };
 
     let address = config.server.address;
-    let event_crawler = EventCrawler::new(tuners, cas, config.cas.master_key.into());
+    let event_crawler = EventCrawler::new(tuners, cas, config.cas_master_key()?);
     let state =
         Arc::new(Workspace::new(registry, channels, streams).with_event_crawler(event_crawler));
 

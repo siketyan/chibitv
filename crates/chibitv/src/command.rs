@@ -4,6 +4,7 @@ mod remux;
 mod scan;
 mod serve;
 mod status;
+mod tuner;
 
 use clap::Parser;
 
@@ -28,6 +29,9 @@ pub(super) enum Command {
 
     /// Show current broadcast status from B10 SI tables.
     Status(status::Options),
+
+    /// Run chibitv as a remote tuner for another chibitv server.
+    Tuner(tuner::Options),
 }
 
 impl Command {
@@ -39,6 +43,7 @@ impl Command {
             Self::Scan(options) => scan::scan(options, config).await,
             Self::Serve(options) => serve::serve(options, config).await,
             Self::Status(options) => status::status(options, config).await,
+            Self::Tuner(options) => tuner::tuner(options, config).await,
         }
     }
 }

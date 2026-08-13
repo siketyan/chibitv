@@ -23,10 +23,7 @@ pub struct Options {
 }
 
 pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
-    let mut tuners = Tuners::default();
-    for (id, tuner) in config.tuners.iter().enumerate() {
-        tuners.add_tuner_from_config(id as u32, tuner)?;
-    }
+    let tuners = Tuners::from_config(&config.tuners)?;
 
     let tuner = tuners.try_acquire_by_id(0)?;
 
@@ -70,7 +67,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
     let service_information = ServiceInformationProcessor::new(channel.id, None, Some(signal_tx));
     match channel.inner {
         ChannelInner::IsdbS { .. } => {
-            let descrambler = Descrambler::init(cas, config.cas.master_key.into(), false)?;
+            let descrambler = Descrambler::init(cas, config.cas_master_key()?, false)?;
             let demux = MmtDemuxer::new(BufReader::new(input), descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }

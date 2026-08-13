@@ -34,10 +34,7 @@ struct StatusState {
 }
 
 pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
-    let mut tuners = Tuners::default();
-    for (id, tuner) in config.tuners.iter().enumerate() {
-        tuners.add_tuner_from_config(id as u32, tuner)?;
-    }
+    let tuners = Tuners::from_config(&config.tuners)?;
 
     let tuner = tuners.try_acquire_by_id(0)?;
 

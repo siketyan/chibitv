@@ -1,10 +1,24 @@
+# Optional. Required by every subcommand that descrambles a stream, which the
+# `tuner` subcommand never does.
 [cas]
 master_key = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
+
+# Address the `tuner` subcommand listens on. Use "[::]:3002" to accept
+# connections from other hosts.
+[tuner_server]
+address = "[::1]:3002"
 
 [[tuners]]
 type = "dvb"
 adapter_num = 0
 frontend_num = 0
+
+# A tuner of another chibitv instance running in tuner mode.
+# [[tuners]]
+# type = "remote"
+# address = "http://tuner.local:3002"
+# Optional. Defaults to any available tuner of that instance.
+# tuner_id = 0
 
 [[channels]]
 name = "BS Example"

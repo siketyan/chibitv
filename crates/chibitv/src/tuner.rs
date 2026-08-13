@@ -1,5 +1,6 @@
 #[cfg(feature = "dvb")]
 mod dvb;
+mod remote;
 mod stdin;
 
 use std::collections::BTreeMap;
@@ -73,6 +74,16 @@ pub struct Tuners {
 }
 
 impl Tuners {
+    pub fn from_config(configs: &[TunerConfig]) -> anyhow::Result<Self> {
+        let mut tuners = Self::default();
+
+        for (id, config) in configs.iter().enumerate() {
+            tuners.add_tuner_from_config(id as u32, config)?;
+        }
+
+        Ok(tuners)
+    }
+
     pub fn try_acquire(&self) -> anyhow::Result<TunerLease> {
         if self.tuners.is_empty() {
             bail!("No tuners are configured");
@@ -133,6 +144,10 @@ impl Tuners {
                 frontend_num,
             } => {
                 self.add_tuner(id, dvb::DvbTuner::new(*adapter_num, *frontend_num)?);
+            }
+
+            TunerConfig::Remote { address, tuner_id } => {
+                self.add_tuner(id, remote::RemoteTuner::new(address, *tuner_id)?);
             }
         }
 

@@ -82,7 +82,7 @@ fn remux_mmts(
 ) -> anyhow::Result<()> {
     let descrambler = Descrambler::init(
         PcscCasModule::open_shared()?,
-        config.cas.master_key.into(),
+        config.cas_master_key()?,
         false,
     )?;
     let reader = BufReader::new(input);

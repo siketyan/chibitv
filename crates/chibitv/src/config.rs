@@ -45,10 +45,38 @@ impl Default for ServerConfig {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct TunerServerConfig {
+    pub address: SocketAddr,
+}
+
+impl Default for TunerServerConfig {
+    fn default() -> Self {
+        Self {
+            address: SocketAddr::from((Ipv6Addr::LOCALHOST, 3002)),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TunerConfig {
     Stdin,
-    Dvb { adapter_num: u8, frontend_num: u8 },
+    Dvb {
+        adapter_num: u8,
+        frontend_num: u8,
+    },
+    Remote {
+        /// Address of a chibitv instance running in tuner mode, such as
+        /// `http://tuner.local:3002`. The `http://` scheme is assumed when the
+        /// address has none.
+        address: String,
+
+        /// Tuner to use on that instance. Any available tuner is used when
+        /// omitted.
+        #[serde(default)]
+        tuner_id: Option<u32>,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -102,10 +130,16 @@ pub struct ServiceConfig {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
-    pub cas: CasConfig,
+    /// Access to the CAS module. Only tuner mode works without it, as it never
+    /// descrambles a stream itself.
+    #[serde(default)]
+    pub cas: Option<CasConfig>,
 
     #[serde(default)]
     pub server: ServerConfig,
+
+    #[serde(default)]
+    pub tuner_server: TunerServerConfig,
 
     #[serde(default)]
     pub tuners: Vec<TunerConfig>,
@@ -120,6 +154,15 @@ impl Config {
         let config = toml::from_str(&file)?;
 
         Ok(config)
+    }
+
+    pub fn cas_master_key(&self) -> anyhow::Result<[u8; 32]> {
+        let cas = self
+            .cas
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("`cas.master_key` is not defined in the config"))?;
+
+        Ok(cas.master_key.into())
     }
 }
 

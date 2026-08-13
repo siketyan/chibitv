@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package chibitv.v1;
+
+// ChibitvTunerService exposes the tuners of a chibitv instance running in
+// tuner mode to another instance over the network.
+service ChibitvTunerService {
+  rpc Tune(TuneRequest) returns (TuneResponse);
+  rpc Stream(TunerStreamRequest) returns (stream TunerStreamResponse);
+}
+
+message IsdbSChannel {
+  uint32 frequency = 1;
+  uint32 stream_id = 2;
+}
+
+message IsdbTChannel {
+  uint32 frequency = 1;
+  uint32 bandwidth_hz = 2;
+}
+
+message TuneRequest {
+  // Tuner to tune. Any available tuner is used when omitted.
+  optional uint32 tuner_id = 1;
+
+  // Name of the channel, used for logging on the tuner only.
+  string channel_name = 2;
+
+  oneof channel {
+    IsdbSChannel isdb_s = 3;
+    IsdbTChannel isdb_t = 4;
+  }
+}
+
+message TuneResponse {
+  // The tuner that was tuned. It stays reserved for a following Stream call
+  // for a short while.
+  uint32 tuner_id = 1;
+}
+
+message TunerStreamRequest {
+  // Tuner to stream. Pass the tuner_id returned by Tune to stream the tuner
+  // that was tuned; any available tuner is used when omitted.
+  optional uint32 tuner_id = 1;
+}
+
+message TunerStreamResponse {
+  // A chunk of the raw MPEG-2 TS or MMT/TLV stream as it came from the tuner.
+  bytes chunk = 1;
+}

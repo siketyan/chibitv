@@ -168,6 +168,34 @@ The server supports ISDB-S and ISDB-T channels and requires at least one configu
 generate the service catalog with `scan` first so that every configured physical channel's services are available
 before tuning.
 
+### `tuner`
+
+Run chibitv as a remote tuner for another chibitv instance. The tuners in `[[tuners]]` are exposed over Connect RPC as
+`chibitv.v1.ChibitvTunerService`: a unary `Tune` call selects a channel, and a server-streaming `Stream` call sends the
+raw MPEG-2 TS or MMT/TLV output as it comes from the tuner. Nothing is descrambled or remuxed here, so this mode needs
+neither a CAS module nor a `[cas]` section in its config. Channels are chosen by the instance that connects, so
+`[[channels]]` is not needed either.
+
+```shell
+# On the machine the tuner is attached to.
+cargo run -- tuner --address '[::]:3002'
+```
+
+The address defaults to `tuner_server.address` in the config, which is `[::1]:3002`. Connect to it from another
+instance by adding a `remote` tuner to its `[[tuners]]`:
+
+```toml
+[[tuners]]
+type = "remote"
+address = "http://tuner.local:3002"
+# Optional. Defaults to any available tuner of that instance.
+tuner_id = 0
+```
+
+A remote tuner is used wherever a local one is, including by `serve` and `live`. Messages are binary protobuf, and the
+stream is transferred without compression because broadcast data is compressed already. The connection is plain HTTP
+without any authentication, so keep it within a trusted network.
+
 ## References
 
 - ARIB STD-B32: https://www.arib.or.jp/english/html/overview/doc/6-STD-B32v3_11-3p3-E1.pdf
