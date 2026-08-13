@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{Ipv6Addr, SocketAddr};
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
@@ -12,9 +12,10 @@ use crate::tuner::Tuners;
 
 #[derive(Clone, Debug, Parser)]
 pub struct Options {
-    /// Address to listen on. Overrides `tuner_server.address` in the config.
-    #[clap(short, long)]
-    address: Option<SocketAddr>,
+    /// Address to listen on. Pass a wildcard address such as `[::]:3002` to
+    /// accept connections from other hosts.
+    #[clap(short, long, default_value_t = SocketAddr::from((Ipv6Addr::LOCALHOST, 3002)))]
+    address: SocketAddr,
 }
 
 pub async fn tuner(options: &Options, config: &Config) -> anyhow::Result<()> {
@@ -23,11 +24,10 @@ pub async fn tuner(options: &Options, config: &Config) -> anyhow::Result<()> {
     }
 
     let tuners = Arc::new(Tuners::from_config(&config.tuners)?);
-    let address = options.address.unwrap_or(config.tuner_server.address);
 
     // Only the tuner service is served here, so it needs no HTTP framework.
     Server::new(ChibitvTunerServiceImpl::new(tuners).register(Router::new()))
-        .serve(address)
+        .serve(options.address)
         .await
         .map_err(|error| anyhow!("Could not serve the tuner: {error}"))
 }

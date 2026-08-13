@@ -11,7 +11,6 @@ chibitv_b60 = { path = "../chibitv_b60" }
 chibitv_b61 = { path = "../chibitv_b61" }
 
 anyhow = "1.0.103"
-async-trait = "0.1.90"
 axum = "0.8.9"
 bitstream-io = "4.10.0"
 buffa = "0.8.1"

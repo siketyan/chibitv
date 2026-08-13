@@ -1,5 +1,7 @@
 #[cfg(feature = "dvb")]
 mod dvb;
+#[cfg(test)]
+pub(crate) mod fake;
 mod remote;
 mod stdin;
 
@@ -8,7 +10,6 @@ use std::io::Read;
 use std::sync::Arc;
 
 use anyhow::bail;
-use async_trait::async_trait;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::warn;
 
@@ -18,7 +19,6 @@ use crate::config::TunerConfig;
 /// A tuner is opened and tuned asynchronously so that a remote one can talk to
 /// its instance, but the input it produces is read synchronously by the demuxer
 /// running on a thread of its own.
-#[async_trait]
 pub trait Tuner: Send + Sync {
     async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>>;
 
@@ -28,9 +28,54 @@ pub trait Tuner: Send + Sync {
     }
 }
 
+/// Every kind of tuner chibitv can use. An asynchronous trait is not dyn
+/// compatible, so the kinds are dispatched by this enum instead.
+pub enum AnyTuner {
+    Stdin(stdin::StdinTuner),
+
+    #[cfg(feature = "dvb")]
+    Dvb(dvb::DvbTuner),
+
+    /// Boxed, as a client is far larger than a device handle.
+    Remote(Box<remote::RemoteTuner>),
+
+    #[cfg(test)]
+    Fake(fake::FakeTuner),
+}
+
+impl Tuner for AnyTuner {
+    async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+        match self {
+            Self::Stdin(tuner) => tuner.open().await,
+
+            #[cfg(feature = "dvb")]
+            Self::Dvb(tuner) => tuner.open().await,
+
+            Self::Remote(tuner) => tuner.open().await,
+
+            #[cfg(test)]
+            Self::Fake(tuner) => tuner.open().await,
+        }
+    }
+
+    async fn tune(&self, channel: Channel) -> anyhow::Result<()> {
+        match self {
+            Self::Stdin(tuner) => tuner.tune(channel).await,
+
+            #[cfg(feature = "dvb")]
+            Self::Dvb(tuner) => tuner.tune(channel).await,
+
+            Self::Remote(tuner) => tuner.tune(channel).await,
+
+            #[cfg(test)]
+            Self::Fake(tuner) => tuner.tune(channel).await,
+        }
+    }
+}
+
 struct TunerSlot {
     id: u32,
-    tuner: Arc<dyn Tuner>,
+    tuner: AnyTuner,
     semaphore: Arc<Semaphore>,
 }
 
@@ -126,12 +171,12 @@ impl Tuners {
             .map(|slot| slot.semaphore.available_permits() == 0)
     }
 
-    pub fn add_tuner<T: Tuner + 'static>(&mut self, id: u32, tuner: T) {
+    pub fn add_tuner(&mut self, id: u32, tuner: impl Into<AnyTuner>) {
         self.tuners.insert(
             id,
             Arc::new(TunerSlot {
                 id,
-                tuner: Arc::new(tuner),
+                tuner: tuner.into(),
                 semaphore: Arc::new(Semaphore::new(1)),
             }),
         );
@@ -162,32 +207,13 @@ impl Tuners {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
-
+    use super::fake::FakeTuner;
     use super::*;
-
-    struct FakeTuner;
-
-    #[async_trait]
-    impl Tuner for FakeTuner {
-        async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
-            Ok(Box::new(Cursor::new(vec![1, 2, 3])))
-        }
-    }
-
-    struct FailingTuner;
-
-    #[async_trait]
-    impl Tuner for FailingTuner {
-        async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
-            anyhow::bail!("Could not open tuner")
-        }
-    }
 
     #[tokio::test]
     async fn keeps_tuner_locked_for_the_input_lifetime() {
         let mut tuners = Tuners::default();
-        tuners.add_tuner(7, FakeTuner);
+        tuners.add_tuner(7, FakeTuner::new([1, 2, 3]));
         assert_eq!(tuners.is_in_use(7), Some(false));
 
         let lease = tuners.try_acquire_by_id(7).unwrap();
@@ -206,7 +232,7 @@ mod tests {
     #[tokio::test]
     async fn keeps_tuner_locked_while_reopening_inputs_from_a_lease() {
         let mut tuners = Tuners::default();
-        tuners.add_tuner(7, FakeTuner);
+        tuners.add_tuner(7, FakeTuner::new([1, 2, 3]));
 
         let lease = tuners.try_acquire_by_id(7).unwrap();
         let input = lease.open_reader().await.unwrap();
@@ -223,8 +249,8 @@ mod tests {
     #[test]
     fn acquires_another_available_tuner() {
         let mut tuners = Tuners::default();
-        tuners.add_tuner(0, FakeTuner);
-        tuners.add_tuner(1, FakeTuner);
+        tuners.add_tuner(0, FakeTuner::new([1, 2, 3]));
+        tuners.add_tuner(1, FakeTuner::new([1, 2, 3]));
 
         let first = tuners.try_acquire_by_id(0).unwrap();
         let second = tuners.try_acquire().unwrap();
@@ -236,7 +262,7 @@ mod tests {
     #[tokio::test]
     async fn releases_tuner_when_open_fails() {
         let mut tuners = Tuners::default();
-        tuners.add_tuner(0, FailingTuner);
+        tuners.add_tuner(0, FakeTuner::failing());
 
         assert!(tuners.try_acquire_by_id(0).unwrap().open().await.is_err());
         assert_eq!(tuners.is_in_use(0), Some(false));

@@ -3,11 +3,6 @@
 [cas]
 master_key = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
 
-# Address the `tuner` subcommand listens on. Use "[::]:3002" to accept
-# connections from other hosts.
-[tuner_server]
-address = "[::1]:3002"
-
 [[tuners]]
 type = "dvb"
 adapter_num = 0

@@ -3,7 +3,6 @@ use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, bail};
-use async_trait::async_trait;
 use bytes::Bytes;
 use connectrpc::client::{ClientConfig, HttpClient};
 use http::Uri;
@@ -12,7 +11,7 @@ use tracing::{info, warn};
 
 use crate::channel::{Channel, ChannelInner};
 use crate::proto::chibitv::v1::*;
-use crate::tuner::Tuner;
+use crate::tuner::{AnyTuner, Tuner};
 
 /// Number of chunks buffered between the RPC client and the reader.
 const STREAM_CAPACITY: usize = 64;
@@ -40,7 +39,6 @@ impl RemoteTuner {
     }
 }
 
-#[async_trait]
 impl Tuner for RemoteTuner {
     async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
         let tuner_id = (*self.reserved_tuner_id.lock().unwrap()).or(self.tuner_id);
@@ -130,6 +128,12 @@ impl Tuner for RemoteTuner {
     }
 }
 
+impl From<RemoteTuner> for AnyTuner {
+    fn from(value: RemoteTuner) -> Self {
+        Self::Remote(Box::new(value))
+    }
+}
+
 struct RemoteTunerReader {
     // The receiver is not `Sync` on its own, while a tuner input is.
     chunks: Mutex<Receiver<(Bytes, OwnedSemaphorePermit)>>,
@@ -175,7 +179,6 @@ fn parse_address(address: &str) -> anyhow::Result<Uri> {
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
     use std::net::Ipv4Addr;
 
     use connectrpc::server::Server;
@@ -183,34 +186,14 @@ mod tests {
     use super::*;
     use crate::rpc::tuner::ChibitvTunerServiceImpl;
     use crate::tuner::Tuners;
-
-    struct FakeTuner {
-        tuned: Arc<Mutex<Vec<ChannelInner>>>,
-    }
-
-    #[async_trait]
-    impl Tuner for FakeTuner {
-        async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
-            Ok(Box::new(Cursor::new(b"a raw stream".to_vec())))
-        }
-
-        async fn tune(&self, channel: Channel) -> anyhow::Result<()> {
-            self.tuned.lock().unwrap().push(channel.inner);
-
-            Ok(())
-        }
-    }
+    use crate::tuner::fake::FakeTuner;
 
     #[tokio::test]
     async fn tunes_and_streams_a_tuner_of_another_instance() {
-        let tuned = Arc::new(Mutex::new(Vec::new()));
+        let fake = FakeTuner::new(*b"a raw stream");
+        let tuned = fake.tuned();
         let mut tuners = Tuners::default();
-        tuners.add_tuner(
-            0,
-            FakeTuner {
-                tuned: Arc::clone(&tuned),
-            },
-        );
+        tuners.add_tuner(0, fake);
 
         let router = ChibitvTunerServiceImpl::new(Arc::new(tuners)).register(Default::default());
         let server = Server::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();

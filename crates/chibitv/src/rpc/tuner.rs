@@ -207,29 +207,18 @@ fn requested_channel(request: &ServiceRequest<'_, TuneRequest>) -> Result<Channe
 
 #[cfg(test)]
 mod tests {
-    use std::io::Cursor;
     use std::net::Ipv4Addr;
 
-    use async_trait::async_trait;
     use connectrpc::ErrorCode;
     use connectrpc::client::{ClientConfig, HttpClient};
     use connectrpc::server::Server;
 
     use super::*;
-    use crate::tuner::Tuner;
-
-    struct FakeTuner;
-
-    #[async_trait]
-    impl Tuner for FakeTuner {
-        async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
-            Ok(Box::new(Cursor::new(b"a raw stream".to_vec())))
-        }
-    }
+    use crate::tuner::fake::FakeTuner;
 
     fn tuners() -> Arc<Tuners> {
         let mut tuners = Tuners::default();
-        tuners.add_tuner(0, FakeTuner);
+        tuners.add_tuner(0, FakeTuner::new(*b"a raw stream"));
 
         Arc::new(tuners)
     }

@@ -45,20 +45,6 @@ impl Default for ServerConfig {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-#[serde(default)]
-pub struct TunerServerConfig {
-    pub address: SocketAddr,
-}
-
-impl Default for TunerServerConfig {
-    fn default() -> Self {
-        Self {
-            address: SocketAddr::from((Ipv6Addr::LOCALHOST, 3002)),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TunerConfig {
     Stdin,
@@ -136,9 +122,6 @@ pub struct Config {
 
     #[serde(default)]
     pub server: ServerConfig,
-
-    #[serde(default)]
-    pub tuner_server: TunerServerConfig,
 
     #[serde(default)]
     pub tuners: Vec<TunerConfig>,

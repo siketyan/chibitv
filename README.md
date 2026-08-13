@@ -181,8 +181,8 @@ neither a CAS module nor a `[cas]` section in its config. Channels are chosen by
 cargo run -- tuner --address '[::]:3002'
 ```
 
-The address defaults to `tuner_server.address` in the config, which is `[::1]:3002`. Connect to it from another
-instance by adding a `remote` tuner to its `[[tuners]]`:
+`--address` defaults to `[::1]:3002`. Connect to it from another instance by adding a `remote` tuner to its
+`[[tuners]]`:
 
 ```toml
 [[tuners]]

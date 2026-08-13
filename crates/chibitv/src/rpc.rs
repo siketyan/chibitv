@@ -136,22 +136,23 @@ impl ChibitvService for ChibitvServiceImpl {
             .collect::<Vec<_>>();
         let registry = self.workspace.registry_arc();
         let (tx, rx) = tokio::sync::mpsc::channel(16);
-        // Crawling reads a tuner, which blocks, so it runs on a thread of its
-        // own and drives the asynchronous tuner calls through the handle.
-        let handle = tokio::runtime::Handle::current();
 
-        std::thread::spawn(move || {
-            let result = crawler.crawl(
-                &handle,
-                &channels,
-                registry,
-                Duration::from_secs(u64::from(dwell_time_seconds)),
-                |event| tx.blocking_send(Ok(crawled_event_message(event))).is_ok(),
-            );
+        tokio::spawn(async move {
+            let result = crawler
+                .crawl(
+                    &channels,
+                    registry,
+                    Duration::from_secs(u64::from(dwell_time_seconds)),
+                    // Events are emitted from the blocking part of the crawl.
+                    |event| tx.blocking_send(Ok(crawled_event_message(event))).is_ok(),
+                )
+                .await;
 
             if let Err(error) = result {
                 tracing::error!(%error, "Event refresh failed");
-                let _ = tx.blocking_send(Err(ConnectError::unavailable("event refresh failed")));
+                let _ = tx
+                    .send(Err(ConnectError::unavailable("event refresh failed")))
+                    .await;
             }
         });
 

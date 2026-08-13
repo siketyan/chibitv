@@ -5,7 +5,6 @@ use std::ptr::{null, null_mut};
 use std::time::Duration;
 
 use anyhow::bail;
-use async_trait::async_trait;
 use dvbv5_sys::dvb_dev_type::{DVB_DEVICE_DEMUX, DVB_DEVICE_DVR, DVB_DEVICE_FRONTEND};
 use dvbv5_sys::{
     DTV_BANDWIDTH_HZ, DTV_FREQUENCY, DTV_GUARD_INTERVAL, DTV_ISDBT_LAYER_ENABLED,
@@ -21,7 +20,7 @@ use libc::{EOVERFLOW, O_RDONLY, O_RDWR};
 use tracing::{error, info, warn};
 
 use crate::channel::ChannelInner;
-use crate::tuner::{Channel, Tuner};
+use crate::tuner::{AnyTuner, Channel, Tuner};
 
 const DVR_BUFFER_SIZE: i32 = 32 * 1024 * 1024;
 const DVB_VERBOSE_ENV: &str = "CHIBITV_DVB_VERBOSE";
@@ -177,7 +176,6 @@ impl DvbTuner {
     }
 }
 
-#[async_trait]
 impl Tuner for DvbTuner {
     async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
         Ok(Box::new(self.dev.open_dvr()?))
@@ -273,5 +271,11 @@ impl DvbTuner {
         }
 
         Ok(())
+    }
+}
+
+impl From<DvbTuner> for AnyTuner {
+    fn from(value: DvbTuner) -> Self {
+        Self::Dvb(value)
     }
 }
