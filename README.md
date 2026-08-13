@@ -192,9 +192,8 @@ address = "http://tuner.local:3002"
 tuner_id = 0
 ```
 
-A remote tuner is used wherever a local one is, including by `serve` and `live`. Messages are binary protobuf, and the
-stream is transferred without compression because broadcast data is compressed already. The connection is plain HTTP
-without any authentication, so keep it within a trusted network.
+A remote tuner is used wherever a local one is, including by `serve` and `live`. The address must be fully qualified.
+The connection is plain HTTP without any authentication, so keep it within a trusted network.
 
 ## References
 

@@ -37,11 +37,11 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     info!("Tuning to the channel: {:?}", channel);
 
-    tuner.tune(channel.clone())?;
+    tuner.tune(channel.clone()).await?;
 
     info!("Starting live stream. Press Ctrl+C to stop.");
 
-    let input = tuner.open()?;
+    let input = tuner.open().await?;
     let output = stdout();
     let writer = TsPacketWriter::new(BufWriter::new(output));
     let mux = M2tsMuxer::new(writer);

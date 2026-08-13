@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::BufReader;
 use std::ops::DerefMut;
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use std::thread::JoinHandle;
 
 use bytes::Bytes;
@@ -60,6 +60,7 @@ pub struct Stream {
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
     state: Arc<RwLock<StreamState>>,
+    tuning: tokio::sync::Mutex<()>,
     fmp4_tx: Sender<Bytes>,
     fmp4_init_segment: Arc<Mutex<Option<Bytes>>>,
     signal_tx: Sender<Signal>,
@@ -103,6 +104,7 @@ impl Stream {
             cas,
             b61_descrambler,
             state,
+            tuning: tokio::sync::Mutex::new(()),
             fmp4_tx,
             fmp4_init_segment,
             signal_tx,
@@ -194,7 +196,10 @@ impl Stream {
         self.signal_tx.subscribe()
     }
 
-    pub fn set_channel(&self, service_id: u16, channel: &Channel) -> anyhow::Result<()> {
+    pub async fn set_channel(&self, service_id: u16, channel: &Channel) -> anyhow::Result<()> {
+        // Tuning is not atomic, so let one channel change finish before the
+        // next one kills the session it just started.
+        let _tuning = self.tuning.lock().await;
         let state = std::mem::take(self.state.write().unwrap().deref_mut());
 
         if let Some((handle, kill_tx)) = state.handle {
@@ -205,8 +210,8 @@ impl Stream {
 
         let tuner = self.tuners.try_acquire()?;
         info!(tuner_id = tuner.id(), "Acquired tuner");
-        tuner.tune(channel.clone())?;
-        let reader = tuner.open()?;
+        tuner.tune(channel.clone()).await?;
+        let reader = tuner.open().await?;
 
         *self.fmp4_init_segment.lock().unwrap() = None;
         self.start_remuxer(service_id, channel, reader)?;
@@ -231,7 +236,7 @@ impl Stream {
 
 #[derive(Default)]
 pub struct Streams {
-    streams: BTreeMap<u32, Mutex<Stream>>,
+    streams: BTreeMap<u32, Arc<Stream>>,
 }
 
 impl Streams {
@@ -239,11 +244,11 @@ impl Streams {
         Self::default()
     }
 
-    pub fn get_stream(&self, stream_id: u32) -> Option<MutexGuard<'_, Stream>> {
-        self.streams.get(&stream_id)?.lock().ok()
+    pub fn get_stream(&self, stream_id: u32) -> Option<Arc<Stream>> {
+        self.streams.get(&stream_id).map(Arc::clone)
     }
 
     pub fn add_stream(&mut self, stream_id: u32, stream: Stream) {
-        self.streams.insert(stream_id, Mutex::new(stream));
+        self.streams.insert(stream_id, Arc::new(stream));
     }
 }

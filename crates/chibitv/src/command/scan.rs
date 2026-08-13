@@ -82,7 +82,7 @@ pub async fn scan(options: &Options, config: &Config) -> anyhow::Result<()> {
         info!(physical_channel, frequency, "Scanning UHF channel");
 
         let tuner = tuners.try_acquire_by_id(0)?;
-        if let Err(error) = tuner.tune(channel) {
+        if let Err(error) = tuner.tune(channel).await {
             warn!(
                 physical_channel,
                 frequency, error = %error, "Could not tune to UHF channel"
@@ -91,7 +91,7 @@ pub async fn scan(options: &Options, config: &Config) -> anyhow::Result<()> {
         }
 
         let descrambler = B25Descrambler::init(cas.clone())?;
-        let mut demux = M2tsDemuxer::new(tuner.open()?, descrambler);
+        let mut demux = M2tsDemuxer::new(tuner.open().await?, descrambler);
         let mut state = ScanState::default();
         let deadline = Instant::now() + Duration::from_secs(options.timeout);
 

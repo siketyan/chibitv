@@ -2,12 +2,11 @@ use std::io::Read;
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Mutex};
 
-use anyhow::Context;
+use anyhow::{Context, bail};
+use async_trait::async_trait;
 use bytes::Bytes;
 use connectrpc::client::{ClientConfig, HttpClient};
-use connectrpc::compression::{CompressionPolicy, CompressionRegistry};
 use http::Uri;
-use tokio::runtime::{Builder, Runtime};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 use tracing::{info, warn};
 
@@ -20,11 +19,6 @@ const STREAM_CAPACITY: usize = 64;
 
 /// A tuner of another chibitv instance running in tuner mode.
 pub struct RemoteTuner {
-    /// Runtime driving the RPC calls. The `Tuner` API is synchronous and is
-    /// called from both blocking threads and async contexts, so the calls
-    /// cannot run on the runtime of the caller. Taken by [`Drop`], and present
-    /// at any other time.
-    runtime: Option<Runtime>,
     client: ChibitvTunerServiceClient<HttpClient>,
     tuner_id: Option<u32>,
 
@@ -35,79 +29,36 @@ pub struct RemoteTuner {
 impl RemoteTuner {
     pub fn new(address: &str, tuner_id: Option<u32>) -> anyhow::Result<Self> {
         let uri = parse_address(address)?;
-        let runtime = Builder::new_multi_thread()
-            .worker_threads(1)
-            .thread_name("remote-tuner")
-            .enable_all()
-            .build()?;
 
         info!(%uri, "Using a remote tuner");
 
         Ok(Self {
-            runtime: Some(runtime),
-            client: ChibitvTunerServiceClient::new(HttpClient::plaintext(), client_config(uri)),
+            client: ChibitvTunerServiceClient::new(HttpClient::plaintext(), ClientConfig::new(uri)),
             tuner_id,
             reserved_tuner_id: Mutex::new(None),
         })
     }
-
-    fn runtime(&self) -> &Runtime {
-        self.runtime
-            .as_ref()
-            .expect("the runtime is only taken away while the tuner is dropped")
-    }
-
-    /// Run a call on the tuner's own runtime and block the caller until it
-    /// completes.
-    fn call<F>(&self, future: F) -> anyhow::Result<F::Output>
-    where
-        F: Future + Send + 'static,
-        F::Output: Send + 'static,
-    {
-        let (tx, rx) = channel();
-
-        self.runtime().spawn(async move {
-            let _ = tx.send(future.await);
-        });
-
-        Ok(rx.recv()?)
-    }
 }
 
-impl Drop for RemoteTuner {
-    fn drop(&mut self) {
-        // Dropping a runtime waits for its tasks to stop, which panics when
-        // the tuner is dropped in an async context.
-        if let Some(runtime) = self.runtime.take() {
-            runtime.shutdown_background();
-        }
-    }
-}
-
+#[async_trait]
 impl Tuner for RemoteTuner {
-    fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+    async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
         let tuner_id = (*self.reserved_tuner_id.lock().unwrap()).or(self.tuner_id);
-        let request = TunerStreamRequest {
-            tuner_id,
-            ..Default::default()
-        };
+        let mut stream = self
+            .client
+            .stream(TunerStreamRequest {
+                tuner_id,
+                ..Default::default()
+            })
+            .await?;
 
         let (chunk_tx, chunk_rx) = channel::<(Bytes, OwnedSemaphorePermit)>();
         let (cancel_tx, mut cancel_rx) = oneshot::channel();
         // Backpressure: the tuner keeps producing at the rate of the
         // broadcast, so the stream must not run ahead of the reader.
         let permits = Arc::new(Semaphore::new(STREAM_CAPACITY));
-        let client = self.client.clone();
 
-        self.runtime().spawn(async move {
-            let mut stream = match client.stream(request).await {
-                Ok(stream) => stream,
-                Err(error) => {
-                    warn!(%error, "Could not stream the remote tuner");
-                    return;
-                }
-            };
-
+        tokio::spawn(async move {
             loop {
                 let Ok(permit) = Arc::clone(&permits).acquire_owned().await else {
                     break;
@@ -141,35 +92,35 @@ impl Tuner for RemoteTuner {
         }))
     }
 
-    fn tune(&self, channel: Channel) -> anyhow::Result<()> {
-        let request = TuneRequest {
-            tuner_id: self.tuner_id,
-            channel_name: channel.name,
-            channel: Some(match channel.inner {
-                ChannelInner::IsdbS {
-                    frequency,
-                    stream_id,
-                } => IsdbSChannel {
-                    frequency,
-                    stream_id,
-                    ..Default::default()
-                }
-                .into(),
-                ChannelInner::IsdbT {
-                    frequency,
-                    bandwidth_hz,
-                } => IsdbTChannel {
-                    frequency,
-                    bandwidth_hz,
-                    ..Default::default()
-                }
-                .into(),
-            }),
-            ..Default::default()
-        };
-
-        let client = self.client.clone();
-        let response = self.call(async move { client.tune(request).await })??;
+    async fn tune(&self, channel: Channel) -> anyhow::Result<()> {
+        let response = self
+            .client
+            .tune(TuneRequest {
+                tuner_id: self.tuner_id,
+                channel_name: channel.name,
+                channel: Some(match channel.inner {
+                    ChannelInner::IsdbS {
+                        frequency,
+                        stream_id,
+                    } => IsdbSChannel {
+                        frequency,
+                        stream_id,
+                        ..Default::default()
+                    }
+                    .into(),
+                    ChannelInner::IsdbT {
+                        frequency,
+                        bandwidth_hz,
+                    } => IsdbTChannel {
+                        frequency,
+                        bandwidth_hz,
+                        ..Default::default()
+                    }
+                    .into(),
+                }),
+                ..Default::default()
+            })
+            .await?;
         let tuner_id = response.into_owned().tuner_id;
 
         info!(tuner_id, "Tuned a remote tuner");
@@ -208,24 +159,18 @@ impl Read for RemoteTunerReader {
     }
 }
 
-/// Messages are encoded as binary protobuf, which the Connect client does by
-/// default. Compression is negotiated away as a broadcast stream is compressed
-/// already, and deflating it again would only burn CPU on the tuner.
-fn client_config(uri: Uri) -> ClientConfig {
-    ClientConfig::new(uri)
-        .with_compression(CompressionRegistry::new())
-        .with_compression_policy(CompressionPolicy::disabled())
-}
-
 fn parse_address(address: &str) -> anyhow::Result<Uri> {
-    let address = match address.contains("://") {
-        true => address.to_string(),
-        _ => format!("http://{address}"),
-    };
-
-    address
+    let uri: Uri = address
         .parse()
-        .with_context(|| format!("`{address}` is not a valid tuner address"))
+        .with_context(|| format!("`{address}` is not a valid tuner address"))?;
+
+    if uri.scheme().is_none() {
+        bail!(
+            "`{address}` is not a fully qualified tuner address, such as `http://tuner.local:3002`"
+        );
+    }
+
+    Ok(uri)
 }
 
 #[cfg(test)]
@@ -233,7 +178,7 @@ mod tests {
     use std::io::Cursor;
     use std::net::Ipv4Addr;
 
-    use tokio::net::TcpListener;
+    use connectrpc::server::Server;
 
     use super::*;
     use crate::rpc::tuner::ChibitvTunerServiceImpl;
@@ -243,12 +188,13 @@ mod tests {
         tuned: Arc<Mutex<Vec<ChannelInner>>>,
     }
 
+    #[async_trait]
     impl Tuner for FakeTuner {
-        fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+        async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
             Ok(Box::new(Cursor::new(b"a raw stream".to_vec())))
         }
 
-        fn tune(&self, channel: Channel) -> anyhow::Result<()> {
+        async fn tune(&self, channel: Channel) -> anyhow::Result<()> {
             self.tuned.lock().unwrap().push(channel.inner);
 
             Ok(())
@@ -266,31 +212,29 @@ mod tests {
             },
         );
 
-        let router = Arc::new(ChibitvTunerServiceImpl::new(Arc::new(tuners)))
-            .register(connectrpc::Router::new())
-            .into_axum_router();
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, router).await });
+        let router = ChibitvTunerServiceImpl::new(Arc::new(tuners)).register(Default::default());
+        let server = Server::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = server.local_addr().unwrap();
+        tokio::spawn(async move { server.serve(router).await });
 
-        // The tuner API blocks, so it cannot be driven from the runtime that
-        // runs the server under test.
-        let stream = tokio::task::spawn_blocking(move || {
-            let tuner = RemoteTuner::new(&address.to_string(), None)?;
-
-            tuner.tune(Channel {
+        let tuner = RemoteTuner::new(&format!("http://{address}"), None).unwrap();
+        tuner
+            .tune(Channel {
                 id: 3,
                 name: "Fake".to_string(),
                 inner: ChannelInner::IsdbT {
                     frequency: 515_142_857,
                     bandwidth_hz: 6_000_000,
                 },
-            })?;
+            })
+            .await
+            .unwrap();
+        let mut input = tuner.open().await.unwrap();
 
+        // Reading a tuner blocks, as every demuxer does it on a thread of its own.
+        let stream = tokio::task::spawn_blocking(move || {
             let mut stream = Vec::new();
-            tuner.open()?.read_to_end(&mut stream)?;
-
-            anyhow::Ok(stream)
+            input.read_to_end(&mut stream).map(|_| stream)
         })
         .await
         .unwrap()
@@ -307,22 +251,11 @@ mod tests {
     }
 
     #[test]
-    fn transfers_binary_messages_without_compressing_them() {
-        let config = client_config(Uri::from_static("http://tuner.local:3002"));
-
-        assert_eq!(config.codec_format(), connectrpc::CodecFormat::Proto);
-        assert!(config.compression().accept_encoding_header().is_empty());
-    }
-
-    #[test]
-    fn assumes_http_for_an_address_without_a_scheme() {
-        assert_eq!(
-            parse_address("tuner.local:3002").unwrap(),
-            Uri::from_static("http://tuner.local:3002"),
-        );
+    fn rejects_an_address_without_a_scheme() {
         assert_eq!(
             parse_address("http://tuner.local:3002").unwrap(),
             Uri::from_static("http://tuner.local:3002"),
         );
+        assert!(parse_address("tuner.local:3002").is_err());
     }
 }

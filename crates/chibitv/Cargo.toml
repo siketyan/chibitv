@@ -11,13 +11,14 @@ chibitv_b60 = { path = "../chibitv_b60" }
 chibitv_b61 = { path = "../chibitv_b61" }
 
 anyhow = "1.0.103"
+async-trait = "0.1.90"
 axum = "0.8.9"
 bitstream-io = "4.10.0"
 buffa = "0.8.1"
 bytes = "1.12.0"
 chrono = "0.4.45"
 clap = { version = "4.6.1", features = ["derive"] }
-connectrpc = { version = "0.8.1", features = ["axum", "client"] }
+connectrpc = { version = "0.8.1", features = ["axum", "client", "server"] }
 cros-codecs = "0.0.6"
 hex = "0.4.3"
 http = "1.3.1"

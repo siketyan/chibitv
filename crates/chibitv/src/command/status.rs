@@ -52,10 +52,10 @@ pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     info!("Tuning to the channel: {:?}", channel);
 
-    tuner.tune(channel.clone())?;
+    tuner.tune(channel.clone()).await?;
 
     let descrambler = B25Descrambler::init(PcscCasModule::open_shared()?)?;
-    let mut demux = M2tsDemuxer::new(tuner.open()?, descrambler);
+    let mut demux = M2tsDemuxer::new(tuner.open().await?, descrambler);
     let mut state = StatusState::default();
 
     let deadline = Instant::now() + Duration::from_secs(options.timeout);

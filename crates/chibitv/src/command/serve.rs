@@ -66,7 +66,9 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
             .and_then(|channel| channel.services.first())
             .map(|service| service.id)
             .unwrap_or_default();
-        stream.set_channel(default_service_id, default_channel)?;
+        stream
+            .set_channel(default_service_id, default_channel)
+            .await?;
         streams.add_stream(0, stream);
 
         RwLock::new(streams)

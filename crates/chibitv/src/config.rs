@@ -67,9 +67,8 @@ pub enum TunerConfig {
         frontend_num: u8,
     },
     Remote {
-        /// Address of a chibitv instance running in tuner mode, such as
-        /// `http://tuner.local:3002`. The `http://` scheme is assumed when the
-        /// address has none.
+        /// Fully qualified address of a chibitv instance running in tuner
+        /// mode, such as `http://tuner.local:3002`.
         address: String,
 
         /// Tuner to use on that instance. Any available tuner is used when

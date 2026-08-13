@@ -77,11 +77,14 @@ impl Workspace {
         Some((service, event))
     }
 
-    pub fn set_channel(&self, stream_id: u32, service_id: u16) -> Result<(), WorkspaceError> {
-        let streams = self.streams.read().unwrap();
-        let Some(stream) = streams.get_stream(stream_id) else {
-            return Err(WorkspaceError::StreamNotFound);
-        };
+    pub async fn set_channel(&self, stream_id: u32, service_id: u16) -> Result<(), WorkspaceError> {
+        // The lock cannot be held while tuning, which is asynchronous.
+        let stream = self
+            .streams
+            .read()
+            .unwrap()
+            .get_stream(stream_id)
+            .ok_or(WorkspaceError::StreamNotFound)?;
 
         let service = self
             .registry
@@ -101,6 +104,7 @@ impl Workspace {
 
         stream
             .set_channel(service_id, channel)
+            .await
             .map_err(WorkspaceError::Internal)
     }
 

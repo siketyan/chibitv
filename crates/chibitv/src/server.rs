@@ -6,19 +6,11 @@ use tokio::net::TcpListener;
 use tracing::info;
 
 use crate::rpc::ChibitvServiceImpl;
-use crate::rpc::tuner::ChibitvTunerServiceImpl;
-use crate::tuner::Tuners;
 use crate::workspace::Workspace;
 
 pub async fn serve(addr: SocketAddr, state: Arc<Workspace>) -> anyhow::Result<()> {
-    serve_router(addr, app(state)).await
-}
+    let router = app(state);
 
-pub async fn serve_tuner(addr: SocketAddr, tuners: Arc<Tuners>) -> anyhow::Result<()> {
-    serve_router(addr, tuner_app(tuners)).await
-}
-
-async fn serve_router(addr: SocketAddr, router: Router) -> anyhow::Result<()> {
     let listener = TcpListener::bind(&addr).await?;
 
     info!("Listening on http://{}", &addr);
@@ -30,12 +22,6 @@ async fn serve_router(addr: SocketAddr, router: Router) -> anyhow::Result<()> {
 
 fn app(state: Arc<Workspace>) -> Router {
     ChibitvServiceImpl::new(state)
-        .register(connectrpc::Router::new())
-        .into_axum_router()
-}
-
-fn tuner_app(tuners: Arc<Tuners>) -> Router {
-    ChibitvTunerServiceImpl::new(tuners)
         .register(connectrpc::Router::new())
         .into_axum_router()
 }

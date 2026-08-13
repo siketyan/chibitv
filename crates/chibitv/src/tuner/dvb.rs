@@ -5,6 +5,7 @@ use std::ptr::{null, null_mut};
 use std::time::Duration;
 
 use anyhow::bail;
+use async_trait::async_trait;
 use dvbv5_sys::dvb_dev_type::{DVB_DEVICE_DEMUX, DVB_DEVICE_DVR, DVB_DEVICE_FRONTEND};
 use dvbv5_sys::{
     DTV_BANDWIDTH_HZ, DTV_FREQUENCY, DTV_GUARD_INTERVAL, DTV_ISDBT_LAYER_ENABLED,
@@ -176,12 +177,21 @@ impl DvbTuner {
     }
 }
 
+#[async_trait]
 impl Tuner for DvbTuner {
-    fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+    async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
         Ok(Box::new(self.dev.open_dvr()?))
     }
 
-    fn tune(&self, channel: Channel) -> anyhow::Result<()> {
+    async fn tune(&self, channel: Channel) -> anyhow::Result<()> {
+        // Waiting for the frontend to lock takes seconds, which would stall
+        // every other task on this worker thread.
+        tokio::task::block_in_place(|| self.tune_blocking(channel))
+    }
+}
+
+impl DvbTuner {
+    fn tune_blocking(&self, channel: Channel) -> anyhow::Result<()> {
         unsafe {
             let p = self.dev.fe_parms;
 

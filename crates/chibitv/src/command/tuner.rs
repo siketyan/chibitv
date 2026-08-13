@@ -1,10 +1,13 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use anyhow::bail;
+use anyhow::{anyhow, bail};
 use clap::Parser;
+use connectrpc::Router;
+use connectrpc::server::Server;
 
 use crate::config::Config;
+use crate::rpc::tuner::ChibitvTunerServiceImpl;
 use crate::tuner::Tuners;
 
 #[derive(Clone, Debug, Parser)]
@@ -22,5 +25,9 @@ pub async fn tuner(options: &Options, config: &Config) -> anyhow::Result<()> {
     let tuners = Arc::new(Tuners::from_config(&config.tuners)?);
     let address = options.address.unwrap_or(config.tuner_server.address);
 
-    crate::server::serve_tuner(address, tuners).await
+    // Only the tuner service is served here, so it needs no HTTP framework.
+    Server::new(ChibitvTunerServiceImpl::new(tuners).register(Router::new()))
+        .serve(address)
+        .await
+        .map_err(|error| anyhow!("Could not serve the tuner: {error}"))
 }

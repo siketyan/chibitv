@@ -8,16 +8,21 @@ use std::io::Read;
 use std::sync::Arc;
 
 use anyhow::bail;
+use async_trait::async_trait;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::warn;
 
 use crate::channel::Channel;
 use crate::config::TunerConfig;
 
+/// A tuner is opened and tuned asynchronously so that a remote one can talk to
+/// its instance, but the input it produces is read synchronously by the demuxer
+/// running on a thread of its own.
+#[async_trait]
 pub trait Tuner: Send + Sync {
-    fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>>;
+    async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>>;
 
-    fn tune(&self, _channel: Channel) -> anyhow::Result<()> {
+    async fn tune(&self, _channel: Channel) -> anyhow::Result<()> {
         warn!("This tuner does not support tuning.");
         Ok(())
     }
@@ -39,20 +44,20 @@ impl TunerLease {
         self.slot.id
     }
 
-    pub fn tune(&self, channel: Channel) -> anyhow::Result<()> {
-        self.slot.tuner.tune(channel)
+    pub async fn tune(&self, channel: Channel) -> anyhow::Result<()> {
+        self.slot.tuner.tune(channel).await
     }
 
-    pub fn open(self) -> anyhow::Result<TunerInput> {
-        let reader = self.open_reader()?;
+    pub async fn open(self) -> anyhow::Result<TunerInput> {
+        let reader = self.open_reader().await?;
         Ok(TunerInput {
             reader,
             _lease: self,
         })
     }
 
-    pub(crate) fn open_reader(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
-        self.slot.tuner.open()
+    pub(crate) async fn open_reader(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+        self.slot.tuner.open().await
     }
 }
 
@@ -163,22 +168,24 @@ mod tests {
 
     struct FakeTuner;
 
+    #[async_trait]
     impl Tuner for FakeTuner {
-        fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+        async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
             Ok(Box::new(Cursor::new(vec![1, 2, 3])))
         }
     }
 
     struct FailingTuner;
 
+    #[async_trait]
     impl Tuner for FailingTuner {
-        fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+        async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
             anyhow::bail!("Could not open tuner")
         }
     }
 
-    #[test]
-    fn keeps_tuner_locked_for_the_input_lifetime() {
+    #[tokio::test]
+    async fn keeps_tuner_locked_for_the_input_lifetime() {
         let mut tuners = Tuners::default();
         tuners.add_tuner(7, FakeTuner);
         assert_eq!(tuners.is_in_use(7), Some(false));
@@ -188,7 +195,7 @@ mod tests {
         assert_eq!(tuners.is_in_use(7), Some(true));
         assert!(tuners.try_acquire_by_id(7).is_err());
 
-        let input = lease.open().unwrap();
+        let input = lease.open().await.unwrap();
         assert_eq!(tuners.is_in_use(7), Some(true));
 
         drop(input);
@@ -196,18 +203,18 @@ mod tests {
         assert!(tuners.try_acquire_by_id(7).is_ok());
     }
 
-    #[test]
-    fn keeps_tuner_locked_while_reopening_inputs_from_a_lease() {
+    #[tokio::test]
+    async fn keeps_tuner_locked_while_reopening_inputs_from_a_lease() {
         let mut tuners = Tuners::default();
         tuners.add_tuner(7, FakeTuner);
 
         let lease = tuners.try_acquire_by_id(7).unwrap();
-        let input = lease.open_reader().unwrap();
+        let input = lease.open_reader().await.unwrap();
         assert_eq!(tuners.is_in_use(7), Some(true));
 
         drop(input);
         assert_eq!(tuners.is_in_use(7), Some(true));
-        assert!(lease.open_reader().is_ok());
+        assert!(lease.open_reader().await.is_ok());
 
         drop(lease);
         assert_eq!(tuners.is_in_use(7), Some(false));
@@ -226,12 +233,12 @@ mod tests {
         assert_eq!(second.id(), 1);
     }
 
-    #[test]
-    fn releases_tuner_when_open_fails() {
+    #[tokio::test]
+    async fn releases_tuner_when_open_fails() {
         let mut tuners = Tuners::default();
         tuners.add_tuner(0, FailingTuner);
 
-        assert!(tuners.try_acquire_by_id(0).unwrap().open().is_err());
+        assert!(tuners.try_acquire_by_id(0).unwrap().open().await.is_err());
         assert_eq!(tuners.is_in_use(0), Some(false));
     }
 }

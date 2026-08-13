@@ -136,9 +136,13 @@ impl ChibitvService for ChibitvServiceImpl {
             .collect::<Vec<_>>();
         let registry = self.workspace.registry_arc();
         let (tx, rx) = tokio::sync::mpsc::channel(16);
+        // Crawling reads a tuner, which blocks, so it runs on a thread of its
+        // own and drives the asynchronous tuner calls through the handle.
+        let handle = tokio::runtime::Handle::current();
 
         std::thread::spawn(move || {
             let result = crawler.crawl(
+                &handle,
                 &channels,
                 registry,
                 Duration::from_secs(u64::from(dwell_time_seconds)),
@@ -185,6 +189,7 @@ impl ChibitvService for ChibitvServiceImpl {
                 .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
             self.workspace
                 .set_channel(request.stream_id, service_id)
+                .await
                 .map_err(workspace_error)?;
         }
 

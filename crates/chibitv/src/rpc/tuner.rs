@@ -7,7 +7,7 @@ use connectrpc::{
     ConnectError, RequestContext, Response, Router, ServiceRequest, ServiceResult, ServiceStream,
 };
 use tokio_stream::wrappers::ReceiverStream;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use crate::channel::{Channel, ChannelInner};
 use crate::proto::chibitv::v1::*;
@@ -124,17 +124,10 @@ impl ChibitvTunerService for ChibitvTunerServiceImpl {
 
         info!(tuner_id, channel = %channel.name, "Tuning for a client");
 
-        // Tuning waits for the frontend to lock, which takes seconds.
-        let lease = tokio::task::spawn_blocking(move || lease.tune(channel).map(|_| lease))
-            .await
-            .map_err(|error| {
-                error!(%error, "Tuning panicked");
-                ConnectError::internal("tuning failed")
-            })?
-            .map_err(|error| {
-                warn!(tuner_id, %error, "Could not tune for a client");
-                ConnectError::unavailable(error.to_string())
-            })?;
+        lease.tune(channel).await.map_err(|error| {
+            warn!(tuner_id, %error, "Could not tune for a client");
+            ConnectError::unavailable(error.to_string())
+        })?;
 
         self.reserve(lease);
 
@@ -151,18 +144,14 @@ impl ChibitvTunerService for ChibitvTunerServiceImpl {
     ) -> ServiceResult<ServiceStream<TunerStreamResponse>> {
         let lease = self.lease(request.tuner_id).await?;
         let tuner_id = lease.id();
+        let mut input = lease.open().await.map_err(|error| {
+            warn!(tuner_id, %error, "Could not open a tuner for a client");
+            ConnectError::unavailable(error.to_string())
+        })?;
         let (tx, rx) = tokio::sync::mpsc::channel(CHUNK_CAPACITY);
 
+        // Reading a tuner blocks, so it cannot be done on the runtime.
         std::thread::spawn(move || {
-            let mut input = match lease.open() {
-                Ok(input) => input,
-                Err(error) => {
-                    warn!(tuner_id, %error, "Could not open a tuner for a client");
-                    let _ = tx.blocking_send(Err(ConnectError::unavailable(error.to_string())));
-                    return;
-                }
-            };
-
             info!(tuner_id, "Streaming a tuner to a client");
 
             let mut buffer = vec![0; CHUNK_SIZE];
@@ -219,18 +208,21 @@ fn requested_channel(request: &ServiceRequest<'_, TuneRequest>) -> Result<Channe
 #[cfg(test)]
 mod tests {
     use std::io::Cursor;
+    use std::net::Ipv4Addr;
 
-    use axum::body::{Body, to_bytes};
-    use axum::http::{Request, StatusCode, header};
-    use tower::ServiceExt;
+    use async_trait::async_trait;
+    use connectrpc::ErrorCode;
+    use connectrpc::client::{ClientConfig, HttpClient};
+    use connectrpc::server::Server;
 
     use super::*;
     use crate::tuner::Tuner;
 
     struct FakeTuner;
 
+    #[async_trait]
     impl Tuner for FakeTuner {
-        fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
+        async fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>> {
             Ok(Box::new(Cursor::new(b"a raw stream".to_vec())))
         }
     }
@@ -242,78 +234,61 @@ mod tests {
         Arc::new(tuners)
     }
 
-    fn app(service: &Arc<ChibitvTunerServiceImpl>) -> axum::Router {
-        Arc::clone(service)
-            .register(connectrpc::Router::new())
-            .into_axum_router()
+    async fn serve(tuners: Arc<Tuners>) -> ChibitvTunerServiceClient<HttpClient> {
+        let router = ChibitvTunerServiceImpl::new(tuners).register(Router::new());
+        let server = Server::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+        let address = server.local_addr().unwrap();
+        tokio::spawn(async move { server.serve(router).await });
+
+        ChibitvTunerServiceClient::new(
+            HttpClient::plaintext(),
+            ClientConfig::new(format!("http://{address}").parse().unwrap()),
+        )
     }
 
     #[tokio::test]
     async fn keeps_the_tuner_reserved_after_tuning_it() {
         let tuners = tuners();
-        let service = Arc::new(ChibitvTunerServiceImpl::new(Arc::clone(&tuners)));
+        let client = serve(Arc::clone(&tuners)).await;
 
-        let response = app(&service)
-            .oneshot(
-                Request::post("/chibitv.v1.ChibitvTunerService/Tune")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header("connect-protocol-version", "1")
-                    .body(Body::from(r#"{"isdbT":{"frequency":515142857}}"#))
-                    .unwrap(),
-            )
+        let response = client
+            .tune(TuneRequest {
+                channel: Some(
+                    IsdbTChannel {
+                        frequency: 515_142_857,
+                        bandwidth_hz: 6_000_000,
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
+                ..Default::default()
+            })
             .await
             .unwrap();
 
-        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.into_owned().tuner_id, 0);
         assert_eq!(tuners.is_in_use(0), Some(true));
     }
 
     #[tokio::test]
     async fn rejects_tuning_without_a_channel() {
-        let service = Arc::new(ChibitvTunerServiceImpl::new(tuners()));
+        let client = serve(tuners()).await;
 
-        let response = app(&service)
-            .oneshot(
-                Request::post("/chibitv.v1.ChibitvTunerService/Tune")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header("connect-protocol-version", "1")
-                    .body(Body::from("{}"))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let error = client.tune(TuneRequest::default()).await.unwrap_err();
 
-        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    }
-
-    /// Wrap a message in the envelope a Connect stream is framed with.
-    fn envelope(message: &str) -> Vec<u8> {
-        let mut body = vec![0];
-        body.extend_from_slice(&(message.len() as u32).to_be_bytes());
-        body.extend_from_slice(message.as_bytes());
-
-        body
+        assert_eq!(error.code, ErrorCode::InvalidArgument);
     }
 
     #[tokio::test]
     async fn streams_the_raw_tuner_output() {
-        let service = Arc::new(ChibitvTunerServiceImpl::new(tuners()));
+        let client = serve(tuners()).await;
 
-        let response = app(&service)
-            .oneshot(
-                Request::post("/chibitv.v1.ChibitvTunerService/Stream")
-                    .header(header::CONTENT_TYPE, "application/connect+json")
-                    .header("connect-protocol-version", "1")
-                    .body(Body::from(envelope("{}")))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
+        let mut stream = client.stream(TunerStreamRequest::default()).await.unwrap();
+        let mut received = Vec::new();
+        while let Some(message) = stream.message().await.unwrap() {
+            received.extend_from_slice(&message.to_owned_message().chunk);
+        }
 
-        assert_eq!(response.status(), StatusCode::OK);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body = String::from_utf8_lossy(&body);
-        // The chunk is base64 encoded by the Connect JSON codec.
-        assert!(body.contains("YSByYXcgc3RyZWFt"), "{body}");
+        assert_eq!(received, b"a raw stream");
     }
 }

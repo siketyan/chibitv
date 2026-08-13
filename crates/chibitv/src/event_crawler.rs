@@ -2,6 +2,7 @@ use std::io::BufReader;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use tokio::runtime::Handle;
 use tracing::{info, warn};
 
 use chibitv_b10::table::Table as B10Table;
@@ -45,6 +46,7 @@ impl EventCrawler {
 
     pub fn crawl(
         &self,
+        handle: &Handle,
         channels: &[Channel],
         registry: Arc<Registry>,
         dwell_time: Duration,
@@ -55,12 +57,12 @@ impl EventCrawler {
 
         for channel in channels {
             info!(channel_id = channel.id, channel = %channel.name, "Crawling events");
-            if let Err(error) = tuner.tune(channel.clone()) {
+            if let Err(error) = handle.block_on(tuner.tune(channel.clone())) {
                 warn!(channel_id = channel.id, %error, "Could not tune while crawling events");
                 continue;
             }
 
-            let reader = match tuner.open_reader() {
+            let reader = match handle.block_on(tuner.open_reader()) {
                 Ok(reader) => reader,
                 Err(error) => {
                     warn!(channel_id = channel.id, %error, "Could not open tuner input");
