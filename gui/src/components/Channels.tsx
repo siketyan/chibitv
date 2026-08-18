@@ -1,11 +1,17 @@
 import { CheckIcon } from "@heroicons/react/24/outline";
-import { Disclosure, DisclosureGroup, ListBox, Spinner } from "@heroui/react";
+import { Disclosure, DisclosureGroup, ListBox, Spinner, Tabs } from "@heroui/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { type JSX, useEffect, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
 import { useStream } from "../api/stream";
-import type { Service } from "../gen/chibitv/v1/chibitv_pb";
+import { type Channel, DeliverySystem, type Service } from "../gen/chibitv/v1/chibitv_pb";
+
+const DELIVERY_SYSTEMS: { id: DeliverySystem; label: string }[] = [
+  { id: DeliverySystem.ISDB_T, label: "Terrestrial" },
+  { id: DeliverySystem.ISDB_S, label: "BS 4K" },
+  { id: DeliverySystem.UNSPECIFIED, label: "Other" },
+];
 
 interface ChannelsProps {
   onServiceChange?: () => void;
@@ -14,6 +20,7 @@ interface ChannelsProps {
 export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
   const { state, updateService } = useStream();
   const [expandedChannelId, setExpandedChannelId] = useState<number>();
+  const [selectedDeliverySystem, setSelectedDeliverySystem] = useState<DeliverySystem>();
   const {
     data: services = [],
     isLoading: areServicesLoading,
@@ -39,6 +46,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
   });
   const serviceId = state?.service?.id;
   const currentChannelId = services.find((service) => service.id === serviceId)?.channelId;
+  const currentDeliverySystem = channels.find((channel) => channel.id === currentChannelId)?.deliverySystem;
   const servicesByChannel = new Map<number, Service[]>();
   for (const service of services) {
     const channelServices = servicesByChannel.get(service.channelId) ?? [];
@@ -51,6 +59,12 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
       setExpandedChannelId(currentChannelId);
     }
   }, [currentChannelId]);
+
+  useEffect(() => {
+    if (currentDeliverySystem !== undefined) {
+      setSelectedDeliverySystem(currentDeliverySystem);
+    }
+  }, [currentDeliverySystem]);
 
   if (areServicesLoading || areChannelsLoading) {
     return (
@@ -65,11 +79,17 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     return <p className="p-3 text-sm text-danger">Could not load channels.</p>;
   }
 
-  if (channels.length === 0) {
+  const groups = DELIVERY_SYSTEMS.flatMap(({ id, label }) => {
+    const groupChannels = channels.filter((channel) => channel.deliverySystem === id);
+
+    return groupChannels.length === 0 ? [] : [{ id, label, channels: groupChannels }];
+  });
+
+  if (groups.length === 0) {
     return <p className="p-3 text-sm text-muted">No channels are available.</p>;
   }
 
-  return (
+  const renderChannels = (groupChannels: Channel[]) => (
     <DisclosureGroup
       className="gap-1"
       expandedKeys={expandedChannelId === undefined ? [] : [expandedChannelId]}
@@ -89,7 +109,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         }
       }}
     >
-      {channels.map((channel) => {
+      {groupChannels.map((channel) => {
         const channelServices = servicesByChannel.get(channel.id) ?? [];
 
         return (
@@ -149,5 +169,31 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         );
       })}
     </DisclosureGroup>
+  );
+
+  const selectedKey = groups.find((group) => group.id === selectedDeliverySystem)?.id ?? groups[0].id;
+
+  return (
+    <Tabs
+      className="min-h-0 flex-1"
+      selectedKey={selectedKey}
+      onSelectionChange={(key) => setSelectedDeliverySystem(Number(key) as DeliverySystem)}
+    >
+      <Tabs.ListContainer className="shrink-0">
+        <Tabs.List aria-label="Broadcast waves">
+          {groups.map((group) => (
+            <Tabs.Tab key={group.id} id={group.id}>
+              <Tabs.Indicator />
+              {group.label}
+            </Tabs.Tab>
+          ))}
+        </Tabs.List>
+      </Tabs.ListContainer>
+      {groups.map((group) => (
+        <Tabs.Panel key={group.id} id={group.id} className="min-h-0 flex-1 overflow-y-auto p-0">
+          {renderChannels(group.channels)}
+        </Tabs.Panel>
+      ))}
+    </Tabs>
   );
 }

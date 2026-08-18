@@ -8,6 +8,7 @@ use connectrpc::{
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::ReceiverStream;
 
+use crate::channel::ChannelInner;
 use crate::event_crawler::CrawledEvent;
 use crate::proto::chibitv::v1::*;
 use crate::registry;
@@ -41,6 +42,7 @@ impl ChibitvService for ChibitvServiceImpl {
             .map(|(id, channel)| Channel {
                 id: id as u32,
                 name: channel.name.to_string(),
+                delivery_system: delivery_system(&channel.inner).into(),
                 ..Default::default()
             })
             .collect();
@@ -254,6 +256,13 @@ fn fmp4_response(data: bytes::Bytes) -> StreamResponse {
     StreamResponse {
         payload: Some(stream_response::Payload::Fmp4(data.to_vec())),
         ..Default::default()
+    }
+}
+
+fn delivery_system(inner: &ChannelInner) -> DeliverySystem {
+    match inner {
+        ChannelInner::IsdbT { .. } => DeliverySystem::IsdbT,
+        ChannelInner::IsdbS { .. } => DeliverySystem::IsdbS,
     }
 }
 
