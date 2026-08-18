@@ -89,11 +89,11 @@ jobs:
       contents: read
       id-token: write # authenticates to the tailnet with workload identity federation
     env:
-      DEPLOY_HOST: chibitv.lynx-cod.ts.net
-      DEPLOY_USER: siketyan
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
       # The compose file describes the tuners of the host, so it lives there
       # instead of in this repository.
-      DEPLOY_DIRECTORY: /home/siketyan/.ghr/github.com/siketyan/chibitv
+      DEPLOY_DIRECTORY: ${{ vars.DEPLOY_DIRECTORY }}
     steps:
       - name: Join the tailnet
         uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
