@@ -92,7 +92,9 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
   const renderChannels = (groupChannels: Channel[]) => (
     <DisclosureGroup
       className="gap-1"
-      expandedKeys={expandedChannelId === undefined ? [] : [expandedChannelId]}
+      // Keys must be strings: react-aria's Disclosure drops a falsy id (`id ||= defaultId`),
+      // so the first channel (id 0) would never match its numeric key.
+      expandedKeys={expandedChannelId === undefined ? [] : [String(expandedChannelId)]}
       onExpandedChange={(keys) => {
         const [key] = keys;
         if (key === undefined) {
@@ -113,7 +115,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         const channelServices = servicesByChannel.get(channel.id) ?? [];
 
         return (
-          <Disclosure key={channel.id} id={channel.id} isDisabled={channelServices.length === 0 || isPending}>
+          <Disclosure key={channel.id} id={String(channel.id)} isDisabled={channelServices.length === 0 || isPending}>
             <Disclosure.Heading>
               <Disclosure.Trigger className="flex min-h-12 w-full flex-row items-center gap-2 rounded-xl px-3 text-sm font-semibold data-[expanded=true]:bg-accent-soft data-[expanded=true]:text-accent-soft-foreground">
                 <span className="min-w-0 flex-1 truncate text-start">{channel.name}</span>
@@ -177,7 +179,24 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     <Tabs
       className="min-h-0 flex-1"
       selectedKey={selectedKey}
-      onSelectionChange={(key) => setSelectedDeliverySystem(Number(key) as DeliverySystem)}
+      onSelectionChange={(key) => {
+        const deliverySystem = Number(key) as DeliverySystem;
+        setSelectedDeliverySystem(deliverySystem);
+
+        // Tune to the first service on the wave when the current service is on another wave.
+        if (deliverySystem === currentDeliverySystem || isPending) {
+          return;
+        }
+
+        const group = groups.find((group) => group.id === deliverySystem);
+        const firstService = group?.channels
+          .map((channel) => servicesByChannel.get(channel.id)?.[0])
+          .find((service) => service !== undefined);
+        if (firstService && firstService.id !== serviceId) {
+          setExpandedChannelId(firstService.channelId);
+          mutate(firstService.id);
+        }
+      }}
     >
       <Tabs.ListContainer className="shrink-0">
         <Tabs.List aria-label="Broadcast waves">
