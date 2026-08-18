@@ -1,11 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::io::BufReader;
-use std::ops::DerefMut;
-use std::sync::{Arc, Mutex, MutexGuard, RwLock};
-use std::thread::JoinHandle;
+use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::time::Duration;
 
 use bytes::Bytes;
-use tokio::sync::broadcast::{Receiver, Sender, channel};
+use tokio::sync::broadcast::{Receiver, Sender, channel as broadcast_channel};
 use tracing::info;
 
 use chibitv_b25::B25Descrambler;
@@ -20,22 +19,30 @@ use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
 use crate::registry::Registry;
 use crate::remux::Remuxer;
 use crate::service_information::{ServiceInformationProcessor, Signal};
-use crate::tuner::{TunerInput, Tuners};
+use crate::tuner::{AcquireError, TunerLease, Tuners};
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
 const BROADCAST_CAPACITY: usize = 8192;
 
-type RemuxerHandle = (
-    JoinHandle<anyhow::Result<()>>,
-    tokio::sync::oneshot::Sender<()>,
-);
+/// How long a subscriber keeps waiting for a tuner to become free.
+///
+/// A session that just lost its last subscriber releases its tuner
+/// asynchronously (the remuxer thread has to notice the kill signal first), so
+/// a channel switch briefly sees every tuner in use.
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
+const ACQUIRE_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
-struct Fmp4ChannelWriter {
+pub enum SubscribeError {
+    TunerBusy,
+    Internal(anyhow::Error),
+}
+
+struct Fmp4SessionWriter {
     tx: Sender<Bytes>,
     init_segment: Arc<Mutex<Option<Bytes>>>,
 }
 
-impl WriteMp4Fragment for Fmp4ChannelWriter {
+impl WriteMp4Fragment for Fmp4SessionWriter {
     fn write_fragment(&mut self, data: Bytes) -> anyhow::Result<()> {
         let mut init_segment = self.init_segment.lock().unwrap();
         if init_segment.is_none() {
@@ -47,143 +54,34 @@ impl WriteMp4Fragment for Fmp4ChannelWriter {
     }
 }
 
-#[derive(Default)]
-pub struct StreamState {
-    handle: Option<RemuxerHandle>,
-    service_id: Option<u16>,
-    event_id: Option<u16>,
-}
-
-pub struct Stream {
-    registry: Arc<Registry>,
-    tuners: Arc<Tuners>,
-    cas: Arc<PcscCasModule>,
-    b61_descrambler: Option<Descrambler>,
-    state: Arc<RwLock<StreamState>>,
+/// A single tuned service, shared by every client streaming it.
+///
+/// The tuner stays occupied as long as at least one `Arc` of the session is
+/// alive; dropping the last one signals the remuxer thread to stop, which
+/// closes the tuner device and releases the lease.
+pub struct StreamSession {
+    service_id: u16,
+    event_id: Arc<RwLock<Option<u16>>>,
     fmp4_tx: Sender<Bytes>,
     fmp4_init_segment: Arc<Mutex<Option<Bytes>>>,
     signal_tx: Sender<Signal>,
+    kill_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
-impl Stream {
-    pub fn open(
-        registry: Arc<Registry>,
-        tuners: Arc<Tuners>,
-        cas: Arc<PcscCasModule>,
-        b61_descrambler: Option<Descrambler>,
-    ) -> anyhow::Result<Self> {
-        let (fmp4_tx, _) = channel::<Bytes>(BROADCAST_CAPACITY);
-        let fmp4_init_segment = Arc::new(Mutex::new(None));
-        let (signal_tx, mut signal_rx) = channel::<Signal>(16);
-        let state = Arc::new(RwLock::new(StreamState::default()));
-
-        {
-            let state = Arc::clone(&state);
-
-            tokio::spawn(async move {
-                loop {
-                    let Ok(signal) = signal_rx.recv().await else {
-                        continue;
-                    };
-
-                    match signal {
-                        Signal::EventChanged { event_id, .. } => {
-                            info!(event_id, "Event changed");
-                            state.write().unwrap().event_id = Some(event_id);
-                        }
-                        Signal::ChannelChanged { .. } => {}
-                    }
-                }
-            });
-        }
-
-        Ok(Self {
-            registry,
-            tuners,
-            cas,
-            b61_descrambler,
-            state,
-            fmp4_tx,
-            fmp4_init_segment,
-            signal_tx,
-        })
+impl StreamSession {
+    pub fn service_id(&self) -> u16 {
+        self.service_id
     }
 
-    fn fmp4_writer(&self) -> Fmp4ChannelWriter {
-        Fmp4ChannelWriter {
-            tx: self.fmp4_tx.clone(),
-            init_segment: Arc::clone(&self.fmp4_init_segment),
-        }
-    }
-
-    fn spawn_remuxer<D>(&self, demux: D, channel_id: usize) -> anyhow::Result<RemuxerHandle>
-    where
-        D: Demux + Send + 'static,
-    {
-        let fmp4_writer = self.fmp4_writer();
-        let mux = FragmentedMp4Muxer::new(fmp4_writer);
-        let mut remuxer = Remuxer::new(demux, mux)?;
-        let mut service_information = ServiceInformationProcessor::new(
-            channel_id,
-            Some(Arc::clone(&self.registry)),
-            Some(self.signal_tx.clone()),
-        );
-
-        let (kill_tx, kill_rx) = tokio::sync::oneshot::channel();
-        let handle = std::thread::spawn(move || {
-            let mut kill_rx = kill_rx;
-            loop {
-                if kill_rx.try_recv().is_ok() {
-                    break;
-                }
-
-                let Some(signaling) = remuxer.next()? else {
-                    break;
-                };
-                service_information.process(signaling)?;
-            }
-
-            remuxer.finish()
-        });
-
-        Ok((handle, kill_tx))
-    }
-
-    fn start_remuxer(
-        &self,
-        service_id: u16,
-        channel: &Channel,
-        reader: TunerInput,
-    ) -> anyhow::Result<()> {
-        let handle = match &channel.inner {
-            ChannelInner::IsdbS { .. } => {
-                let descrambler = self
-                    .b61_descrambler
-                    .clone()
-                    .ok_or_else(|| anyhow::anyhow!("B61 descrambler is not configured"))?;
-                let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
-                self.spawn_remuxer(MmtDemuxer::new(reader, descrambler), channel.id)?
-            }
-            ChannelInner::IsdbT { .. } => {
-                let descrambler = B25Descrambler::init(self.cas.clone())?;
-                let demux = if service_id == 0 {
-                    M2tsDemuxer::new(reader, descrambler)
-                } else {
-                    M2tsDemuxer::new_for_service(reader, descrambler, service_id)
-                };
-                self.spawn_remuxer(demux, channel.id)?
-            }
-        };
-
-        self.state.write().unwrap().handle = Some(handle);
-
-        Ok(())
+    pub fn event_id(&self) -> Option<u16> {
+        *self.event_id.read().unwrap()
     }
 
     pub fn subscribe_fmp4(&self) -> (Option<Bytes>, Receiver<Bytes>) {
         let init_segment = self.fmp4_init_segment.lock().unwrap();
         let rx = self.fmp4_tx.subscribe();
         info!(
+            service_id = self.service_id,
             receivers = self.fmp4_tx.receiver_count(),
             "fMP4 stream client subscribed"
         );
@@ -193,57 +91,212 @@ impl Stream {
     pub fn subscribe_signal(&self) -> Receiver<Signal> {
         self.signal_tx.subscribe()
     }
+}
 
-    pub fn set_channel(&self, service_id: u16, channel: &Channel) -> anyhow::Result<()> {
-        let state = std::mem::take(self.state.write().unwrap().deref_mut());
-
-        if let Some((handle, kill_tx)) = state.handle {
-            // Kill the current session.
+impl Drop for StreamSession {
+    fn drop(&mut self) {
+        if let Some(kill_tx) = self.kill_tx.take() {
             let _ = kill_tx.send(());
-            handle.join().unwrap()?;
-        };
+        }
 
-        let tuner = self.tuners.try_acquire()?;
-        info!(tuner_id = tuner.id(), "Acquired tuner");
-        tuner.tune(channel.clone())?;
-        let reader = tuner.open()?;
-
-        *self.fmp4_init_segment.lock().unwrap() = None;
-        self.start_remuxer(service_id, channel, reader)?;
-
-        let mut state = self.state.write().unwrap();
-        state.service_id = Some(service_id);
-        state.event_id = None;
-        drop(state);
-        self.signal_tx.send(Signal::ChannelChanged { service_id })?;
-
-        Ok(())
-    }
-
-    pub fn get_service_id(&self) -> Option<u16> {
-        self.state.read().unwrap().service_id
-    }
-
-    pub fn get_event_id(&self) -> Option<u16> {
-        self.state.read().unwrap().event_id
+        info!(service_id = self.service_id, "Stream session stopped");
     }
 }
 
-#[derive(Default)]
-pub struct Streams {
-    streams: BTreeMap<u32, Mutex<Stream>>,
+/// Starts and shares [`StreamSession`]s, one per requested service.
+pub struct StreamManager {
+    registry: Arc<Registry>,
+    tuners: Arc<Tuners>,
+    cas: Arc<PcscCasModule>,
+    b61_descrambler: Option<Descrambler>,
+    sessions: tokio::sync::Mutex<HashMap<u16, Weak<StreamSession>>>,
 }
 
-impl Streams {
-    pub fn new() -> Self {
-        Self::default()
+impl StreamManager {
+    pub fn new(
+        registry: Arc<Registry>,
+        tuners: Arc<Tuners>,
+        cas: Arc<PcscCasModule>,
+        b61_descrambler: Option<Descrambler>,
+    ) -> Self {
+        Self {
+            registry,
+            tuners,
+            cas,
+            b61_descrambler,
+            sessions: tokio::sync::Mutex::new(HashMap::new()),
+        }
     }
 
-    pub fn get_stream(&self, stream_id: u32) -> Option<MutexGuard<'_, Stream>> {
-        self.streams.get(&stream_id)?.lock().ok()
+    /// Returns the running session for the service, starting one on a free
+    /// tuner when nobody is streaming it yet.
+    pub async fn subscribe(
+        &self,
+        service_id: u16,
+        channel: &Channel,
+    ) -> Result<Arc<StreamSession>, SubscribeError> {
+        let deadline = tokio::time::Instant::now() + ACQUIRE_TIMEOUT;
+
+        loop {
+            let mut sessions = self.sessions.lock().await;
+            if let Some(session) = sessions.get(&service_id).and_then(Weak::upgrade) {
+                return Ok(session);
+            }
+
+            // Tuning is blocking device I/O, so it runs off the async runtime.
+            // The sessions lock is held across it on purpose: concurrent
+            // requests for the same service must wait and share the session
+            // instead of racing for another tuner.
+            let starter = self.session_starter(service_id, channel);
+            let result = tokio::task::spawn_blocking(starter)
+                .await
+                .map_err(|error| SubscribeError::Internal(error.into()))?;
+
+            match result {
+                Ok(session) => {
+                    sessions.retain(|_, session| session.strong_count() > 0);
+                    sessions.insert(service_id, Arc::downgrade(&session));
+                    return Ok(session);
+                }
+                Err(SubscribeError::TunerBusy) if tokio::time::Instant::now() < deadline => {}
+                Err(error) => return Err(error),
+            }
+
+            drop(sessions);
+            tokio::time::sleep(ACQUIRE_RETRY_INTERVAL).await;
+        }
     }
 
-    pub fn add_stream(&mut self, stream_id: u32, stream: Stream) {
-        self.streams.insert(stream_id, Mutex::new(stream));
+    fn session_starter(
+        &self,
+        service_id: u16,
+        channel: &Channel,
+    ) -> impl FnOnce() -> Result<Arc<StreamSession>, SubscribeError> + Send + 'static {
+        let registry = Arc::clone(&self.registry);
+        let tuners = Arc::clone(&self.tuners);
+        let cas = Arc::clone(&self.cas);
+        let b61_descrambler = self.b61_descrambler.clone();
+        let channel = channel.clone();
+
+        move || {
+            let tuner = tuners.try_acquire().map_err(|error| match error {
+                AcquireError::Busy => SubscribeError::TunerBusy,
+                AcquireError::NotConfigured => SubscribeError::Internal(error.into()),
+            })?;
+            info!(tuner_id = tuner.id(), service_id, "Acquired tuner");
+
+            start_session(registry, cas, b61_descrambler, tuner, service_id, &channel)
+                .map_err(SubscribeError::Internal)
+        }
     }
+}
+
+fn start_session(
+    registry: Arc<Registry>,
+    cas: Arc<PcscCasModule>,
+    b61_descrambler: Option<Descrambler>,
+    tuner: TunerLease,
+    service_id: u16,
+    channel: &Channel,
+) -> anyhow::Result<Arc<StreamSession>> {
+    tuner.tune(channel.clone())?;
+    let reader = tuner.open()?;
+
+    let (fmp4_tx, _) = broadcast_channel::<Bytes>(BROADCAST_CAPACITY);
+    let fmp4_init_segment = Arc::new(Mutex::new(None));
+    let (signal_tx, _) = broadcast_channel::<Signal>(16);
+    let event_id = Arc::new(RwLock::new(None));
+
+    let kill_tx = match &channel.inner {
+        ChannelInner::IsdbS { .. } => {
+            let descrambler = b61_descrambler
+                .ok_or_else(|| anyhow::anyhow!("B61 descrambler is not configured"))?;
+            let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
+            spawn_remuxer(
+                MmtDemuxer::new(reader, descrambler),
+                channel.id,
+                registry,
+                &fmp4_tx,
+                &fmp4_init_segment,
+                &signal_tx,
+                &event_id,
+            )
+        }
+        ChannelInner::IsdbT { .. } => {
+            let descrambler = B25Descrambler::init(cas)?;
+            let demux = if service_id == 0 {
+                M2tsDemuxer::new(reader, descrambler)
+            } else {
+                M2tsDemuxer::new_for_service(reader, descrambler, service_id)
+            };
+            spawn_remuxer(
+                demux,
+                channel.id,
+                registry,
+                &fmp4_tx,
+                &fmp4_init_segment,
+                &signal_tx,
+                &event_id,
+            )
+        }
+    }?;
+
+    info!(service_id, channel = %channel.name, "Stream session started");
+
+    Ok(Arc::new(StreamSession {
+        service_id,
+        event_id,
+        fmp4_tx,
+        fmp4_init_segment,
+        signal_tx,
+        kill_tx: Some(kill_tx),
+    }))
+}
+
+fn spawn_remuxer<D>(
+    demux: D,
+    channel_id: usize,
+    registry: Arc<Registry>,
+    fmp4_tx: &Sender<Bytes>,
+    fmp4_init_segment: &Arc<Mutex<Option<Bytes>>>,
+    signal_tx: &Sender<Signal>,
+    event_id: &Arc<RwLock<Option<u16>>>,
+) -> anyhow::Result<tokio::sync::oneshot::Sender<()>>
+where
+    D: Demux + Send + 'static,
+{
+    let fmp4_writer = Fmp4SessionWriter {
+        tx: fmp4_tx.clone(),
+        init_segment: Arc::clone(fmp4_init_segment),
+    };
+    let mux = FragmentedMp4Muxer::new(fmp4_writer);
+    let mut remuxer = Remuxer::new(demux, mux)?;
+    let mut service_information =
+        ServiceInformationProcessor::new(channel_id, Some(registry), Some(signal_tx.clone()));
+
+    let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel();
+    let event_id = Arc::clone(event_id);
+    std::thread::spawn(move || {
+        let result = (|| -> anyhow::Result<()> {
+            loop {
+                if kill_rx.try_recv().is_ok() {
+                    break;
+                }
+
+                let Some(signaling) = remuxer.next()? else {
+                    break;
+                };
+                service_information.process(signaling)?;
+                *event_id.write().unwrap() = service_information.current_event_id();
+            }
+
+            remuxer.finish()
+        })();
+
+        if let Err(error) = result {
+            tracing::error!(channel_id, %error, "Stream session remuxer failed");
+        }
+    });
+
+    Ok(kill_tx)
 }

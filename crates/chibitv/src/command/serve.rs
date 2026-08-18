@@ -1,6 +1,5 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
-use anyhow::bail;
 use chibitv_b61::Descrambler;
 use clap::Parser;
 
@@ -9,7 +8,7 @@ use crate::channel::{Channel, ChannelInner};
 use crate::config::{ChannelConfig, Config};
 use crate::event_crawler::EventCrawler;
 use crate::registry::Registry;
-use crate::stream::{Stream, Streams};
+use crate::stream::StreamManager;
 use crate::tuner::Tuners;
 use crate::workspace::Workspace;
 
@@ -30,10 +29,6 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
             inner: (&channel.inner).into(),
         })
         .collect::<Vec<_>>();
-
-    let Some(default_channel) = channels.first() else {
-        bail!("No channels are defined in the config. At least one channel is required.");
-    };
 
     let cas = PcscCasModule::open_shared()?;
     let b61_descrambler = if channels
@@ -59,31 +54,20 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         tuners
     });
 
-    let streams = {
-        let stream = Stream::open(
-            registry.clone(),
-            Arc::clone(&tuners),
-            cas.clone(),
-            b61_descrambler,
-        )?;
-        let mut streams = Streams::new();
-
-        let default_service_id = config
-            .channels
-            .first()
-            .and_then(|channel| channel.services.first())
-            .map(|service| service.id)
-            .unwrap_or_default();
-        stream.set_channel(default_service_id, default_channel)?;
-        streams.add_stream(0, stream);
-
-        RwLock::new(streams)
-    };
+    // No channel is tuned yet: a tuner is occupied only while at least one
+    // client keeps a stream open.
+    let stream_manager = StreamManager::new(
+        registry.clone(),
+        Arc::clone(&tuners),
+        cas.clone(),
+        b61_descrambler,
+    );
 
     let address = config.server.address;
     let event_crawler = EventCrawler::new(tuners, cas, config.cas.master_key.into());
-    let state =
-        Arc::new(Workspace::new(registry, channels, streams).with_event_crawler(event_crawler));
+    let state = Arc::new(
+        Workspace::new(registry, channels, Some(stream_manager)).with_event_crawler(event_crawler),
+    );
 
     crate::server::serve(address, state).await
 }

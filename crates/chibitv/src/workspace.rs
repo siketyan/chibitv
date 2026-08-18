@@ -1,34 +1,46 @@
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 
 use bytes::Bytes;
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::channel::{Channel, ChannelInner};
 use crate::event_crawler::EventCrawler;
-use crate::registry::{Event, Registry, Service};
+use crate::registry::Registry;
 use crate::service_information::Signal;
-use crate::stream::Streams;
+use crate::stream::{StreamManager, StreamSession, SubscribeError};
 
 pub enum WorkspaceError {
     ChannelNotFound,
     ServiceNotFound,
-    StreamNotFound,
+    TunerBusy,
+    StreamingUnavailable,
     Internal(anyhow::Error),
+}
+
+pub struct StreamSubscription {
+    pub session: Arc<StreamSession>,
+    pub init_segment: Option<Bytes>,
+    pub fmp4: BroadcastStream<Bytes>,
+    pub signals: BroadcastStream<Signal>,
 }
 
 pub struct Workspace {
     registry: Arc<Registry>,
     channels: Vec<Channel>,
-    streams: RwLock<Streams>,
+    stream_manager: Option<StreamManager>,
     event_crawler: Option<Arc<EventCrawler>>,
 }
 
 impl Workspace {
-    pub fn new(registry: Arc<Registry>, channels: Vec<Channel>, streams: RwLock<Streams>) -> Self {
+    pub fn new(
+        registry: Arc<Registry>,
+        channels: Vec<Channel>,
+        stream_manager: Option<StreamManager>,
+    ) -> Self {
         Self {
             registry,
             channels,
-            streams,
+            stream_manager,
             event_crawler: None,
         }
     }
@@ -54,39 +66,16 @@ impl Workspace {
         self.event_crawler.clone()
     }
 
-    pub fn get_current_event(&self, stream_id: u32) -> Option<(Option<Service>, Option<Event>)> {
-        self.get_current_event_with_id(stream_id, None)
-    }
-
-    pub fn get_current_event_with_id(
+    /// Attaches to the shared stream of the service, tuning to it first when
+    /// nobody is streaming it yet.
+    pub async fn subscribe_stream(
         &self,
-        stream_id: u32,
-        event_id: Option<u16>,
-    ) -> Option<(Option<Service>, Option<Event>)> {
-        let streams = self.streams.read().unwrap();
-        let stream = streams.get_stream(stream_id)?;
-
-        let service_id = stream.get_service_id();
-        let service = service_id.and_then(|service_id| self.registry.get_service_by_id(service_id));
-
-        let event_id = event_id.or_else(|| stream.get_event_id());
-        let event = service_id
-            .zip(event_id)
-            .and_then(|(service_id, event_id)| self.registry.get_event_by_id(service_id, event_id));
-
-        Some((service, event))
-    }
-
-    pub fn set_channel(&self, stream_id: u32, service_id: u16) -> Result<(), WorkspaceError> {
-        let streams = self.streams.read().unwrap();
-        let Some(stream) = streams.get_stream(stream_id) else {
-            return Err(WorkspaceError::StreamNotFound);
-        };
-
+        service_id: u16,
+    ) -> Result<StreamSubscription, WorkspaceError> {
         let service = self
             .registry
             .get_service_by_id(service_id)
-            .ok_or_else(|| WorkspaceError::ServiceNotFound)?;
+            .ok_or(WorkspaceError::ServiceNotFound)?;
 
         let channel = self
             .channels
@@ -97,30 +86,66 @@ impl Workspace {
                 }
                 ChannelInner::IsdbT { .. } => service.channel_id == channel.id,
             })
-            .ok_or_else(|| WorkspaceError::ChannelNotFound)?;
+            .ok_or(WorkspaceError::ChannelNotFound)?;
 
-        stream
-            .set_channel(service_id, channel)
-            .map_err(WorkspaceError::Internal)
+        let manager = self
+            .stream_manager
+            .as_ref()
+            .ok_or(WorkspaceError::StreamingUnavailable)?;
+
+        let session =
+            manager
+                .subscribe(service_id, channel)
+                .await
+                .map_err(|error| match error {
+                    SubscribeError::TunerBusy => WorkspaceError::TunerBusy,
+                    SubscribeError::Internal(error) => WorkspaceError::Internal(error),
+                })?;
+
+        let (init_segment, fmp4) = session.subscribe_fmp4();
+        let signals = session.subscribe_signal();
+
+        Ok(StreamSubscription {
+            session,
+            init_segment,
+            fmp4: BroadcastStream::new(fmp4),
+            signals: BroadcastStream::new(signals),
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn channel() -> Channel {
+        Channel {
+            id: 0,
+            name: "UHF 20".to_string(),
+            inner: ChannelInner::IsdbT {
+                frequency: 515_142_857,
+                bandwidth_hz: 6_000_000,
+            },
+        }
     }
 
-    pub fn subscribe_stream(
-        &self,
-        stream_id: u32,
-    ) -> Option<(
-        Option<Bytes>,
-        BroadcastStream<Bytes>,
-        BroadcastStream<Signal>,
-    )> {
-        let streams = self.streams.read().unwrap();
-        let stream = streams.get_stream(stream_id)?;
-        let (init_segment, rx) = stream.subscribe_fmp4();
-        let signal_rx = stream.subscribe_signal();
+    #[tokio::test]
+    async fn subscribing_an_unknown_service_fails() {
+        let workspace = Workspace::new(Arc::new(Registry::default()), vec![channel()], None);
 
-        Some((
-            init_segment,
-            BroadcastStream::new(rx),
-            BroadcastStream::new(signal_rx),
-        ))
+        let result = workspace.subscribe_stream(0x5678).await;
+
+        assert!(matches!(result, Err(WorkspaceError::ServiceNotFound)));
+    }
+
+    #[tokio::test]
+    async fn subscribing_without_a_stream_manager_fails() {
+        let registry = Arc::new(Registry::default());
+        registry.put_cached_service(0, 0x1234, 0x5678, "Channel".to_string(), String::new());
+        let workspace = Workspace::new(registry, vec![channel()], None);
+
+        let result = workspace.subscribe_stream(0x5678).await;
+
+        assert!(matches!(result, Err(WorkspaceError::StreamingUnavailable)));
     }
 }

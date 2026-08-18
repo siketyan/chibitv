@@ -14,10 +14,8 @@ const EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID: u8 = 0x4E;
 const EIT_ACTUAL_SCHEDULE_TABLE_IDS: std::ops::RangeInclusive<u8> = 0x50..=0x5F;
 
 #[derive(Clone, Debug)]
-#[allow(dead_code)]
 pub enum Signal {
     EventChanged { event_id: u16 },
-    ChannelChanged { service_id: u16 },
 }
 
 pub struct ServiceInformationProcessor {
@@ -146,12 +144,17 @@ impl ServiceInformationProcessor {
             && self.current_event_id != Some(event_id)
         {
             if let Some(signal_tx) = &self.signal_tx {
-                signal_tx.send(Signal::EventChanged { event_id })?;
+                // Nobody may be listening right now; that is fine.
+                let _ = signal_tx.send(Signal::EventChanged { event_id });
             }
             self.current_event_id = Some(event_id);
         }
 
         Ok(())
+    }
+
+    pub fn current_event_id(&self) -> Option<u16> {
+        self.current_event_id
     }
 }
 

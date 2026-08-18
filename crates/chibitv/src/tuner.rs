@@ -28,6 +28,25 @@ struct TunerSlot {
     semaphore: Arc<Semaphore>,
 }
 
+#[derive(Debug)]
+pub enum AcquireError {
+    /// No tuners are defined in the configuration.
+    NotConfigured,
+    /// Every configured tuner is currently leased.
+    Busy,
+}
+
+impl std::fmt::Display for AcquireError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotConfigured => write!(f, "No tuners are configured"),
+            Self::Busy => write!(f, "All tuners are in use"),
+        }
+    }
+}
+
+impl std::error::Error for AcquireError {}
+
 pub struct TunerLease {
     slot: Arc<TunerSlot>,
     _permit: OwnedSemaphorePermit,
@@ -73,9 +92,9 @@ pub struct Tuners {
 }
 
 impl Tuners {
-    pub fn try_acquire(&self) -> anyhow::Result<TunerLease> {
+    pub fn try_acquire(&self) -> Result<TunerLease, AcquireError> {
         if self.tuners.is_empty() {
-            bail!("No tuners are configured");
+            return Err(AcquireError::NotConfigured);
         }
 
         for slot in self.tuners.values() {
@@ -87,7 +106,7 @@ impl Tuners {
             }
         }
 
-        bail!("All tuners are in use")
+        Err(AcquireError::Busy)
     }
 
     pub fn try_acquire_by_id(&self, id: u32) -> anyhow::Result<TunerLease> {
