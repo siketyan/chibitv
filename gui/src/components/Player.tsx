@@ -1,7 +1,7 @@
 import { type JSX, useEffect, useRef, useState } from "react";
 
 import { useStream } from "../api/stream";
-import { startMpeg2Playback } from "../player/playback";
+import { startPlayback } from "../player/playback";
 
 export function Player(): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
@@ -14,9 +14,9 @@ export function Player(): JSX.Element {
     if (!video) return;
 
     setError(undefined);
-    return startMpeg2Playback(video, subscribeFmp4, {
+    return startPlayback(video, subscribeFmp4, {
       onError(playbackError) {
-        console.error("MPEG-2 playback failed", playbackError);
+        console.error("Playback failed", playbackError);
         setError(playbackError.message);
       },
     });
