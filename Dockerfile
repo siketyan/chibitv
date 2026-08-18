@@ -2,7 +2,7 @@
 
 # Builds the minimal FFmpeg WebAssembly module the GUI decodes MPEG-2 video
 # with. The base image must match EMSDK_VERSION in the build script below.
-FROM emscripten/emsdk:4.0.15 AS wasm-builder
+FROM emscripten/emsdk:4.0.23 AS wasm-builder
 WORKDIR /work
 COPY packages/mediabunny-mpeg2/lib/ ./
 RUN FFMPEG_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"$/\1/p' build.sh)" \
@@ -26,7 +26,7 @@ COPY packages/ packages/
 COPY --from=wasm-builder /work/dist/ packages/mediabunny-mpeg2/lib/dist/
 RUN pnpm build
 
-FROM rust:1.96-trixie AS chef
+FROM rust:1.97-trixie AS chef
 WORKDIR /app
 RUN apt-get update \
     && apt-get install --no-install-recommends -y libdvbv5-dev libpcsclite-dev libudev-dev \
