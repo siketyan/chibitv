@@ -1100,7 +1100,7 @@ dependencies = [
 
 [[package]]
 name = "mpeg2ts"
-version = "0.6.0"
+version = "0.6.1"
 
 [[package]]
 name = "no_std_io2"
