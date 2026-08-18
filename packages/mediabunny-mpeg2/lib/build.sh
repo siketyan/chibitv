@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 FFMPEG_VERSION="7.1.1"
-EMSDK_VERSION="4.0.15"
+EMSDK_VERSION="6.0.7"
 EMSDK_IMAGE="emscripten/emsdk:$EMSDK_VERSION"
 EMSDK_DIR="$SCRIPT_DIR/vendor/emsdk"
 ARCHIVE="$SCRIPT_DIR/vendor/ffmpeg-$FFMPEG_VERSION.tar.xz"
