@@ -2,9 +2,9 @@
 
 ## FFmpeg
 
-This package uses code from FFmpeg 7.1.1, licensed under the GNU Lesser General Public License version 2.1 or later.
+This package uses code from FFmpeg 9.0.1, licensed under the GNU Lesser General Public License version 2.1 or later.
 
-- Upstream source: <https://ffmpeg.org/releases/ffmpeg-7.1.1.tar.xz>
+- Upstream source: <https://ffmpeg.org/releases/ffmpeg-9.0.1.tar.xz>
 - Source and build provenance: [`lib/SOURCE.md`](./lib/SOURCE.md)
 - License: `lib/dist/COPYING.LGPLv2.1` in generated and published packages
 - Build recipe: [`lib/build.sh`](./lib/build.sh) and
