@@ -82,10 +82,12 @@ jobs:
     needs: build
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    # Keeps the credentials of the tailnet scoped to the deployment.
+    # The tailnet trusts the identity of this environment, so the deployment
+    # cannot be run from anywhere else in this repository.
     environment: production
     permissions:
       contents: read
+      id-token: write # authenticates to the tailnet with workload identity federation
     env:
       DEPLOY_HOST: chibitv.lynx-cod.ts.net
       DEPLOY_USER: siketyan
@@ -96,8 +98,10 @@ jobs:
       - name: Join the tailnet
         uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
         with:
-          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
-          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          # Neither identifies a credential on its own, the tailnet authorizes
+          # the identity token of this job instead.
+          oauth-client-id: ${{ vars.TAILSCALE_CLIENT_ID }}
+          audience: ${{ vars.TAILSCALE_AUDIENCE }}
           tags: tag:ci
       - name: Pull the image and recreate the container
         # `docker compose restart` would keep running the image the container
