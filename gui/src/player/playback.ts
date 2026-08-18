@@ -200,7 +200,7 @@ class MediaSourcePlayback {
   }
 }
 
-export function startMpeg2Playback(
+export function startPlayback(
   video: HTMLVideoElement,
   subscribeFmp4: SubscribeFmp4,
   options: PlaybackOptions = {},
@@ -227,7 +227,7 @@ export function startMpeg2Playback(
     stop();
   };
 
-  worker.addEventListener("error", (event) => fail(new Error(event.message || "MPEG-2 transcoder Worker failed")));
+  worker.addEventListener("error", (event) => fail(new Error(event.message || "Transcoder Worker failed")));
   worker.addEventListener("message", (event: MessageEvent<TranscoderResponse>) => {
     if (stopped) return;
     const message = event.data;

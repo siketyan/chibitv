@@ -19,8 +19,13 @@ const scope = globalThis as unknown as {
 let conversion: Conversion | undefined;
 let inputController: ReadableStreamDefaultController<Uint8Array> | undefined;
 let running = false;
+// While probing, the incoming data is retained so that a passthrough stream can be replayed from
+// the beginning once the codec is known.
+let mode: "probe" | "transcode" | "passthrough" = "probe";
+const probedData: Uint8Array[] = [];
 let nextChunkId = 1;
 const chunkAcknowledgements = new Map<number, () => void>();
+let sendChain = Promise.resolve();
 
 function post(message: TranscoderResponse, transfer: Transferable[] = []): void {
   scope.postMessage(message, transfer);
@@ -36,33 +41,18 @@ function sendChunk(data: Uint8Array): Promise<void> {
   });
 }
 
-async function run(bitrate: number): Promise<void> {
-  if (running) {
-    throw new Error("An MPEG-2 transcoder is already running");
-  }
-  running = true;
-  registerMpeg2Decoder();
+function enqueueChunk(data: Uint8Array): Promise<void> {
+  sendChain = sendChain.then(() => sendChunk(data));
+  return sendChain;
+}
 
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      inputController = controller;
-    },
-    cancel() {
-      inputController = undefined;
-    },
-  });
-  const input = new Input({
-    source: new ReadableStreamSource(stream),
-    formats: ALL_FORMATS,
-  });
+async function transcode(input: Input, bitrate: number): Promise<void> {
+  if (typeof VideoEncoder === "undefined") {
+    throw new Error("VideoEncoder is not available in this Dedicated Worker");
+  }
 
   let mimeTypeReady = false;
   const pendingHeaderChunks: Uint8Array[] = [];
-  let sendChain = Promise.resolve();
-  const enqueueChunk = (data: Uint8Array): Promise<void> => {
-    sendChain = sendChain.then(() => sendChunk(data));
-    return sendChain;
-  };
 
   const output = new Output({
     format: new Mp4OutputFormat({
@@ -82,52 +72,85 @@ async function run(bitrate: number): Promise<void> {
     ),
   });
 
-  try {
-    if (typeof VideoEncoder === "undefined") {
-      throw new Error("VideoEncoder is not available in this Dedicated Worker");
-    }
+  conversion = await Conversion.init({
+    input,
+    output,
+    tracks: "primary",
+    video: {
+      codec: "avc",
+      bitrate,
+      keyFrameInterval: 0.5,
+      hardwareAcceleration: "prefer-hardware",
+      forceTranscode: true,
+    },
+    showWarnings: false,
+  });
 
+  if (!conversion.isValid) {
+    const reasons = conversion.discardedTracks.map((track) => track.reason).join("\n");
+    throw new Error(`Could not construct the MPEG-2 conversion pipeline.\n${reasons}`);
+  }
+
+  const mimeTypePromise = output.getMimeType().then((mimeType) => {
+    post({ type: "ready", mimeType });
+    mimeTypeReady = true;
+    for (const chunk of pendingHeaderChunks) {
+      void enqueueChunk(chunk);
+    }
+    pendingHeaderChunks.length = 0;
+  });
+
+  await conversion.execute();
+  await mimeTypePromise;
+  await sendChain;
+  post({ type: "complete" });
+}
+
+async function passthrough(input: Input): Promise<void> {
+  const mimeType = await input.getMimeType();
+
+  mode = "passthrough";
+  post({ type: "ready", mimeType });
+  for (const chunk of probedData.splice(0)) {
+    void enqueueChunk(chunk);
+  }
+}
+
+async function run(bitrate: number): Promise<void> {
+  if (running) {
+    throw new Error("A transcoder is already running");
+  }
+  running = true;
+  registerMpeg2Decoder();
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      inputController = controller;
+    },
+    cancel() {
+      inputController = undefined;
+    },
+  });
+  const input = new Input({
+    source: new ReadableStreamSource(stream),
+    formats: ALL_FORMATS,
+  });
+
+  try {
     const videoTrack = await input.getPrimaryVideoTrack();
     if (!videoTrack) {
       throw new Error("The stream does not contain a video track");
     }
-    const codec = await videoTrack.getCodec();
-    if (codec !== "mpeg2") {
-      throw new Error(`Expected MPEG-2 video, but detected ${codec ?? "an unknown codec"}`);
+
+    // ISDB-S streams already carry HEVC that the browser can decode, so only MPEG-2 (ISDB-T)
+    // is transcoded; anything else is passed through to MSE as-is.
+    if ((await videoTrack.getCodec()) === "mpeg2") {
+      mode = "transcode";
+      probedData.length = 0;
+      await transcode(input, bitrate);
+    } else {
+      await passthrough(input);
     }
-
-    conversion = await Conversion.init({
-      input,
-      output,
-      tracks: "primary",
-      video: {
-        codec: "avc",
-        bitrate,
-        keyFrameInterval: 0.5,
-        hardwareAcceleration: "prefer-hardware",
-        forceTranscode: true,
-      },
-      showWarnings: false,
-    });
-
-    if (!conversion.isValid) {
-      const reasons = conversion.discardedTracks.map((track) => track.reason).join("\n");
-      throw new Error(`Could not construct the MPEG-2 conversion pipeline.\n${reasons}`);
-    }
-
-    const mimeTypePromise = output.getMimeType().then((mimeType) => {
-      post({ type: "ready", mimeType });
-      mimeTypeReady = true;
-      for (const chunk of pendingHeaderChunks) {
-        void enqueueChunk(chunk);
-      }
-      pendingHeaderChunks.length = 0;
-    });
-
-    await conversion.execute();
-    await mimeTypePromise;
-    await sendChain;
-    post({ type: "complete" });
   } finally {
     inputController = undefined;
     input.dispose();
@@ -140,7 +163,15 @@ scope.addEventListener("message", (event) => {
   const request = event.data;
 
   if (request.type === "data") {
-    inputController?.enqueue(new Uint8Array(request.data));
+    const data = new Uint8Array(request.data);
+    if (mode === "passthrough") {
+      void enqueueChunk(data);
+      return;
+    }
+    if (mode === "probe") {
+      probedData.push(data);
+    }
+    inputController?.enqueue(data);
     return;
   }
   if (request.type === "ack") {
