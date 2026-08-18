@@ -13,6 +13,10 @@ use chibitv_b60::descriptor::Descriptor;
 use chibitv_b60::table::{BroadcasterInformation, EventInformation, ServiceInformation};
 
 #[derive(Clone, Debug)]
+#[expect(
+    dead_code,
+    reason = "collected from the BIT, but not exposed over the API yet"
+)]
 pub struct Broadcaster {
     pub id: u8,
     pub name: String,
