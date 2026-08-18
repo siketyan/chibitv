@@ -42,7 +42,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --release --locked --features gui \
     && cp target/release/chibitv /usr/local/bin/chibitv
 
-FROM gcr.io/distroless/cc-debian13:latest AS runtime
+FROM gcr.io/distroless/cc-debian13:nonroot AS runtime
 # Neither libdvbv5 (tuner access) nor libpcsclite (CAS module access) is part
 # of the distroless base image, and libdvbv5 pulls in libudev and libcap.
 COPY --from=server-builder \
@@ -53,6 +53,8 @@ COPY --from=server-builder \
     /usr/lib/x86_64-linux-gnu/
 COPY --from=server-builder /usr/local/bin/chibitv /usr/local/bin/chibitv
 # Every subcommand reads ./config.toml, so mount the configuration here.
+# Nothing is written back, so the working directory stays owned by root while
+# the image runs as the unprivileged user of the base image.
 WORKDIR /app
 EXPOSE 3001
 ENTRYPOINT ["/usr/local/bin/chibitv"]

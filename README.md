@@ -187,6 +187,8 @@ Note that `server.address` has to listen on more than the loopback interface of 
 ```shell
 docker run --rm \
   --publish 3001:3001 \
+  --user "$(id -u):$(id -g)" \
+  --group-add "$(getent group video | cut -d: -f3)" \
   --volume "$PWD/config.toml:/app/config.toml:ro" \
   --volume /run/pcscd/pcscd.comm:/run/pcscd/pcscd.comm \
   --device /dev/dvb/adapter0/frontend0 \
@@ -196,6 +198,16 @@ docker run --rm \
 ```
 
 Open http://localhost:3001/ in your browser and enjoy!
+
+The image never runs as `root`: it defaults to the unprivileged user of the distroless base image, and chibitv
+itself needs no privileges beyond reaching the devices and the daemon. Both of those are still checked against the
+host, which is what the two options above are for:
+
+- DVB device nodes belong to the `video` group, so the container process has to be a member of it.
+- pcsc-lite authorizes card access with polkit, which resolves the user of the connecting process on the host.
+  Running the container as the host user set up in [Device permissions on Linux](#device-permissions-on-linux)
+  therefore keeps the same rule working. Without `--user`, the polkit rule has to accept the user of the image
+  (uid 65532) instead.
 
 ## References
 
