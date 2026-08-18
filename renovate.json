@@ -28,6 +28,12 @@
       "matchUpdateTypes": ["minor", "patch"]
     },
     {
+      "description": "buffa is usable only at the version connectrpc generates code against, so it waits for connectrpc to support 0.9",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["buffa"],
+      "allowedVersions": "<0.9"
+    },
+    {
       "description": "mediabunny is patched via pnpm patchedDependencies, so updates need the patch reworked manually",
       "matchPackageNames": ["mediabunny"],
       "groupName": null
