@@ -1,7 +1,7 @@
 # FFmpeg source and build provenance
 
 - FFmpeg version: 7.1.1
-- Emscripten version: 4.0.15
+- Emscripten version: 6.0.7
 - Source archive: `vendor/ffmpeg-7.1.1.tar.xz`
 - Source SHA-256: `733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1`
 - Generated WASM SHA-256: `b34ca6743fcb9714de8afe40dab9ef754f91680fd471f915583229e375ba6c6d`
