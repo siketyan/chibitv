@@ -3,6 +3,7 @@
   "extends": ["config:recommended"],
   "timezone": "Asia/Tokyo",
   "schedule": ["before 8am on monday"],
+  "minimumReleaseAge": "3 days",
   "lockFileMaintenance": {
     "enabled": true
   },
