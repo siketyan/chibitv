@@ -75,3 +75,37 @@ jobs:
           cache-to: |
             type=gha,mode=max
             ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}:buildcache,mode=max', env.IMAGE_NAME) || '' }}
+
+  deploy:
+    name: Deploy
+    # The image the host pulls is the one this run has just pushed.
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # The tailnet trusts the identity of this environment, so the deployment
+    # cannot be run from anywhere else in this repository.
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # authenticates to the tailnet with workload identity federation
+    env:
+      DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+      # The compose file describes the tuners of the host, so it lives there
+      # instead of in this repository.
+      DEPLOY_DIRECTORY: ${{ vars.DEPLOY_DIRECTORY }}
+    steps:
+      - name: Join the tailnet
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          # Neither identifies a credential on its own, the tailnet authorizes
+          # the identity token of this job instead.
+          oauth-client-id: ${{ vars.TAILSCALE_CLIENT_ID }}
+          audience: ${{ vars.TAILSCALE_AUDIENCE }}
+          tags: tag:ci
+      - name: Pull the image and recreate the container
+        # `docker compose restart` would keep running the image the container
+        # was created from, so the container is recreated instead.
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_DIRECTORY' && docker compose pull && docker compose up --detach"
