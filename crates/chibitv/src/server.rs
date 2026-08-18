@@ -8,6 +8,9 @@ use tracing::info;
 use crate::rpc::ChibitvServiceImpl;
 use crate::workspace::Workspace;
 
+/// The path the Connect RPC endpoints are served under.
+const RPC_PREFIX: &str = "/api";
+
 pub async fn serve(addr: SocketAddr, state: Arc<Workspace>) -> anyhow::Result<()> {
     let router = app(state);
 
@@ -21,26 +24,17 @@ pub async fn serve(addr: SocketAddr, state: Arc<Workspace>) -> anyhow::Result<()
 }
 
 fn app(state: Arc<Workspace>) -> Router {
-    let router = ChibitvServiceImpl::new(state).register(connectrpc::Router::new());
+    let service = ChibitvServiceImpl::new(state).register(connectrpc::Router::new());
 
-    #[cfg(not(feature = "gui"))]
-    {
-        router.into_axum_router()
-    }
+    // The RPC service handles every path it is given on its own, so it is
+    // nested under a prefix to tell its routes apart from the GUI ones.
+    let router =
+        Router::new().nest_service(RPC_PREFIX, connectrpc::ConnectRpcService::new(service));
 
-    // The RPC service handles every unmatched path on its own, so it has to be
-    // mounted explicitly to leave the remaining paths to the GUI.
     #[cfg(feature = "gui")]
-    {
-        use crate::proto::chibitv::v1::CHIBITV_SERVICE_SERVICE_NAME;
+    let router = router.fallback(gui::handle);
 
-        Router::new()
-            .route_service(
-                &format!("/{CHIBITV_SERVICE_SERVICE_NAME}/{{method}}"),
-                connectrpc::ConnectRpcService::new(router),
-            )
-            .fallback(gui::handle)
-    }
+    router
 }
 
 /// Serves the GUI built into `gui/dist` from the binary itself.
@@ -122,7 +116,7 @@ mod tests {
     async fn serves_connect_json_requests() {
         let response = app(empty_workspace())
             .oneshot(
-                Request::post("/chibitv.v1.ChibitvService/ListChannels")
+                Request::post("/api/chibitv.v1.ChibitvService/ListChannels")
                     .header(header::CONTENT_TYPE, "application/json")
                     .header("connect-protocol-version", "1")
                     .body(Body::from("{}"))
@@ -161,7 +155,7 @@ mod tests {
 
         let response = app(workspace)
             .oneshot(
-                Request::post("/chibitv.v1.ChibitvService/ListServices")
+                Request::post("/api/chibitv.v1.ChibitvService/ListServices")
                     .header(header::CONTENT_TYPE, "application/json")
                     .header("connect-protocol-version", "1")
                     .body(Body::from("{}"))
@@ -210,7 +204,7 @@ mod tests {
 
         let response = app(workspace)
             .oneshot(
-                Request::post("/chibitv.v1.ChibitvService/ListEvents")
+                Request::post("/api/chibitv.v1.ChibitvService/ListEvents")
                     .header(header::CONTENT_TYPE, "application/json")
                     .header("connect-protocol-version", "1")
                     .body(Body::from("{}"))
@@ -268,7 +262,7 @@ mod tests {
     async fn maps_missing_stream_to_connect_not_found() {
         let response = app(empty_workspace())
             .oneshot(
-                Request::post("/chibitv.v1.ChibitvService/GetStream")
+                Request::post("/api/chibitv.v1.ChibitvService/GetStream")
                     .header(header::CONTENT_TYPE, "application/json")
                     .header("connect-protocol-version", "1")
                     .body(Body::from(r#"{"streamId":99}"#))

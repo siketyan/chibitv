@@ -4,7 +4,13 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+  # Building the image takes a while, so pull requests only run it when they
+  # touch the image itself.
   pull_request:
+    paths:
+      - .dockerignore
+      - .github/workflows/docker.yml
+      - Dockerfile
 
 permissions: {}
 
