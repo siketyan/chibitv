@@ -209,6 +209,16 @@ host, which is what the two options above are for:
   therefore keeps the same rule working. Without `--user`, the polkit rule has to accept the user of the image
   (uid 65532) instead.
 
+The client library of pcsc-lite also has to agree with the daemon it connects to. The image ships the 2.3 series of
+Debian 13, which reports `SCARD_E_NO_SERVICE` against an older `pcscd`, such as the 2.0 series of Ubuntu 24.04. Mount
+the library of the host over the one of the image if upgrading the daemon is not an option:
+
+```shell
+docker run --rm \
+  --volume /usr/lib/x86_64-linux-gnu/libpcsclite.so.1.0.0:/usr/lib/x86_64-linux-gnu/libpcsclite.so.1:ro \
+  ...
+```
+
 ## References
 
 - ARIB STD-B32: https://www.arib.or.jp/english/html/overview/doc/6-STD-B32v3_11-3p3-E1.pdf
