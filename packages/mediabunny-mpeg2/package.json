@@ -31,7 +31,7 @@
   "devDependencies": {
     "@types/node": "24.0.13",
     "mediabunny": "1.50.8",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
