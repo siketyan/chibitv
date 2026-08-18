@@ -1,6 +1,6 @@
 import { CheckIcon } from "@heroicons/react/24/outline";
 import { Disclosure, DisclosureGroup, ListBox, Spinner, Tabs } from "@heroui/react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { type JSX, useEffect, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
@@ -18,7 +18,7 @@ interface ChannelsProps {
 }
 
 export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
-  const { state, updateService } = useStream();
+  const { state, serviceId, updateService } = useStream();
   const [expandedChannelId, setExpandedChannelId] = useState<number>();
   const [selectedDeliverySystem, setSelectedDeliverySystem] = useState<DeliverySystem>();
   const {
@@ -38,13 +38,12 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     queryKey: queryKeys.channels,
     queryFn: async () => (await chibitvClient.listChannels({})).channels,
   });
-  const { mutate, variables, isPending } = useMutation({
-    mutationFn: updateService,
-    onSuccess: () => {
-      onServiceChange?.();
-    },
-  });
-  const serviceId = state?.service?.id;
+  const selectService = (selectedServiceId: number) => {
+    updateService(selectedServiceId);
+    onServiceChange?.();
+  };
+  // The stream is still tuning while the reported service lags the selection.
+  const isTuning = serviceId !== undefined && state?.service?.id !== serviceId;
   const currentChannelId = services.find((service) => service.id === serviceId)?.channelId;
   const currentDeliverySystem = channels.find((channel) => channel.id === currentChannelId)?.deliverySystem;
   const servicesByChannel = new Map<number, Service[]>();
@@ -107,7 +106,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
 
         const firstService = servicesByChannel.get(channelId)?.[0];
         if (firstService && firstService.id !== serviceId) {
-          mutate(firstService.id);
+          selectService(firstService.id);
         }
       }}
     >
@@ -115,7 +114,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         const channelServices = servicesByChannel.get(channel.id) ?? [];
 
         return (
-          <Disclosure key={channel.id} id={String(channel.id)} isDisabled={channelServices.length === 0 || isPending}>
+          <Disclosure key={channel.id} id={String(channel.id)} isDisabled={channelServices.length === 0}>
             <Disclosure.Heading>
               <Disclosure.Trigger className="flex min-h-12 w-full flex-row items-center gap-2 rounded-xl px-3 text-sm font-semibold data-[expanded=true]:bg-accent-soft data-[expanded=true]:text-accent-soft-foreground">
                 <span className="min-w-0 flex-1 truncate text-start">{channel.name}</span>
@@ -137,7 +136,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
                     const [key] = keys;
                     const selectedServiceId = Number(key);
                     if (!Number.isNaN(selectedServiceId) && selectedServiceId !== serviceId) {
-                      mutate(selectedServiceId);
+                      selectService(selectedServiceId);
                     }
                   }}
                 >
@@ -146,7 +145,6 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
                       key={service.id}
                       id={service.id}
                       className="min-h-12 rounded-xl px-3 data-[selected=true]:bg-accent-soft data-[selected=true]:text-accent-soft-foreground"
-                      isDisabled={isPending}
                       textValue={service.name}
                     >
                       <div className="flex min-w-0 flex-1 flex-col">
@@ -155,7 +153,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
                           <span className="truncate text-xs text-muted">{service.providerName}</span>
                         )}
                       </div>
-                      {isPending && service.id === variables ? (
+                      {isTuning && service.id === serviceId ? (
                         <Spinner className="ms-auto shrink-0" size="sm" />
                       ) : (
                         <ListBox.ItemIndicator className="text-accent">
@@ -184,7 +182,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         setSelectedDeliverySystem(deliverySystem);
 
         // Tune to the first service on the wave when the current service is on another wave.
-        if (deliverySystem === currentDeliverySystem || isPending) {
+        if (deliverySystem === currentDeliverySystem) {
           return;
         }
 
@@ -194,7 +192,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
           .find((service) => service !== undefined);
         if (firstService && firstService.id !== serviceId) {
           setExpandedChannelId(firstService.channelId);
-          mutate(firstService.id);
+          selectService(firstService.id);
         }
       }}
     >
