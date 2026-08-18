@@ -53,6 +53,41 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  gui:
+    name: GUI
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      COREPACK_ENABLE_DOWNLOAD_PROMPT: 0
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Cache the FFmpeg WebAssembly module
+        id: wasm-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: packages/mediabunny-mpeg2/lib/dist
+          key: ffmpeg-wasm-${{ hashFiles('packages/mediabunny-mpeg2/lib/build.sh', 'packages/mediabunny-mpeg2/lib/build-in-container.sh', 'packages/mediabunny-mpeg2/lib/adapter.c') }}
+      - name: Build the FFmpeg WebAssembly module
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: bash packages/mediabunny-mpeg2/lib/build.sh
+      - name: Enable corepack
+        run: corepack enable
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Check
+        run: pnpm check
+      - name: Build
+        run: pnpm build
+
   test:
     name: Test
     runs-on: ubuntu-latest
