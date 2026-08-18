@@ -22,6 +22,18 @@ message ListChannelsResponse {
 message Channel {
   uint32 id = 1;
   string name = 2;
+  DeliverySystem delivery_system = 3;
+}
+
+// DeliverySystem is the broadcast wave a channel is carried on.
+enum DeliverySystem {
+  DELIVERY_SYSTEM_UNSPECIFIED = 0;
+
+  // Terrestrial digital broadcasting.
+  DELIVERY_SYSTEM_ISDB_T = 1;
+
+  // Satellite (BS/CS 4K) broadcasting.
+  DELIVERY_SYSTEM_ISDB_S = 2;
 }
 
 message ListServicesRequest {}

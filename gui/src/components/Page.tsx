@@ -39,7 +39,7 @@ export function Page(): JSX.Element {
           <div className="flex items-center justify-between px-2 pb-3 pt-1">
             <h2 className="font-semibold">Channels</h2>
           </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
             <Channels />
           </div>
         </aside>
