@@ -8,7 +8,7 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/chibitv.v1.ChibitvService": "http://[::1]:3001",
+      "/api": "http://[::1]:3001",
     },
   },
 });

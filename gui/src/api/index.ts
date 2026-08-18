@@ -4,7 +4,7 @@ import { createConnectTransport } from "@connectrpc/connect-web";
 import { ChibitvService } from "../gen/chibitv/v1/chibitv_pb";
 
 const transport = createConnectTransport({
-  baseUrl: location.origin,
+  baseUrl: `${location.origin}/api`,
 });
 
 export const chibitvClient = createClient(ChibitvService, transport);

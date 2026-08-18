@@ -23,6 +23,7 @@ hex = "0.4.3"
 mpeg2ts = "0.6.0"
 papaya = "0.2.4"
 pcsc = "2.9.0"
+rust-embed = { version = "8.12.0", features = ["mime-guess"], optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 shiguredo_mp4 = "2026.3.0"
 tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "sync"] }
@@ -46,3 +47,8 @@ libc = { version = "0.2.186", optional = true }
 [features]
 default = ["dvb"]
 dvb = ["dep:dvbv5-sys", "dep:libc"]
+
+# Embeds the GUI built into `gui/dist` in the binary and serves it from the
+# `serve` command. Development uses the rsbuild dev server instead, so this is
+# only enabled for deployment builds.
+gui = ["dep:rust-embed"]
