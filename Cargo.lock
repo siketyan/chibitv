@@ -1112,6 +1112,7 @@ dependencies = [
 [[package]]
 name = "mpeg2ts"
 version = "0.6.1"
+source = "git+https://github.com/siketyan/mpeg2ts.git?rev=ae33330#ae333303fb18d17ef25a67f734cef3fe72d1b50a"
 
 [[package]]
 name = "no_std_io2"
@@ -1529,6 +1530,7 @@ dependencies = [
 [[package]]
 name = "shiguredo_mp4"
 version = "2026.4.0"
+source = "git+https://github.com/siketyan/mp4-rs.git?rev=179dd89#179dd8926124a661c25eb661090e05fdcc0dd3b8"
 
 [[package]]
 name = "shlex"

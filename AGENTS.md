@@ -9,8 +9,7 @@ runtime setup (tuner devices, PC/SC, `config.toml`).
 
 ## Setup
 
-- Git submodules are required to build: `git submodule update --init --recursive`
-  - `third_party/mpeg2ts` and `third_party/shiguredo_mp4` are path-patched over the crates.io versions in the workspace `Cargo.toml`
+- `[patch.crates-io]` in the workspace `Cargo.toml` replaces some crates.io dependencies (`cros-codecs`, `dvbv5-sys`, `mpeg2ts`, `shiguredo_mp4`) with forks pinned to a Git revision. To try a local change to one of them, add a `[patch]` override to `.cargo/config.toml` instead of editing the manifest.
 - System libraries for the default `dvb` feature and PC/SC: `libdvbv5-dev` and `libpcsclite-dev`.
 - JS tooling: Node 24 with pnpm (via corepack); run `pnpm install` at the repo root.
 
