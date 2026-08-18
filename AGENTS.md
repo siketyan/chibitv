@@ -27,7 +27,7 @@ Rust (workspace of `crates/*`, edition 2024):
 
 JS/TS (pnpm workspace: `gui`, `packages/*`):
 
-- Check everything: `pnpm check` at the root (biome for `gui`, `tsc` for `packages/mediabunny-mpeg2`)
+- Check everything: `pnpm check` at the root (biome + `tsc` for `gui`, `tsc` for `packages/mediabunny-mpeg2`)
 - Auto-fix GUI lint/format: `pnpm --filter chibitv fix`
 - GUI dev server: `pnpm --filter chibitv dev` (proxies `/api` to the backend at `[::1]:3001`; run `cargo run -- serve` alongside)
 - Build: `pnpm build` at the root
