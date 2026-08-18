@@ -36,17 +36,12 @@ RUN cargo install cargo-chef --locked
 FROM chef AS planner
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
-COPY third_party/ third_party/
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS server-builder
 # Dependencies are built from the recipe alone, so this layer is reused until
 # one of them changes. Nothing is cache mounted, so that the layer is part of
 # the image and can be restored from the registry.
-#
-# The vendored crates are copied in as well because the recipe only records
-# that `[patch.crates-io]` points at them, not their sources.
-COPY third_party/ third_party/
 COPY --from=planner /app/recipe.json recipe.json
 RUN cargo chef cook --release --locked --features gui --recipe-path recipe.json
 COPY Cargo.toml Cargo.lock ./

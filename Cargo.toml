@@ -1,13 +1,12 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-exclude = ["third_party/mpeg2ts", "third_party/shiguredo_mp4"]
 
 [patch.crates-io]
 cros-codecs = { git = "https://github.com/siketyan/cros-codecs.git", rev = "e6e1281" }
 dvbv5-sys = { git = "https://gitlab.com/kazuki08241/rust-libdvbv5-sys.git", rev = "7cab8db" }
-mpeg2ts = { path = "third_party/mpeg2ts" }
-shiguredo_mp4 = { path = "third_party/shiguredo_mp4" }
+mpeg2ts = { git = "https://github.com/siketyan/mpeg2ts.git", rev = "ae33330" }
+shiguredo_mp4 = { git = "https://github.com/siketyan/mp4-rs.git", rev = "179dd89" }
 
 [profile.release-with-debug]
 debug    = true
