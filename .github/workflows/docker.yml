@@ -75,3 +75,33 @@ jobs:
           cache-to: |
             type=gha,mode=max
             ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}:buildcache,mode=max', env.IMAGE_NAME) || '' }}
+
+  deploy:
+    name: Deploy
+    # The image the host pulls is the one this run has just pushed.
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    # Keeps the credentials of the tailnet scoped to the deployment.
+    environment: production
+    permissions:
+      contents: read
+    env:
+      DEPLOY_HOST: chibitv.lynx-cod.ts.net
+      DEPLOY_USER: siketyan
+      # The compose file describes the tuners of the host, so it lives there
+      # instead of in this repository.
+      DEPLOY_DIRECTORY: /home/siketyan/.ghr/github.com/siketyan/chibitv
+    steps:
+      - name: Join the tailnet
+        uses: tailscale/github-action@780049a30b6ff5c378a9e7b389d15ece7a204888 # v4.1.3
+        with:
+          oauth-client-id: ${{ secrets.TAILSCALE_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TAILSCALE_OAUTH_SECRET }}
+          tags: tag:ci
+      - name: Pull the image and recreate the container
+        # `docker compose restart` would keep running the image the container
+        # was created from, so the container is recreated instead.
+        run: |
+          ssh -o StrictHostKeyChecking=accept-new "$DEPLOY_USER@$DEPLOY_HOST" \
+            "cd '$DEPLOY_DIRECTORY' && docker compose pull && docker compose up --detach"
