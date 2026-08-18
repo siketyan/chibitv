@@ -32,7 +32,7 @@ The TypeScript build writes package entry points and declarations to `dist/`. Th
 `ffmpeg-mpeg2.js` and `ffmpeg-mpeg2.wasm` to `lib/dist/`. Both generated `dist/` directories and the downloaded
 `lib/vendor/` sources are ignored by Git.
 
-The included Mediabunny 1.50.8 patch adds MPEG-2 Visual recognition and packet classification needed by the current
+The included Mediabunny 1.55.1 patch adds MPEG-2 Visual recognition and packet classification needed by the current
 PoC. The repository root applies it through `pnpm-workspace.yaml`; it remains necessary until equivalent MPEG-2
 support is available upstream.
 

@@ -10,4 +10,4 @@ allowBuilds:
 blockExoticSubdeps: false
 
 patchedDependencies:
-  mediabunny@1.50.8: patches/mediabunny@1.50.8.patch
+  mediabunny@1.55.1: patches/mediabunny@1.55.1.patch

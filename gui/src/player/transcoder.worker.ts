@@ -6,6 +6,7 @@ import {
   Input,
   Mp4OutputFormat,
   Output,
+  Quality,
   ReadableStreamSource,
 } from "mediabunny";
 
@@ -78,7 +79,7 @@ async function transcode(input: Input, bitrate: number): Promise<void> {
     tracks: "primary",
     video: {
       codec: "avc",
-      bitrate,
+      quality: new Quality({ bitrate }),
       keyFrameInterval: 0.5,
       hardwareAcceleration: "prefer-hardware",
       forceTranscode: true,

@@ -21,7 +21,7 @@ binary.
 
 ## Mediabunny
 
-Mediabunny 1.50.8 is licensed under the Mozilla Public License 2.0. The pnpm patch in the workspace root's `patches/`
+Mediabunny 1.55.1 is licensed under the Mozilla Public License 2.0. The pnpm patch in the workspace root's `patches/`
 directory adds the minimum
 MPEG-2 input recognition required by the package's current integration. The modified MPL-covered files remain
 available in patch form.
