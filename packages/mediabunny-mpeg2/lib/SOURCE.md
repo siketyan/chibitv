@@ -4,8 +4,8 @@
 - Emscripten version: 6.0.7
 - Source archive: `vendor/ffmpeg-7.1.1.tar.xz`
 - Source SHA-256: `733984395e0dbbe5c046abda2dc49a5544e7e0e1e2366bba849222ae9e3a03b1`
-- Generated WASM SHA-256: `b34ca6743fcb9714de8afe40dab9ef754f91680fd471f915583229e375ba6c6d`
-- Generated JS SHA-256: `5ae5b1bcae45d06e37156e7b35ee3cddc78facc2756bb11fdaf1156504b85c2d`
+- Generated WASM SHA-256: `6439c0101d4690b44d79b90b56f51ca1276466f314579c4b8a1b65560a757ee8`
+- Generated JS SHA-256: `3ce78ed12b2d7b49f7fad946645ebedb53f8a6532488c4a75bfeaf8130d8dde2`
 
 The source archive is an unmodified copy downloaded from:
 
