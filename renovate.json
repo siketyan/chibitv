@@ -25,6 +25,11 @@
       "groupName": "Docker images (non-major)",
       "matchManagers": ["dockerfile"],
       "matchUpdateTypes": ["minor", "patch"]
+    },
+    {
+      "description": "mediabunny is patched via pnpm patchedDependencies, so updates need the patch reworked manually",
+      "matchPackageNames": ["mediabunny"],
+      "groupName": null
     }
   ]
 }
