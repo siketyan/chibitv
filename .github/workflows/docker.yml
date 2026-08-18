@@ -65,8 +65,13 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.metadata.outputs.tags }}
           labels: ${{ steps.metadata.outputs.labels }}
-          # The registry doubles as the layer cache. The GitHub Actions cache is
-          # avoided so that a pull request cannot poison the cache the pushed
-          # images are built from.
-          cache-from: type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
-          cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}:buildcache,mode=max', env.IMAGE_NAME) || '' }}
+          # Caches of the GitHub Actions backend are scoped to the branch that
+          # writes them, so a pull request builds on the cache of main without
+          # being able to write into it. The registry cache is shared by the
+          # runs that push an image.
+          cache-from: |
+            type=gha
+            type=registry,ref=${{ env.IMAGE_NAME }}:buildcache
+          cache-to: |
+            type=gha,mode=max
+            ${{ github.event_name != 'pull_request' && format('type=registry,ref={0}:buildcache,mode=max', env.IMAGE_NAME) || '' }}
