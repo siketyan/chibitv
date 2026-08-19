@@ -48,14 +48,11 @@ export function Player(): JSX.Element {
 
   return (
     <div className="relative grid h-full min-h-0 min-w-0 place-items-center overflow-hidden bg-black">
-      {/* Firefox does not reliably detect the MPEG-2 display aspect ratio, so keep the player explicitly at 16:9. */}
-      <video
-        ref={setVideo}
-        muted
-        autoPlay
-        playsInline
-        className="aspect-video h-auto max-h-full w-full max-w-full object-fill"
-      />
+      {/* Firefox does not reliably detect the MPEG-2 display aspect ratio, so keep the player explicitly at 16:9
+          and letterbox it inside the frame, which a viewport wider than 16:9 would otherwise overflow. */}
+      <div className="player-frame grid h-full w-full place-items-center">
+        <video ref={setVideo} muted autoPlay playsInline className="player-picture object-fill" />
+      </div>
       {video && <PlayerControls video={video} />}
       {serviceId === undefined && services.length === 0 && (
         <p className="absolute z-10 text-sm text-white/70">No channels are available.</p>
