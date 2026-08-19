@@ -32,6 +32,15 @@ const BROADCAST_CAPACITY: usize = 8192;
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
 const ACQUIRE_RETRY_INTERVAL: Duration = Duration::from_millis(100);
 
+/// What a remuxer thread is tuned to.
+#[derive(Clone, Copy)]
+struct StreamTarget {
+    channel_id: usize,
+    /// The service to follow, or `None` while the whole transport stream is
+    /// streamed and no single service is being watched.
+    service_id: Option<u16>,
+}
+
 pub enum SubscribeError {
     TunerBusy,
     Internal(anyhow::Error),
@@ -214,7 +223,10 @@ fn start_stream(
             let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
             spawn_remuxer(
                 MmtDemuxer::new(reader, descrambler),
-                channel.id,
+                StreamTarget {
+                    channel_id: channel.id,
+                    service_id: Some(service_id),
+                },
                 registry,
                 &fmp4_tx,
                 &fmp4_init_segment,
@@ -224,14 +236,19 @@ fn start_stream(
         }
         ChannelInner::IsdbT { .. } => {
             let descrambler = B25Descrambler::init(cas)?;
-            let demux = if service_id == 0 {
-                M2tsDemuxer::new(reader, descrambler)
-            } else {
-                M2tsDemuxer::new_for_service(reader, descrambler, service_id)
+            // A service of zero streams the whole transport stream instead of
+            // picking one service out of it.
+            let target_service_id = (service_id != 0).then_some(service_id);
+            let demux = match target_service_id {
+                Some(service_id) => M2tsDemuxer::new_for_service(reader, descrambler, service_id),
+                None => M2tsDemuxer::new(reader, descrambler),
             };
             spawn_remuxer(
                 demux,
-                channel.id,
+                StreamTarget {
+                    channel_id: channel.id,
+                    service_id: target_service_id,
+                },
                 registry,
                 &fmp4_tx,
                 &fmp4_init_segment,
@@ -255,7 +272,7 @@ fn start_stream(
 
 fn spawn_remuxer<D>(
     demux: D,
-    channel_id: usize,
+    target: StreamTarget,
     registry: Arc<Registry>,
     fmp4_tx: &Sender<Bytes>,
     fmp4_init_segment: &Arc<Mutex<Option<Bytes>>>,
@@ -271,8 +288,12 @@ where
     };
     let mux = FragmentedMp4Muxer::new(fmp4_writer);
     let mut remuxer = Remuxer::new(demux, mux)?;
-    let mut service_information =
-        ServiceInformationProcessor::new(channel_id, Some(registry), Some(signal_tx.clone()));
+    let mut service_information = ServiceInformationProcessor::new(
+        target.channel_id,
+        Some(registry),
+        Some(signal_tx.clone()),
+    )
+    .watching_service(target.service_id);
 
     let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel();
     let event_id = Arc::clone(event_id);
@@ -294,7 +315,7 @@ where
         })();
 
         if let Err(error) = result {
-            tracing::error!(channel_id, %error, "Stream remuxer failed");
+            tracing::error!(channel_id = target.channel_id, %error, "Stream remuxer failed");
         }
     });
 
