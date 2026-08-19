@@ -1,12 +1,16 @@
 import { type JSX, useEffect, useRef, useState } from "react";
 
+import { useServices } from "../api/services";
 import { useStream } from "../api/stream";
 import { startPlayback } from "../player/playback";
+import { useServiceId } from "../router";
 
 export function Player(): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string>();
-  const { serviceId, hasServices, subscribeFmp4, playbackGeneration } = useStream();
+  const { subscribeFmp4, playbackGeneration } = useStream();
+  const serviceId = useServiceId();
+  const { data: services = [] } = useServices();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the generation deliberately restarts playback without remounting the video element.
   useEffect(() => {
@@ -33,7 +37,7 @@ export function Player(): JSX.Element {
         playsInline
         className="aspect-video h-auto max-h-full w-full max-w-full object-fill"
       />
-      {serviceId === undefined && !hasServices && (
+      {serviceId === undefined && services.length === 0 && (
         <p className="absolute z-10 text-sm text-white/70">No channels are available.</p>
       )}
       {error && (

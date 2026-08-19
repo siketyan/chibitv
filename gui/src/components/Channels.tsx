@@ -4,8 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { type JSX, useEffect, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
+import { useServices } from "../api/services";
 import { useStream } from "../api/stream";
 import { type Channel, DeliverySystem, type Service } from "../gen/chibitv/v1/chibitv_pb";
+import { useSelectService, useServiceId } from "../router";
 
 const DELIVERY_SYSTEMS: { id: DeliverySystem; label: string }[] = [
   { id: DeliverySystem.ISDB_T, label: "Terrestrial" },
@@ -18,18 +20,12 @@ interface ChannelsProps {
 }
 
 export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
-  const { state, serviceId, updateService } = useStream();
+  const { state } = useStream();
+  const serviceId = useServiceId();
+  const selectServiceId = useSelectService();
   const [expandedChannelId, setExpandedChannelId] = useState<number>();
   const [selectedDeliverySystem, setSelectedDeliverySystem] = useState<DeliverySystem>();
-  const {
-    data: services = [],
-    isLoading: areServicesLoading,
-    isError: areServicesError,
-  } = useQuery({
-    queryKey: queryKeys.services,
-    queryFn: async () => (await chibitvClient.listServices({})).services,
-    refetchInterval: (query) => (query.state.data?.length ? false : 1000),
-  });
+  const { data: services = [], isLoading: areServicesLoading, isError: areServicesError } = useServices();
   const {
     data: channels = [],
     isLoading: areChannelsLoading,
@@ -39,7 +35,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     queryFn: async () => (await chibitvClient.listChannels({})).channels,
   });
   const selectService = (selectedServiceId: number) => {
-    updateService(selectedServiceId);
+    selectServiceId(selectedServiceId);
     onServiceChange?.();
   };
   // The stream is still tuning while the reported service lags the selection.
