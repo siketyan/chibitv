@@ -1,3 +1,4 @@
+import { useQuery } from "@tanstack/react-query";
 import {
   createContext,
   type JSX,
@@ -11,7 +12,7 @@ import {
 } from "react";
 
 import type { StreamState } from "../gen/chibitv/v1/chibitv_pb";
-import { chibitvClient } from ".";
+import { chibitvClient, queryKeys } from ".";
 
 type Fmp4Listener = (data: Uint8Array) => void;
 const MAX_PENDING_FMP4 = 256;
@@ -19,6 +20,7 @@ const MAX_PENDING_FMP4 = 256;
 interface StreamContextValue {
   state: StreamState | undefined;
   serviceId: number | undefined;
+  hasServices: boolean;
   subscribeFmp4: (listener: Fmp4Listener) => () => void;
   playbackGeneration: number;
   updateService: (serviceId: number) => void;
@@ -38,6 +40,11 @@ export function StreamProvider({ children }: StreamProviderProps): JSX.Element {
   const [playbackGeneration, setPlaybackGeneration] = useState(0);
   const listeners = useRef(new Set<Fmp4Listener>());
   const pendingFmp4 = useRef<Uint8Array[]>([]);
+  const { data: services = [] } = useQuery({
+    queryKey: queryKeys.services,
+    queryFn: async () => (await chibitvClient.listServices({})).services,
+    refetchInterval: (query) => (query.state.data?.length ? false : 1000),
+  });
 
   const subscribeFmp4 = useCallback((listener: Fmp4Listener) => {
     listeners.current.add(listener);
@@ -52,6 +59,17 @@ export function StreamProvider({ children }: StreamProviderProps): JSX.Element {
   const updateService = useCallback((nextServiceId: number) => {
     setServiceId(nextServiceId);
   }, []);
+
+  // Start on the first service of the first configured channel, so that
+  // opening the GUI plays something without picking a channel first.
+  useEffect(() => {
+    if (serviceId !== undefined || services.length === 0) {
+      return;
+    }
+
+    const [first] = [...services].sort((a, b) => a.channelId - b.channelId || a.id - b.id);
+    setServiceId(first.id);
+  }, [serviceId, services]);
 
   useEffect(() => {
     if (serviceId === undefined) {
@@ -108,8 +126,15 @@ export function StreamProvider({ children }: StreamProviderProps): JSX.Element {
   }, [serviceId]);
 
   const value = useMemo(
-    () => ({ state, serviceId, subscribeFmp4, playbackGeneration, updateService }),
-    [state, serviceId, subscribeFmp4, playbackGeneration, updateService],
+    () => ({
+      state,
+      serviceId,
+      hasServices: services.length > 0,
+      subscribeFmp4,
+      playbackGeneration,
+      updateService,
+    }),
+    [state, serviceId, services.length, subscribeFmp4, playbackGeneration, updateService],
   );
 
   return <StreamContext value={value}>{children}</StreamContext>;
