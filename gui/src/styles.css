@@ -1,5 +1,10 @@
 @import "@heroui/react/styles";
 
+/* Keeps overlaid UI clear of the display cutouts an installed app draws under. */
+@utility inset-safe {
+  inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
 :root {
   font-family: "Noto Sans Symbols", ui-sans-serif, system-ui, sans-serif;
   color-scheme: dark;
