@@ -28,27 +28,31 @@ export function Page(): JSX.Element {
   return (
     <main className="relative h-dvh overflow-hidden bg-black text-foreground">
       <Player />
-      <OverlayNavbar
-        isChannelsOpen={isChannelsOpen}
-        isScheduleOpen={isScheduleOpen}
-        onChangeChannelsOpen={changeChannelsOpen}
-        onChangeScheduleOpen={changeScheduleOpen}
-      />
-      {isChannelsOpen && (
-        <aside className="absolute bottom-3 left-3 top-18 z-20 flex w-[min(18rem,calc(100%-1.5rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-surface/75 p-3 shadow-2xl backdrop-blur-xl sm:bottom-4 sm:left-4 sm:top-20">
-          <div className="flex items-center justify-between px-2 pb-3 pt-1">
-            <h2 className="font-semibold">Channels</h2>
-          </div>
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-            <Channels />
-          </div>
-        </aside>
-      )}
-      {isScheduleOpen && (
-        <aside className="absolute inset-x-3 bottom-3 top-18 z-20 flex min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-surface/80 shadow-2xl backdrop-blur-xl sm:inset-x-4 sm:bottom-4 sm:top-20">
-          <Events />
-        </aside>
-      )}
+      {/* The video fills the display, while everything drawn on top of it stays
+          inside the safe area so that an installed app keeps it reachable. */}
+      <div className="pointer-events-none absolute inset-safe">
+        <OverlayNavbar
+          isChannelsOpen={isChannelsOpen}
+          isScheduleOpen={isScheduleOpen}
+          onChangeChannelsOpen={changeChannelsOpen}
+          onChangeScheduleOpen={changeScheduleOpen}
+        />
+        {isChannelsOpen && (
+          <aside className="pointer-events-auto absolute bottom-3 left-3 top-18 z-20 flex w-[min(18rem,calc(100%-1.5rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-surface/75 p-3 shadow-2xl backdrop-blur-xl sm:bottom-4 sm:left-4 sm:top-20">
+            <div className="flex items-center justify-between px-2 pb-3 pt-1">
+              <h2 className="font-semibold">Channels</h2>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <Channels />
+            </div>
+          </aside>
+        )}
+        {isScheduleOpen && (
+          <aside className="pointer-events-auto absolute inset-x-3 bottom-3 top-18 z-20 flex min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-surface/80 shadow-2xl backdrop-blur-xl sm:inset-x-4 sm:bottom-4 sm:top-20">
+            <Events />
+          </aside>
+        )}
+      </div>
     </main>
   );
 }

@@ -168,6 +168,12 @@ The server supports ISDB-S and ISDB-T channels and requires at least one configu
 generate the service catalog with `scan` first so that every configured physical channel's services are available
 before tuning.
 
+The GUI is a Progressive Web App, so a browser loading a built GUI (`pnpm build`, or the Docker image below) offers
+to install it as a standalone app. Installing requires a secure context, so serve it over HTTPS or from `localhost`.
+Its Service Worker caches the application shell and the bundles, so that an installed app still opens while the
+server is unreachable; the RPC API and the live stream are never cached. It is registered in production builds only,
+which leaves the rsbuild development server above unaffected.
+
 ## Docker
 
 The image built from the `Dockerfile` bundles the GUI into the server binary, so a single container serves both the
