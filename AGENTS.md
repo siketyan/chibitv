@@ -75,6 +75,8 @@ It talks to the server with ConnectRPC clients generated into `gui/src/gen/`.
 Playback happens client-side in `gui/src/player/`: a worker (`transcoder.worker.ts`) consumes the server stream (`protocol.ts`) and remuxes/decodes it with mediabunny.
 `packages/mediabunny-mpeg2` supplies the MPEG-2 video decoder as a minimal FFmpeg WebAssembly build (`lib/build.sh`; prebuilt in Docker).
 Note that `mediabunny` is patched via `patches/` in the pnpm workspace.
+The app is installable as a PWA: `gui/public/` holds the manifest, the icons and the Service Worker (`sw.js` is plain JavaScript because it is served verbatim, without passing through the bundler).
+`gui/src/pwa.ts` registers the worker in production builds only.
 
 ### Docker
 
