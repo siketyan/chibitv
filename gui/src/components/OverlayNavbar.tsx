@@ -20,6 +20,9 @@ export function OverlayNavbar({
   const { state } = useStream();
   const event = state?.event;
   const description = event?.description.filter(({ content }) => content.length > 0) ?? [];
+  // The programme on air is known only once its SI has been received, so until
+  // then the service names what is being watched.
+  const title = event?.title || state?.service?.name;
 
   return (
     <nav className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent px-3 pb-10 pt-3 text-white sm:px-5 sm:pt-4">
@@ -34,7 +37,7 @@ export function OverlayNavbar({
         >
           {isChannelsOpen ? <XMarkIcon /> : <QueueListIcon />}
         </Button>
-        {event?.title && <h1 className="truncate text-sm font-medium drop-shadow sm:text-base">{event.title}</h1>}
+        {title && <h1 className="truncate text-sm font-medium drop-shadow sm:text-base">{title}</h1>}
         {description.length > 0 && (
           <Tooltip delay={0}>
             <Button
