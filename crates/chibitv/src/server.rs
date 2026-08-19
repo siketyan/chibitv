@@ -93,8 +93,6 @@ mod gui {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::RwLock;
-
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
     use chibitv_b10::table::EventInformation;
@@ -102,14 +100,9 @@ mod tests {
 
     use super::*;
     use crate::registry::Registry;
-    use crate::stream::Streams;
 
     fn empty_workspace() -> Arc<Workspace> {
-        Arc::new(Workspace::new(
-            Arc::new(Registry::default()),
-            vec![],
-            RwLock::new(Streams::new()),
-        ))
+        Arc::new(Workspace::new(Arc::new(Registry::default()), vec![], None))
     }
 
     #[tokio::test]
@@ -147,11 +140,7 @@ mod tests {
             "Service A".to_string(),
             "Provider A".to_string(),
         );
-        let workspace = Arc::new(Workspace::new(
-            registry,
-            vec![],
-            RwLock::new(Streams::new()),
-        ));
+        let workspace = Arc::new(Workspace::new(registry, vec![], None));
 
         let response = app(workspace)
             .oneshot(
@@ -196,11 +185,7 @@ mod tests {
                 },
             );
         }
-        let workspace = Arc::new(Workspace::new(
-            registry,
-            vec![],
-            RwLock::new(Streams::new()),
-        ));
+        let workspace = Arc::new(Workspace::new(registry, vec![], None));
 
         let response = app(workspace)
             .oneshot(
@@ -256,24 +241,5 @@ mod tests {
             .unwrap();
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    }
-
-    #[tokio::test]
-    async fn maps_missing_stream_to_connect_not_found() {
-        let response = app(empty_workspace())
-            .oneshot(
-                Request::post("/api/chibitv.v1.ChibitvService/GetStream")
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header("connect-protocol-version", "1")
-                    .body(Body::from(r#"{"streamId":99}"#))
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(response.status(), StatusCode::NOT_FOUND);
-        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
-        let body = std::str::from_utf8(&body).unwrap();
-        assert!(body.contains(r#""code":"not_found""#));
     }
 }

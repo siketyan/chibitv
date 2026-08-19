@@ -13,7 +13,7 @@ use crate::event_crawler::CrawledEvent;
 use crate::proto::chibitv::v1::*;
 use crate::registry;
 use crate::service_information::Signal;
-use crate::workspace::{Workspace, WorkspaceError};
+use crate::workspace::{StreamSubscription, Workspace, WorkspaceError};
 
 pub struct ChibitvServiceImpl {
     workspace: Arc<Workspace>,
@@ -154,71 +154,47 @@ impl ChibitvService for ChibitvServiceImpl {
         Response::stream_ok(ReceiverStream::new(rx))
     }
 
-    async fn get_stream(
-        &self,
-        _ctx: RequestContext,
-        request: ServiceRequest<'_, GetStreamRequest>,
-    ) -> ServiceResult<StreamState> {
-        let (service, event) = self
-            .workspace
-            .get_current_event(request.stream_id)
-            .ok_or_else(|| ConnectError::not_found("stream not found"))?;
-
-        Response::ok(StreamState {
-            service: service.as_ref().map(Service::from).into(),
-            event: service
-                .as_ref()
-                .zip(event.as_ref())
-                .map(|(service, event)| event_message(service.id, event))
-                .into(),
-            ..Default::default()
-        })
-    }
-
-    async fn update_stream(
-        &self,
-        _ctx: RequestContext,
-        request: ServiceRequest<'_, UpdateStreamRequest>,
-    ) -> ServiceResult<UpdateStreamResponse> {
-        if let Some(service_id) = request.service_id {
-            let service_id = u16::try_from(service_id)
-                .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
-            self.workspace
-                .set_channel(request.stream_id, service_id)
-                .map_err(workspace_error)?;
-        }
-
-        Response::ok(UpdateStreamResponse::default())
-    }
-
     async fn stream(
         &self,
         _ctx: RequestContext,
         request: ServiceRequest<'_, StreamRequest>,
     ) -> ServiceResult<ServiceStream<StreamResponse>> {
-        let stream_id = request.stream_id;
-        let (init_segment, fmp4, signals) = self
-            .workspace
-            .subscribe_stream(stream_id)
-            .ok_or_else(|| ConnectError::not_found("stream not found"))?;
-        let initial_state = stream_state(&self.workspace, stream_id)
-            .ok_or_else(|| ConnectError::not_found("stream not found"))?;
+        let service_id = u16::try_from(request.service_id)
+            .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
 
-        let initial_state = tokio_stream::iter([initial_state]);
+        let StreamSubscription {
+            stream,
+            init_segment,
+            fmp4,
+            signals,
+        } = self
+            .workspace
+            .subscribe_stream(service_id)
+            .await
+            .map_err(workspace_error)?;
+
+        let initial_state = tokio_stream::iter([stream_state(&self.workspace, &stream, None)]);
         let init_segment = tokio_stream::iter(init_segment.into_iter().map(fmp4_response));
         let fmp4 = fmp4.filter_map(|data| data.ok().map(fmp4_response));
-        let workspace = Arc::clone(&self.workspace);
-        let states = signals.filter_map(move |signal| match signal.ok()? {
-            Signal::EventChanged { event_id } => {
-                stream_state_with_id(&workspace, stream_id, Some(event_id))
-            }
-            Signal::ChannelChanged { .. } => stream_state(&workspace, stream_id),
-        });
+        let states = {
+            let workspace = Arc::clone(&self.workspace);
+            let stream = Arc::clone(&stream);
+            signals.filter_map(move |signal| match signal.ok()? {
+                Signal::EventChanged { event_id } => {
+                    Some(stream_state(&workspace, &stream, Some(event_id)))
+                }
+            })
+        };
 
+        // The stream keeps the tuner occupied, so it is moved into the
+        // response stream to release the tuner once every client is gone.
         Response::stream_ok(
             initial_state
                 .chain(init_segment.chain(fmp4).merge(states))
-                .map(Ok),
+                .map(move |response| {
+                    let _stream = &stream;
+                    Ok(response)
+                }),
         )
     }
 }
@@ -227,18 +203,18 @@ fn crawled_event_message(value: CrawledEvent) -> Event {
     event_message(value.service_id, &value.event)
 }
 
-fn stream_state(workspace: &Workspace, stream_id: u32) -> Option<StreamResponse> {
-    stream_state_with_id(workspace, stream_id, None)
-}
-
-fn stream_state_with_id(
+fn stream_state(
     workspace: &Workspace,
-    stream_id: u32,
+    stream: &crate::stream::Stream,
     event_id: Option<u16>,
-) -> Option<StreamResponse> {
-    let (service, event) = workspace.get_current_event_with_id(stream_id, event_id)?;
+) -> StreamResponse {
+    let service_id = stream.service_id();
+    let service = workspace.registry().get_service_by_id(service_id);
+    let event = event_id
+        .or_else(|| stream.event_id())
+        .and_then(|event_id| workspace.registry().get_event_by_id(service_id, event_id));
 
-    Some(StreamResponse {
+    StreamResponse {
         payload: Some(stream_response::Payload::State(Box::new(StreamState {
             service: service.as_ref().map(Service::from).into(),
             event: service
@@ -249,7 +225,7 @@ fn stream_state_with_id(
             ..Default::default()
         }))),
         ..Default::default()
-    })
+    }
 }
 
 fn fmp4_response(data: bytes::Bytes) -> StreamResponse {
@@ -270,10 +246,13 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
     match error {
         WorkspaceError::ChannelNotFound => ConnectError::not_found("channel not found"),
         WorkspaceError::ServiceNotFound => ConnectError::not_found("service not found"),
-        WorkspaceError::StreamNotFound => ConnectError::not_found("stream not found"),
+        WorkspaceError::TunerBusy => ConnectError::resource_exhausted("all tuners are in use"),
+        WorkspaceError::StreamingUnavailable => {
+            ConnectError::unavailable("streaming is unavailable")
+        }
         WorkspaceError::Internal(error) => {
-            tracing::error!(?error, "Failed to update stream");
-            ConnectError::internal("failed to update stream")
+            tracing::error!(?error, "Failed to open stream");
+            ConnectError::internal("failed to open stream")
         }
     }
 }

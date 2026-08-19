@@ -6,7 +6,7 @@ import { startPlayback } from "../player/playback";
 export function Player(): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string>();
-  const { subscribeFmp4, playbackGeneration } = useStream();
+  const { serviceId, hasServices, subscribeFmp4, playbackGeneration } = useStream();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the generation deliberately restarts playback without remounting the video element.
   useEffect(() => {
@@ -33,6 +33,9 @@ export function Player(): JSX.Element {
         playsInline
         className="aspect-video h-auto max-h-full w-full max-w-full object-fill"
       />
+      {serviceId === undefined && !hasServices && (
+        <p className="absolute z-10 text-sm text-white/70">No channels are available.</p>
+      )}
       {error && (
         <div className="absolute inset-x-4 bottom-4 z-30 rounded-lg bg-danger/90 p-3 text-sm text-white shadow-lg">
           {error}

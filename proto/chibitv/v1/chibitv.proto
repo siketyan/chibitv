@@ -8,8 +8,11 @@ service ChibitvService {
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
   rpc RefreshEvents(RefreshEventsRequest) returns (stream Event);
-  rpc GetStream(GetStreamRequest) returns (StreamState);
-  rpc UpdateStream(UpdateStreamRequest) returns (UpdateStreamResponse);
+
+  // Stream tunes to the requested service and streams it while the call is
+  // kept open. A tuner is occupied only while at least one client streams a
+  // service on its physical channel, and clients requesting the same service
+  // share a single tuner session.
   rpc Stream(StreamRequest) returns (stream StreamResponse);
 }
 
@@ -83,11 +86,8 @@ message Event {
 }
 
 message StreamRequest {
-  uint32 stream_id = 1;
-}
-
-message GetStreamRequest {
-  uint32 stream_id = 1;
+  // The service to tune to and stream.
+  uint32 service_id = 1;
 }
 
 message StreamState {
@@ -101,10 +101,3 @@ message StreamResponse {
     bytes fmp4 = 2;
   }
 }
-
-message UpdateStreamRequest {
-  uint32 stream_id = 1;
-  optional uint32 service_id = 2;
-}
-
-message UpdateStreamResponse {}
