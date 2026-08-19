@@ -1,5 +1,15 @@
 declare module "*.css";
 
+// rsbuild replaces `import.meta.env` at build time; only the flags used here are declared.
+interface ImportMetaEnv {
+  /** Whether the bundle was built in production mode. */
+  readonly PROD: boolean;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
+}
+
 // TypeScript does not ship DOM types for the Managed Media Source API, which is the only MSE
 // implementation available on Safari for iOS.
 interface ManagedMediaSourceEventMap extends MediaSourceEventMap {
