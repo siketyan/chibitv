@@ -12,6 +12,21 @@
   padding-left: env(safe-area-inset-left);
 }
 
+/*
+ * The picture is shown at 16:9 whatever the browser makes of the stream, so the
+ * frame sizes the element rather than the element sizing itself: `max-height`
+ * would clamp one axis and break the ratio instead of scaling both.
+ */
+@utility player-frame {
+  container-type: size;
+}
+
+@utility player-picture {
+  aspect-ratio: 16 / 9;
+  /* The largest 16:9 box that fits the frame. */
+  width: min(100cqw, calc(100cqh * 16 / 9));
+}
+
 :root {
   font-family: "Noto Sans Symbols", ui-sans-serif, system-ui, sans-serif;
   color-scheme: dark;
