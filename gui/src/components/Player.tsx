@@ -1,8 +1,10 @@
 import { type JSX, useEffect, useState } from "react";
 
+import { useServices } from "../api/services";
 import { useStream } from "../api/stream";
 import { bindMediaSession, publishNowPlaying } from "../player/mediaSession";
 import { startPlayback } from "../player/playback";
+import { useServiceId } from "../router";
 import { PlayerControls } from "./PlayerControls";
 
 export function Player(): JSX.Element {
@@ -10,7 +12,9 @@ export function Player(): JSX.Element {
   // render them once it is mounted.
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string>();
-  const { state, serviceId, hasServices, subscribeFmp4, playbackGeneration } = useStream();
+  const { state, subscribeFmp4, playbackGeneration } = useStream();
+  const serviceId = useServiceId();
+  const { data: services = [] } = useServices();
   const serviceName = state?.service?.name;
   const providerName = state?.service?.providerName ?? "";
   const eventTitle = state?.event?.title;
@@ -53,7 +57,7 @@ export function Player(): JSX.Element {
         className="aspect-video h-auto max-h-full w-full max-w-full object-fill"
       />
       {video && <PlayerControls video={video} />}
-      {serviceId === undefined && !hasServices && (
+      {serviceId === undefined && services.length === 0 && (
         <p className="absolute z-10 text-sm text-white/70">No channels are available.</p>
       )}
       {error && (

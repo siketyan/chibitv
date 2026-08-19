@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, type JSX, useEffect, useMemo, useRef, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
+import { useServices } from "../api/services";
 import type { DateTime, Event } from "../gen/chibitv/v1/chibitv_pb";
 
 const MINUTES_PER_DAY = 24 * 60;
@@ -81,10 +82,7 @@ export function Events(): JSX.Element {
     queryKey: queryKeys.channels,
     queryFn: async () => (await chibitvClient.listChannels({})).channels,
   });
-  const { data: services = [] } = useQuery({
-    queryKey: queryKeys.services,
-    queryFn: async () => (await chibitvClient.listServices({})).services,
-  });
+  const { data: services = [] } = useServices();
   const { data: initialEvents = [] } = useQuery({
     queryKey: queryKeys.events(),
     queryFn: async () => (await chibitvClient.listEvents({})).events,

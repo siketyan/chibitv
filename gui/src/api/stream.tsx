@@ -1,4 +1,3 @@
-import { useQuery } from "@tanstack/react-query";
 import {
   createContext,
   type JSX,
@@ -12,39 +11,33 @@ import {
 } from "react";
 
 import type { StreamState } from "../gen/chibitv/v1/chibitv_pb";
-import { chibitvClient, queryKeys } from ".";
+import { chibitvClient } from ".";
 
 type Fmp4Listener = (data: Uint8Array) => void;
 const MAX_PENDING_FMP4 = 256;
 
 interface StreamContextValue {
   state: StreamState | undefined;
-  serviceId: number | undefined;
-  hasServices: boolean;
   subscribeFmp4: (listener: Fmp4Listener) => () => void;
   playbackGeneration: number;
-  updateService: (serviceId: number) => void;
 }
 
 const StreamContext = createContext<StreamContextValue | undefined>(undefined);
 
 interface StreamProviderProps {
+  /** The service to watch; the URL holds it, so a reload keeps the channel. */
+  serviceId: number | undefined;
   children: ReactNode;
 }
 
-export function StreamProvider({ children }: StreamProviderProps): JSX.Element {
-  // The watched service is local to this client; the server tunes only while
-  // the stream below is held open and shares it with other watching clients.
-  const [serviceId, setServiceId] = useState<number>();
+export function StreamProvider({ serviceId, children }: StreamProviderProps): JSX.Element {
+  // The watched service is picked by this client alone; the server tunes only
+  // while the stream below is held open and shares it with other watching
+  // clients.
   const [state, setState] = useState<StreamState>();
   const [playbackGeneration, setPlaybackGeneration] = useState(0);
   const listeners = useRef(new Set<Fmp4Listener>());
   const pendingFmp4 = useRef<Uint8Array[]>([]);
-  const { data: services = [] } = useQuery({
-    queryKey: queryKeys.services,
-    queryFn: async () => (await chibitvClient.listServices({})).services,
-    refetchInterval: (query) => (query.state.data?.length ? false : 1000),
-  });
 
   const subscribeFmp4 = useCallback((listener: Fmp4Listener) => {
     listeners.current.add(listener);
@@ -55,21 +48,6 @@ export function StreamProvider({ children }: StreamProviderProps): JSX.Element {
 
     return () => listeners.current.delete(listener);
   }, []);
-
-  const updateService = useCallback((nextServiceId: number) => {
-    setServiceId(nextServiceId);
-  }, []);
-
-  // Start on the first service of the first configured channel, so that
-  // opening the GUI plays something without picking a channel first.
-  useEffect(() => {
-    if (serviceId !== undefined || services.length === 0) {
-      return;
-    }
-
-    const [first] = [...services].sort((a, b) => a.channelId - b.channelId || a.id - b.id);
-    setServiceId(first.id);
-  }, [serviceId, services]);
 
   useEffect(() => {
     if (serviceId === undefined) {
@@ -126,15 +104,8 @@ export function StreamProvider({ children }: StreamProviderProps): JSX.Element {
   }, [serviceId]);
 
   const value = useMemo(
-    () => ({
-      state,
-      serviceId,
-      hasServices: services.length > 0,
-      subscribeFmp4,
-      playbackGeneration,
-      updateService,
-    }),
-    [state, serviceId, services.length, subscribeFmp4, playbackGeneration, updateService],
+    () => ({ state, subscribeFmp4, playbackGeneration }),
+    [state, subscribeFmp4, playbackGeneration],
   );
 
   return <StreamContext value={value}>{children}</StreamContext>;

@@ -6,8 +6,8 @@
     "node": "24"
   },
   "dependencies": {
-    "@chibitv/mediabunny-mpeg2": "workspace:*",
     "@bufbuild/protobuf": "2.14.0",
+    "@chibitv/mediabunny-mpeg2": "workspace:*",
     "@connectrpc/connect": "2.1.2",
     "@connectrpc/connect-web": "2.1.2",
     "@heroicons/react": "2.2.0",
@@ -23,6 +23,7 @@
     "@rsbuild/plugin-react": "2.1.0",
     "@tailwindcss/postcss": "4.3.3",
     "@tanstack/react-query": "5.101.4",
+    "@tanstack/react-router": "1.170.28",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.4",
     "react": "19.2.8",
