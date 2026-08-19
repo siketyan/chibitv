@@ -7,8 +7,10 @@ import {
   SpeakerXMarkIcon,
 } from "@heroicons/react/24/outline";
 import { Button } from "@heroui/react";
+import clsx from "clsx";
 import { type JSX, useEffect, useState } from "react";
 
+import { chromeTransition, useChromeHold, usePlayerChrome } from "../player/chrome";
 import {
   isFullscreen,
   isInPictureInPicture,
@@ -46,6 +48,10 @@ export function PlayerControls({ video }: PlayerControlsProps): JSX.Element {
   const [isPictureInPicture, setIsPictureInPicture] = useState(false);
   const [isFullscreenActive, setIsFullscreenActive] = useState(false);
   const [canSetVolume, setCanSetVolume] = useState(false);
+  const { isVisible } = usePlayerChrome();
+
+  // A paused player is waiting for the viewer, so the controls stay put.
+  useChromeHold("paused", isPaused);
 
   useEffect(() => {
     // Safari for iOS keeps `volume` read-only, where a slider would do nothing.
@@ -102,7 +108,12 @@ export function PlayerControls({ video }: PlayerControlsProps): JSX.Element {
   };
 
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 to-transparent pt-10 pad-safe">
+    <div
+      className={clsx(
+        "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 to-transparent pt-10 pad-safe",
+        chromeTransition(isVisible),
+      )}
+    >
       <div className="flex items-center justify-between gap-2 px-3 pb-3 text-white sm:px-5 sm:pb-4">
         <div className="flex min-w-0 items-center gap-2">
           <Button

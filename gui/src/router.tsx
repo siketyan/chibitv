@@ -4,6 +4,7 @@ import { type JSX, useCallback, useEffect } from "react";
 import { useServices } from "./api/services";
 import { StreamProvider } from "./api/stream";
 import { Page } from "./components/Page";
+import { PlayerChromeProvider } from "./player/chrome";
 
 /**
  * The route the watched service is kept in.
@@ -49,7 +50,9 @@ function Watch(): JSX.Element {
 
   return (
     <StreamProvider serviceId={serviceId}>
-      <Page />
+      <PlayerChromeProvider>
+        <Page />
+      </PlayerChromeProvider>
     </StreamProvider>
   );
 }
