@@ -73,9 +73,7 @@ Cargo features on `chibitv`:
 `gui/` is a React 19 + rsbuild + Tailwind/HeroUI app.
 It talks to the server with ConnectRPC clients generated into `gui/src/gen/`.
 Playback happens client-side in `gui/src/player/`: a worker (`transcoder.worker.ts`) consumes the server stream (`protocol.ts`) and remuxes/decodes it with mediabunny.
-The GUI draws its own transport controls (`components/PlayerControls.tsx`), so the `<video>` element carries no `controls` attribute; `player/presentation.ts` wraps Picture-in-Picture and fullscreen including the WebKit variants Safari needs.
-`player/mediaSession.ts` publishes the programme on air to the platform controls, deliberately leaving service selection to the GUI.
-`player/chrome.tsx` fades that overlaid UI out while the viewer is idle, and holds it on screen while something still needs it, such as a paused player.
+The GUI draws its own player UI rather than the native controls: `components/PlayerControls.tsx` for the transport, backed by `player/presentation.ts` (Picture-in-Picture and fullscreen), `player/mediaSession.ts` (platform controls) and `player/chrome.tsx` (hiding that UI while the viewer is idle).
 `packages/mediabunny-mpeg2` supplies the MPEG-2 video decoder as a minimal FFmpeg WebAssembly build (`lib/build.sh`; prebuilt in Docker).
 Note that `mediabunny` is patched via `patches/` in the pnpm workspace.
 The app is installable as a PWA: `gui/public/` holds the manifest, the icons and the Service Worker (`sw.js` is plain JavaScript because it is served verbatim, without passing through the bundler).
