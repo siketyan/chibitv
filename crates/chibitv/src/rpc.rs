@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use chrono::{FixedOffset, NaiveDateTime};
+use chrono::{Local, NaiveDateTime, TimeZone};
 use connectrpc::{
     ConnectError, RequestContext, Response, Router, ServiceRequest, ServiceResult, ServiceStream,
 };
@@ -297,34 +297,40 @@ fn event_message(service_id: u16, value: &registry::Event) -> Event {
 
 impl From<NaiveDateTime> for DateTime {
     fn from(value: NaiveDateTime) -> Self {
-        let jst = FixedOffset::east_opt(9 * 60 * 60).expect("JST offset must be valid");
-        let value = value
-            .and_local_timezone(jst)
-            .single()
-            .expect("a fixed timezone offset must be unambiguous");
+        // The SI carries JST wall-clock time and the server runs on that zone,
+        // so the local offset is the one the broadcast was scheduled against.
+        timestamp_in(value, &Local)
+    }
+}
 
-        Self {
-            seconds: value.timestamp(),
-            nanos: value.timestamp_subsec_nanos(),
-            ..Default::default()
-        }
+fn timestamp_in<Tz: TimeZone>(value: NaiveDateTime, timezone: &Tz) -> DateTime {
+    let value = value
+        .and_local_timezone(timezone.clone())
+        .earliest()
+        .expect("a broadcast time must exist in the time zone of the server");
+
+    DateTime {
+        seconds: value.timestamp(),
+        nanos: value.timestamp_subsec_nanos(),
+        ..Default::default()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::NaiveDate;
+    use chrono::{FixedOffset, NaiveDate};
 
     use super::*;
 
     #[test]
-    fn converts_broadcast_time_from_jst_to_unix_timestamp() {
+    fn converts_broadcast_time_to_a_unix_timestamp() {
+        let jst = FixedOffset::east_opt(9 * 60 * 60).unwrap();
         let local_time = NaiveDate::from_ymd_opt(2026, 7, 11)
             .unwrap()
             .and_hms_nano_opt(18, 30, 0, 123_000_000)
             .unwrap();
 
-        let converted = DateTime::from(local_time);
+        let converted = timestamp_in(local_time, &jst);
 
         assert_eq!(
             converted.seconds,

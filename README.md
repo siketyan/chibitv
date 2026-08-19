@@ -72,6 +72,13 @@ zero-based indices into the `[[channels]]` entries in `config.toml`. Tuner comma
 cargo run -- --verbose live --channel 0
 ```
 
+ARIB SI carries wall-clock time in JST, so chibitv reads the schedule against the clock of the machine it runs on.
+Run it on JST, or set `TZ` for it, or else it cannot tell which programme is on air:
+
+```shell
+TZ=JST-9 cargo run -- serve
+```
+
 ### `live`
 
 Tune to a configured channel, descramble it, remux it to MPEG-2 Transport Stream, and write the result to stdout. The
@@ -186,6 +193,7 @@ Prebuilt images are published to `ghcr.io/siketyan/chibitv`. To build one locall
 docker build --tag chibitv .
 ```
 
+The image sets `TZ=JST-9` so that the container reads the broadcast schedule on the clock the SI is expressed in.
 The container reads `/app/config.toml` and needs access to the tuner devices and the PC/SC daemon of the host.
 Note that `server.address` has to listen on more than the loopback interface of the container, for example
 `address = "[::]:3001"`:

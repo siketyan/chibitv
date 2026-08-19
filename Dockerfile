@@ -63,6 +63,10 @@ COPY --from=server-builder \
     /usr/lib/x86_64-linux-gnu/libpcsclite_real.so.1* \
     /usr/lib/x86_64-linux-gnu/
 COPY --from=server-builder /usr/local/bin/chibitv /usr/local/bin/chibitv
+# ARIB SI carries wall-clock time in JST, so the broadcast schedule only lines
+# up with the clock of a server running on that zone. This is the POSIX form of
+# the offset, which needs no time zone database.
+ENV TZ=JST-9
 # Every subcommand reads ./config.toml, so mount the configuration here.
 # Nothing is written back, so the working directory stays owned by root while
 # the image runs as the unprivileged user of the base image.

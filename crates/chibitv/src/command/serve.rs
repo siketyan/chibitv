@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use chibitv_b61::Descrambler;
+use chrono::{Local, Offset};
 use clap::Parser;
+use tracing::warn;
 
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
@@ -15,7 +17,24 @@ use crate::workspace::Workspace;
 #[derive(Clone, Debug, Parser)]
 pub struct Options {}
 
+/// The offset ARIB SI expresses every date and time in.
+const BROADCAST_UTC_OFFSET_SECONDS: i32 = 9 * 60 * 60;
+
+/// Warns when the clock of the server disagrees with the one the broadcast
+/// schedules against, which leaves the programme on air unrecognised.
+fn warn_unless_broadcast_time_zone() {
+    let offset = Local::now().offset().fix().local_minus_utc();
+    if offset != BROADCAST_UTC_OFFSET_SECONDS {
+        warn!(
+            offset,
+            "The server does not run on JST, so the programme on air cannot be told apart; set TZ=JST-9"
+        );
+    }
+}
+
 pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
+    warn_unless_broadcast_time_zone();
+
     let registry = Arc::new(Registry::default());
     seed_registry(&registry, &config.channels);
 
