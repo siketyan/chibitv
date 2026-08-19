@@ -213,10 +213,15 @@ impl Registry {
         );
     }
 
-    pub fn put_event(&self, service_id: u16, event: &EventInformation) {
+    /// Stores an event of a service, reporting whether it could be stored.
+    ///
+    /// An event of a service the registry does not know yet — an EIT ahead of
+    /// the SDT describes one — is dropped, and `false` tells the caller the
+    /// schedule it carried is still missing.
+    pub fn put_event(&self, service_id: u16, event: &EventInformation) -> bool {
         let services = self.services.pin();
         let Some(service) = services.get(&service_id) else {
-            return;
+            return false;
         };
 
         let event_id = event.event_id;
@@ -272,12 +277,16 @@ impl Registry {
         };
 
         events.insert(event_id, event);
+
+        true
     }
 
-    pub fn put_b10_event(&self, service_id: u16, event: &B10EventInformation) {
+    /// Stores an ISDB-T event of a service, reporting whether it could be
+    /// stored. See [`Registry::put_event`].
+    pub fn put_b10_event(&self, service_id: u16, event: &B10EventInformation) -> bool {
         let services = self.services.pin();
         let Some(service) = services.get(&service_id) else {
-            return;
+            return false;
         };
 
         let event_id = event.event_id;
@@ -319,6 +328,8 @@ impl Registry {
                 description,
             },
         );
+
+        true
     }
 }
 
