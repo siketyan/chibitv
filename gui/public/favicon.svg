@@ -1,9 +1,10 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="chibitv">
   <rect width="512" height="512" rx="112.64" fill="#0c0e12" />
-  <g stroke="#fff" stroke-width="24.37" stroke-linecap="round">
-    <path d="M256 212.99 162.82 98.3" />
-    <path d="M256 212.99 349.18 98.3" />
+  <path d="M326.93 346.62A98.61 98.61 0 1 1 326.93 209.62" fill="none" stroke="#fff" stroke-width="38.71" />
+  <circle cx="370.46" cy="249.58" r="17.69" fill="#fff" />
+  <circle cx="370.46" cy="306.66" r="17.69" fill="#fff" />
+  <g stroke="#fff" stroke-width="26.54" stroke-linecap="round">
+    <path d="M208.53 180.79 163.89 89.26" />
+    <path d="M303.47 180.79 348.11 89.26" />
   </g>
-  <rect x="55.3" y="212.99" width="401.41" height="200.7" rx="50.18" fill="#fff" />
-  <path d="M220.16 255.99 220.16 370.69 320.51 313.34Z" fill="#0c0e12" />
 </svg>
