@@ -163,7 +163,7 @@ impl ChibitvService for ChibitvServiceImpl {
             .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
 
         let StreamSubscription {
-            session,
+            stream,
             init_segment,
             fmp4,
             signals,
@@ -173,26 +173,26 @@ impl ChibitvService for ChibitvServiceImpl {
             .await
             .map_err(workspace_error)?;
 
-        let initial_state = tokio_stream::iter([session_state(&self.workspace, &session, None)]);
+        let initial_state = tokio_stream::iter([stream_state(&self.workspace, &stream, None)]);
         let init_segment = tokio_stream::iter(init_segment.into_iter().map(fmp4_response));
         let fmp4 = fmp4.filter_map(|data| data.ok().map(fmp4_response));
         let states = {
             let workspace = Arc::clone(&self.workspace);
-            let session = Arc::clone(&session);
+            let stream = Arc::clone(&stream);
             signals.filter_map(move |signal| match signal.ok()? {
                 Signal::EventChanged { event_id } => {
-                    Some(session_state(&workspace, &session, Some(event_id)))
+                    Some(stream_state(&workspace, &stream, Some(event_id)))
                 }
             })
         };
 
-        // The session keeps the tuner occupied, so it is moved into the
+        // The stream keeps the tuner occupied, so it is moved into the
         // response stream to release the tuner once every client is gone.
         Response::stream_ok(
             initial_state
                 .chain(init_segment.chain(fmp4).merge(states))
                 .map(move |response| {
-                    let _session = &session;
+                    let _stream = &stream;
                     Ok(response)
                 }),
         )
@@ -203,15 +203,15 @@ fn crawled_event_message(value: CrawledEvent) -> Event {
     event_message(value.service_id, &value.event)
 }
 
-fn session_state(
+fn stream_state(
     workspace: &Workspace,
-    session: &crate::stream::StreamSession,
+    stream: &crate::stream::Stream,
     event_id: Option<u16>,
 ) -> StreamResponse {
-    let service_id = session.service_id();
+    let service_id = stream.service_id();
     let service = workspace.registry().get_service_by_id(service_id);
     let event = event_id
-        .or_else(|| session.event_id())
+        .or_else(|| stream.event_id())
         .and_then(|event_id| workspace.registry().get_event_by_id(service_id, event_id));
 
     StreamResponse {

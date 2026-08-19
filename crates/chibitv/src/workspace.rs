@@ -7,7 +7,7 @@ use crate::channel::{Channel, ChannelInner};
 use crate::event_crawler::EventCrawler;
 use crate::registry::Registry;
 use crate::service_information::Signal;
-use crate::stream::{StreamManager, StreamSession, SubscribeError};
+use crate::stream::{Stream, Streams, SubscribeError};
 
 pub enum WorkspaceError {
     ChannelNotFound,
@@ -18,7 +18,7 @@ pub enum WorkspaceError {
 }
 
 pub struct StreamSubscription {
-    pub session: Arc<StreamSession>,
+    pub stream: Arc<Stream>,
     pub init_segment: Option<Bytes>,
     pub fmp4: BroadcastStream<Bytes>,
     pub signals: BroadcastStream<Signal>,
@@ -27,20 +27,16 @@ pub struct StreamSubscription {
 pub struct Workspace {
     registry: Arc<Registry>,
     channels: Vec<Channel>,
-    stream_manager: Option<StreamManager>,
+    streams: Option<Streams>,
     event_crawler: Option<Arc<EventCrawler>>,
 }
 
 impl Workspace {
-    pub fn new(
-        registry: Arc<Registry>,
-        channels: Vec<Channel>,
-        stream_manager: Option<StreamManager>,
-    ) -> Self {
+    pub fn new(registry: Arc<Registry>, channels: Vec<Channel>, streams: Option<Streams>) -> Self {
         Self {
             registry,
             channels,
-            stream_manager,
+            streams,
             event_crawler: None,
         }
     }
@@ -88,25 +84,24 @@ impl Workspace {
             })
             .ok_or(WorkspaceError::ChannelNotFound)?;
 
-        let manager = self
-            .stream_manager
+        let streams = self
+            .streams
             .as_ref()
             .ok_or(WorkspaceError::StreamingUnavailable)?;
 
-        let session =
-            manager
-                .subscribe(service_id, channel)
-                .await
-                .map_err(|error| match error {
-                    SubscribeError::TunerBusy => WorkspaceError::TunerBusy,
-                    SubscribeError::Internal(error) => WorkspaceError::Internal(error),
-                })?;
+        let stream = streams
+            .subscribe(service_id, channel)
+            .await
+            .map_err(|error| match error {
+                SubscribeError::TunerBusy => WorkspaceError::TunerBusy,
+                SubscribeError::Internal(error) => WorkspaceError::Internal(error),
+            })?;
 
-        let (init_segment, fmp4) = session.subscribe_fmp4();
-        let signals = session.subscribe_signal();
+        let (init_segment, fmp4) = stream.subscribe_fmp4();
+        let signals = stream.subscribe_signal();
 
         Ok(StreamSubscription {
-            session,
+            stream,
             init_segment,
             fmp4: BroadcastStream::new(fmp4),
             signals: BroadcastStream::new(signals),
@@ -139,7 +134,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subscribing_without_a_stream_manager_fails() {
+    async fn subscribing_without_configured_streams_fails() {
         let registry = Arc::new(Registry::default());
         registry.put_cached_service(0, 0x1234, 0x5678, "Channel".to_string(), String::new());
         let workspace = Workspace::new(registry, vec![channel()], None);

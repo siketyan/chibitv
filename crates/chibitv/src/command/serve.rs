@@ -8,7 +8,7 @@ use crate::channel::{Channel, ChannelInner};
 use crate::config::{ChannelConfig, Config};
 use crate::event_crawler::EventCrawler;
 use crate::registry::Registry;
-use crate::stream::StreamManager;
+use crate::stream::Streams;
 use crate::tuner::Tuners;
 use crate::workspace::Workspace;
 
@@ -56,7 +56,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
 
     // No channel is tuned yet: a tuner is occupied only while at least one
     // client keeps a stream open.
-    let stream_manager = StreamManager::new(
+    let streams = Streams::new(
         registry.clone(),
         Arc::clone(&tuners),
         cas.clone(),
@@ -66,7 +66,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let address = config.server.address;
     let event_crawler = EventCrawler::new(tuners, cas, config.cas.master_key.into());
     let state = Arc::new(
-        Workspace::new(registry, channels, Some(stream_manager)).with_event_crawler(event_crawler),
+        Workspace::new(registry, channels, Some(streams)).with_event_crawler(event_crawler),
     );
 
     crate::server::serve(address, state).await

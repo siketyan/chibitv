@@ -86,12 +86,8 @@ message Event {
 }
 
 message StreamRequest {
-  // Formerly the identifier of the server-wide shared stream.
-  reserved 1;
-  reserved "stream_id";
-
   // The service to tune to and stream.
-  uint32 service_id = 2;
+  uint32 service_id = 1;
 }
 
 message StreamState {

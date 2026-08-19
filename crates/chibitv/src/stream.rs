@@ -26,7 +26,7 @@ const BROADCAST_CAPACITY: usize = 8192;
 
 /// How long a subscriber keeps waiting for a tuner to become free.
 ///
-/// A session that just lost its last subscriber releases its tuner
+/// A stream that just lost its last subscriber releases its tuner
 /// asynchronously (the remuxer thread has to notice the kill signal first), so
 /// a channel switch briefly sees every tuner in use.
 const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -37,12 +37,12 @@ pub enum SubscribeError {
     Internal(anyhow::Error),
 }
 
-struct Fmp4SessionWriter {
+struct Fmp4StreamWriter {
     tx: Sender<Bytes>,
     init_segment: Arc<Mutex<Option<Bytes>>>,
 }
 
-impl WriteMp4Fragment for Fmp4SessionWriter {
+impl WriteMp4Fragment for Fmp4StreamWriter {
     fn write_fragment(&mut self, data: Bytes) -> anyhow::Result<()> {
         let mut init_segment = self.init_segment.lock().unwrap();
         if init_segment.is_none() {
@@ -56,10 +56,10 @@ impl WriteMp4Fragment for Fmp4SessionWriter {
 
 /// A single tuned service, shared by every client streaming it.
 ///
-/// The tuner stays occupied as long as at least one `Arc` of the session is
+/// The tuner stays occupied as long as at least one `Arc` of the stream is
 /// alive; dropping the last one signals the remuxer thread to stop, which
 /// closes the tuner device and releases the lease.
-pub struct StreamSession {
+pub struct Stream {
     service_id: u16,
     event_id: Arc<RwLock<Option<u16>>>,
     fmp4_tx: Sender<Bytes>,
@@ -68,7 +68,7 @@ pub struct StreamSession {
     kill_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
-impl StreamSession {
+impl Stream {
     pub fn service_id(&self) -> u16 {
         self.service_id
     }
@@ -93,26 +93,26 @@ impl StreamSession {
     }
 }
 
-impl Drop for StreamSession {
+impl Drop for Stream {
     fn drop(&mut self) {
         if let Some(kill_tx) = self.kill_tx.take() {
             let _ = kill_tx.send(());
         }
 
-        info!(service_id = self.service_id, "Stream session stopped");
+        info!(service_id = self.service_id, "Stream stopped");
     }
 }
 
-/// Starts and shares [`StreamSession`]s, one per requested service.
-pub struct StreamManager {
+/// Starts and shares [`Stream`]s, one per requested service.
+pub struct Streams {
     registry: Arc<Registry>,
     tuners: Arc<Tuners>,
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
-    sessions: tokio::sync::Mutex<HashMap<u16, Weak<StreamSession>>>,
+    streams: tokio::sync::Mutex<HashMap<u16, Weak<Stream>>>,
 }
 
-impl StreamManager {
+impl Streams {
     pub fn new(
         registry: Arc<Registry>,
         tuners: Arc<Tuners>,
@@ -124,54 +124,54 @@ impl StreamManager {
             tuners,
             cas,
             b61_descrambler,
-            sessions: tokio::sync::Mutex::new(HashMap::new()),
+            streams: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 
-    /// Returns the running session for the service, starting one on a free
+    /// Returns the running stream for the service, starting one on a free
     /// tuner when nobody is streaming it yet.
     pub async fn subscribe(
         &self,
         service_id: u16,
         channel: &Channel,
-    ) -> Result<Arc<StreamSession>, SubscribeError> {
+    ) -> Result<Arc<Stream>, SubscribeError> {
         let deadline = tokio::time::Instant::now() + ACQUIRE_TIMEOUT;
 
         loop {
-            let mut sessions = self.sessions.lock().await;
-            if let Some(session) = sessions.get(&service_id).and_then(Weak::upgrade) {
-                return Ok(session);
+            let mut streams = self.streams.lock().await;
+            if let Some(stream) = streams.get(&service_id).and_then(Weak::upgrade) {
+                return Ok(stream);
             }
 
             // Tuning is blocking device I/O, so it runs off the async runtime.
-            // The sessions lock is held across it on purpose: concurrent
-            // requests for the same service must wait and share the session
+            // The streams lock is held across it on purpose: concurrent
+            // requests for the same service must wait and share the stream
             // instead of racing for another tuner.
-            let starter = self.session_starter(service_id, channel);
+            let starter = self.stream_starter(service_id, channel);
             let result = tokio::task::spawn_blocking(starter)
                 .await
                 .map_err(|error| SubscribeError::Internal(error.into()))?;
 
             match result {
-                Ok(session) => {
-                    sessions.retain(|_, session| session.strong_count() > 0);
-                    sessions.insert(service_id, Arc::downgrade(&session));
-                    return Ok(session);
+                Ok(stream) => {
+                    streams.retain(|_, stream| stream.strong_count() > 0);
+                    streams.insert(service_id, Arc::downgrade(&stream));
+                    return Ok(stream);
                 }
                 Err(SubscribeError::TunerBusy) if tokio::time::Instant::now() < deadline => {}
                 Err(error) => return Err(error),
             }
 
-            drop(sessions);
+            drop(streams);
             tokio::time::sleep(ACQUIRE_RETRY_INTERVAL).await;
         }
     }
 
-    fn session_starter(
+    fn stream_starter(
         &self,
         service_id: u16,
         channel: &Channel,
-    ) -> impl FnOnce() -> Result<Arc<StreamSession>, SubscribeError> + Send + 'static {
+    ) -> impl FnOnce() -> Result<Arc<Stream>, SubscribeError> + Send + 'static {
         let registry = Arc::clone(&self.registry);
         let tuners = Arc::clone(&self.tuners);
         let cas = Arc::clone(&self.cas);
@@ -185,20 +185,20 @@ impl StreamManager {
             })?;
             info!(tuner_id = tuner.id(), service_id, "Acquired tuner");
 
-            start_session(registry, cas, b61_descrambler, tuner, service_id, &channel)
+            start_stream(registry, cas, b61_descrambler, tuner, service_id, &channel)
                 .map_err(SubscribeError::Internal)
         }
     }
 }
 
-fn start_session(
+fn start_stream(
     registry: Arc<Registry>,
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
     tuner: TunerLease,
     service_id: u16,
     channel: &Channel,
-) -> anyhow::Result<Arc<StreamSession>> {
+) -> anyhow::Result<Arc<Stream>> {
     tuner.tune(channel.clone())?;
     let reader = tuner.open()?;
 
@@ -241,9 +241,9 @@ fn start_session(
         }
     }?;
 
-    info!(service_id, channel = %channel.name, "Stream session started");
+    info!(service_id, channel = %channel.name, "Stream started");
 
-    Ok(Arc::new(StreamSession {
+    Ok(Arc::new(Stream {
         service_id,
         event_id,
         fmp4_tx,
@@ -265,7 +265,7 @@ fn spawn_remuxer<D>(
 where
     D: Demux + Send + 'static,
 {
-    let fmp4_writer = Fmp4SessionWriter {
+    let fmp4_writer = Fmp4StreamWriter {
         tx: fmp4_tx.clone(),
         init_segment: Arc::clone(fmp4_init_segment),
     };
@@ -294,7 +294,7 @@ where
         })();
 
         if let Err(error) = result {
-            tracing::error!(channel_id, %error, "Stream session remuxer failed");
+            tracing::error!(channel_id, %error, "Stream remuxer failed");
         }
     });
 
