@@ -78,7 +78,7 @@ export function PlayerControls({ video }: PlayerControlsProps): JSX.Element {
 
   useEffect(() => observePictureInPicture(video, () => setIsPictureInPicture(isInPictureInPicture(video))), [video]);
 
-  useEffect(() => observeFullscreen(() => setIsFullscreenActive(isFullscreen())), []);
+  useEffect(() => observeFullscreen(video, () => setIsFullscreenActive(isFullscreen(video))), [video]);
 
   const changePlaying = () => {
     if (video.paused) {
@@ -150,14 +150,14 @@ export function PlayerControls({ video }: PlayerControlsProps): JSX.Element {
               <PictureInPictureIcon />
             </Button>
           )}
-          {supportsFullscreen() && (
+          {supportsFullscreen(video) && (
             <Button
               aria-label={isFullscreenActive ? "Leave fullscreen" : "Watch fullscreen"}
               aria-pressed={isFullscreenActive}
               className={BUTTON_CLASS}
               isIconOnly
               variant="ghost"
-              onPress={() => void toggleFullscreen().catch(() => {})}
+              onPress={() => void toggleFullscreen(video).catch(() => {})}
             >
               {isFullscreenActive ? <ArrowsPointingInIcon /> : <ArrowsPointingOutIcon />}
             </Button>
