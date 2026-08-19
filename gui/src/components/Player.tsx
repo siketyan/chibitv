@@ -1,11 +1,14 @@
-import { type JSX, useEffect, useRef, useState } from "react";
+import { type JSX, useEffect, useState } from "react";
 
 import { useStream } from "../api/stream";
 import { bindMediaSession, publishNowPlaying } from "../player/mediaSession";
 import { startPlayback } from "../player/playback";
+import { PlayerControls } from "./PlayerControls";
 
 export function Player(): JSX.Element {
-  const ref = useRef<HTMLVideoElement>(null);
+  // The controls act on the element, so hold it in state rather than a ref to
+  // render them once it is mounted.
+  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string>();
   const { state, serviceId, hasServices, subscribeFmp4, playbackGeneration } = useStream();
   const serviceName = state?.service?.name;
@@ -14,7 +17,6 @@ export function Player(): JSX.Element {
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the generation deliberately restarts playback without remounting the video element.
   useEffect(() => {
-    const video = ref.current;
     if (!video) return;
 
     setError(undefined);
@@ -24,16 +26,15 @@ export function Player(): JSX.Element {
         setError(playbackError.message);
       },
     });
-  }, [subscribeFmp4, playbackGeneration]);
+  }, [video, subscribeFmp4, playbackGeneration]);
 
   // The element outlives every playback, so the platform keeps one session for
   // as long as the player is mounted.
   useEffect(() => {
-    const video = ref.current;
     if (!video) return;
 
     return bindMediaSession(video);
-  }, []);
+  }, [video]);
 
   useEffect(() => {
     publishNowPlaying(
@@ -45,18 +46,18 @@ export function Player(): JSX.Element {
     <div className="relative grid h-full min-h-0 min-w-0 place-items-center overflow-hidden bg-black">
       {/* Firefox does not reliably detect the MPEG-2 display aspect ratio, so keep the player explicitly at 16:9. */}
       <video
-        ref={ref}
-        controls
+        ref={setVideo}
         muted
         autoPlay
         playsInline
         className="aspect-video h-auto max-h-full w-full max-w-full object-fill"
       />
+      {video && <PlayerControls video={video} />}
       {serviceId === undefined && !hasServices && (
         <p className="absolute z-10 text-sm text-white/70">No channels are available.</p>
       )}
       {error && (
-        <div className="absolute inset-x-4 bottom-4 z-30 rounded-lg bg-danger/90 p-3 text-sm text-white shadow-lg">
+        <div className="absolute inset-x-4 bottom-20 z-30 rounded-lg bg-danger/90 p-3 text-sm text-white shadow-lg">
           {error}
         </div>
       )}

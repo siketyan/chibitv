@@ -5,6 +5,13 @@
   inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
+/* The same for UI anchored to an edge, which pads itself away from them instead. */
+@utility pad-safe {
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
+}
+
 :root {
   font-family: "Noto Sans Symbols", ui-sans-serif, system-ui, sans-serif;
   color-scheme: dark;
