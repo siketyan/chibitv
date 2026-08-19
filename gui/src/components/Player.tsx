@@ -1,12 +1,16 @@
 import { type JSX, useEffect, useRef, useState } from "react";
 
 import { useStream } from "../api/stream";
+import { bindMediaSession, publishNowPlaying } from "../player/mediaSession";
 import { startPlayback } from "../player/playback";
 
 export function Player(): JSX.Element {
   const ref = useRef<HTMLVideoElement>(null);
   const [error, setError] = useState<string>();
-  const { serviceId, hasServices, subscribeFmp4, playbackGeneration } = useStream();
+  const { state, serviceId, hasServices, subscribeFmp4, playbackGeneration } = useStream();
+  const serviceName = state?.service?.name;
+  const providerName = state?.service?.providerName ?? "";
+  const eventTitle = state?.event?.title;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: the generation deliberately restarts playback without remounting the video element.
   useEffect(() => {
@@ -21,6 +25,21 @@ export function Player(): JSX.Element {
       },
     });
   }, [subscribeFmp4, playbackGeneration]);
+
+  // The element outlives every playback, so the platform keeps one session for
+  // as long as the player is mounted.
+  useEffect(() => {
+    const video = ref.current;
+    if (!video) return;
+
+    return bindMediaSession(video);
+  }, []);
+
+  useEffect(() => {
+    publishNowPlaying(
+      serviceName ? { title: eventTitle || serviceName, service: serviceName, provider: providerName } : undefined,
+    );
+  }, [eventTitle, serviceName, providerName]);
 
   return (
     <div className="relative grid h-full min-h-0 min-w-0 place-items-center overflow-hidden bg-black">
