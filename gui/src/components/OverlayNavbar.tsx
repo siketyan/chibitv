@@ -1,8 +1,10 @@
 import { CalendarDaysIcon, InformationCircleIcon, QueueListIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { Button, Tooltip } from "@heroui/react";
+import clsx from "clsx";
 import type { JSX } from "react";
 
 import { useStream } from "../api/stream";
+import { chromeTransition, usePlayerChrome } from "../player/chrome";
 
 interface OverlayNavbarProps {
   isChannelsOpen: boolean;
@@ -17,12 +19,18 @@ export function OverlayNavbar({
   onChangeChannelsOpen,
   onChangeScheduleOpen,
 }: OverlayNavbarProps): JSX.Element {
+  const { isVisible } = usePlayerChrome();
   const { state } = useStream();
   const event = state?.event;
   const description = event?.description.filter(({ content }) => content.length > 0) ?? [];
 
   return (
-    <nav className="pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent px-3 pb-10 pt-3 text-white sm:px-5 sm:pt-4">
+    <nav
+      className={clsx(
+        "pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent px-3 pb-10 pt-3 text-white sm:px-5 sm:pt-4",
+        chromeTransition(isVisible),
+      )}
+    >
       <div className="flex min-w-0 items-center gap-2">
         <Button
           aria-label={isChannelsOpen ? "Close channels" : "Open channels"}

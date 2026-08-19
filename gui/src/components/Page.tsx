@@ -1,5 +1,7 @@
+import clsx from "clsx";
 import { type JSX, useState } from "react";
 
+import { usePlayerChrome } from "../player/chrome";
 import { Channels } from "./Channels";
 import { Events } from "./Events";
 import { OverlayNavbar } from "./OverlayNavbar";
@@ -10,6 +12,9 @@ const isNarrowScreen = () => window.matchMedia("(max-width: 767px)").matches;
 export function Page(): JSX.Element {
   const [isChannelsOpen, setIsChannelsOpen] = useState(() => !isNarrowScreen());
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+  // The panels stay put while they are open: the viewer asked for them, and
+  // only the UI drawn over the picture fades away.
+  const { isVisible } = usePlayerChrome();
 
   const changeChannelsOpen = (open: boolean) => {
     setIsChannelsOpen(open);
@@ -26,7 +31,7 @@ export function Page(): JSX.Element {
   };
 
   return (
-    <main className="relative h-dvh overflow-hidden bg-black text-foreground">
+    <main className={clsx("relative h-dvh overflow-hidden bg-black text-foreground", !isVisible && "cursor-none")}>
       <Player />
       {/* The video fills the display, while everything drawn on top of it stays
           inside the safe area so that an installed app keeps it reachable. */}
