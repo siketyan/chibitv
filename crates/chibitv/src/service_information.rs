@@ -23,7 +23,25 @@ pub enum Signal {
 ///
 /// The table id is part of it because the present/following and the schedule
 /// tables number their sections independently.
-type SectionKey = (u8, u16, u16, u16, u8);
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct SectionKey {
+    table_id: u8,
+    original_network_id: u16,
+    /// The TLV stream id on ISDB-S, the transport stream id on ISDB-T.
+    stream_id: u16,
+    service_id: u16,
+    section_number: u8,
+}
+
+/// Tells one revision of a section apart from the next.
+///
+/// The CRC comes along because `version_number` is five bits wide and wraps
+/// around.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SectionVersion {
+    version_number: u8,
+    crc_32: u32,
+}
 
 pub struct ServiceInformationProcessor {
     channel_id: usize,
@@ -31,7 +49,7 @@ pub struct ServiceInformationProcessor {
     registry: Option<Arc<Registry>>,
     signal_tx: Option<Sender<Signal>>,
     current_event_id: Option<u16>,
-    stored_sections: HashMap<SectionKey, (u8, u32)>,
+    stored_sections: HashMap<SectionKey, SectionVersion>,
 }
 
 impl ServiceInformationProcessor {
@@ -106,14 +124,17 @@ impl ServiceInformationProcessor {
 
     fn process_b10_eit(&mut self, table_id: u8, table: Eit) -> anyhow::Result<()> {
         self.store_section(
-            (
+            SectionKey {
                 table_id,
-                table.original_network_id,
-                table.transport_stream_id,
-                table.service_id,
-                table.section_number,
-            ),
-            (table.version_number, table.crc_32),
+                original_network_id: table.original_network_id,
+                stream_id: table.transport_stream_id,
+                service_id: table.service_id,
+                section_number: table.section_number,
+            },
+            SectionVersion {
+                version_number: table.version_number,
+                crc_32: table.crc_32,
+            },
             |registry| {
                 table.events.iter().fold(true, |stored, event| {
                     registry.put_b10_event(table.service_id, event) && stored
@@ -154,14 +175,17 @@ impl ServiceInformationProcessor {
 
     fn process_mh_eit(&mut self, table: MhEit) -> anyhow::Result<()> {
         self.store_section(
-            (
-                table.table_id,
-                table.original_network_id,
-                table.tlv_stream_id,
-                table.service_id,
-                table.section_number,
-            ),
-            (table.version_number, table.crc_32),
+            SectionKey {
+                table_id: table.table_id,
+                original_network_id: table.original_network_id,
+                stream_id: table.tlv_stream_id,
+                service_id: table.service_id,
+                section_number: table.section_number,
+            },
+            SectionVersion {
+                version_number: table.version_number,
+                crc_32: table.crc_32,
+            },
             |registry| {
                 table.events.iter().fold(true, |stored, event| {
                     registry.put_event(table.service_id, event) && stored
@@ -204,10 +228,9 @@ impl ServiceInformationProcessor {
     /// Hands the events of an EIT section to the registry, unless it already
     /// holds them.
     ///
-    /// A stream repeats every section every few seconds and only bumps
-    /// `version_number` when its content changes, so remembering the version
-    /// keeps the registry from rebuilding a schedule that did not move. The
-    /// CRC guards against the version wrapping around its five bits.
+    /// A stream repeats every section every few seconds and only bumps its
+    /// version when the content changes, so remembering the version keeps the
+    /// registry from rebuilding a schedule that did not move.
     ///
     /// A section is only remembered once every event of it made it into the
     /// registry: one describing a service the registry does not know yet is
@@ -215,7 +238,7 @@ impl ServiceInformationProcessor {
     fn store_section(
         &mut self,
         key: SectionKey,
-        version: (u8, u32),
+        version: SectionVersion,
         store: impl FnOnce(&Registry) -> bool,
     ) {
         let Some(registry) = self.registry.clone() else {
