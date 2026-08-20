@@ -249,7 +249,7 @@ impl Registry {
 
         let mut language_code = previous.and_then(|e| e.language_code.clone());
         let mut name = previous.and_then(|e| e.name.clone());
-        let text = previous.and_then(|e| e.text.clone());
+        let mut text = previous.and_then(|e| e.text.clone());
         let mut description = previous.map(|e| e.description.clone()).unwrap_or_default();
 
         for descriptor in &event.descriptors {
@@ -259,6 +259,9 @@ impl Registry {
                         String::from_utf8_lossy(&descriptor.iso_639_language_code[..]).to_string(),
                     );
                     name = Some(String::from_utf8_lossy(&descriptor.event_name).to_string());
+
+                    let summary = String::from_utf8_lossy(&descriptor.text);
+                    text = (!summary.is_empty()).then(|| summary.into_owned());
                 }
                 Descriptor::MhExtendedEvent(descriptor) => {
                     let descriptors_len = (descriptor.last_descriptor_number + 1) as usize;
@@ -381,8 +384,14 @@ mod tests {
         Descriptor as B10Descriptor, ExtendedEventDescriptor, ExtendedEventItem, ServiceDescriptor,
         ShortEventDescriptor,
     };
-    use chibitv_b60::descriptor::{Descriptor as B60Descriptor, MhServiceDescriptor};
-    use chibitv_b60::table::ServiceInformation as B60ServiceInformation;
+    use chibitv_b60::descriptor::{
+        Descriptor as B60Descriptor, ExtendedEventItem as MhExtendedEventItem,
+        MhExtendedEventDescriptor, MhServiceDescriptor, MhShortEventDescriptor,
+    };
+    use chibitv_b60::table::{
+        EventInformation as B60EventInformation, EventRunningStatus,
+        ServiceInformation as B60ServiceInformation,
+    };
 
     use super::*;
 
@@ -410,6 +419,81 @@ mod tests {
         let service = registry.get_service_by_id(0x5678).unwrap();
         assert_eq!(service.channel_id, 4);
         assert_eq!(service.transport_stream_id, 0x1234);
+    }
+
+    #[test]
+    fn collects_isdb_s_event_summary_and_details() {
+        let registry = Registry::default();
+        registry.put_service(
+            0,
+            0x1234,
+            &B60ServiceInformation {
+                service_id: 0x5678,
+                eit_user_defined_flags: 0,
+                eit_schedule_flag: true,
+                eit_present_following_flag: true,
+                running_status: 4,
+                free_ca_mode: false,
+                descriptors: vec![B60Descriptor::MhService(MhServiceDescriptor {
+                    service_type: 0x01,
+                    service_provider_name: b"Provider".to_vec(),
+                    service_name: b"Channel".to_vec(),
+                })],
+            },
+        );
+
+        let event = |descriptors| B60EventInformation {
+            event_id: 0x9ABC,
+            start_time: None,
+            duration: None,
+            running_status: EventRunningStatus::InOperation,
+            free_ca_mode: false,
+            descriptors,
+        };
+
+        registry.put_event(
+            0x5678,
+            &event(vec![B60Descriptor::MhExtendedEvent(
+                MhExtendedEventDescriptor {
+                    descriptor_number: 1,
+                    last_descriptor_number: 1,
+                    iso_639_language_code: *b"jpn",
+                    items: vec![MhExtendedEventItem {
+                        item_description: vec![],
+                        item: b" Bob".to_vec(),
+                    }],
+                    text: vec![],
+                },
+            )]),
+        );
+        registry.put_event(
+            0x5678,
+            &event(vec![
+                B60Descriptor::MhShortEvent(MhShortEventDescriptor {
+                    iso_639_language_code: *b"jpn",
+                    event_name: b"Program".to_vec(),
+                    text: b"Summary".to_vec(),
+                }),
+                B60Descriptor::MhExtendedEvent(MhExtendedEventDescriptor {
+                    descriptor_number: 0,
+                    last_descriptor_number: 1,
+                    iso_639_language_code: *b"jpn",
+                    items: vec![MhExtendedEventItem {
+                        item_description: b"Cast".to_vec(),
+                        item: b"Alice".to_vec(),
+                    }],
+                    text: vec![],
+                }),
+            ]),
+        );
+
+        let event = registry.get_event_by_id(0x5678, 0x9ABC).unwrap();
+        assert_eq!(event.name.as_deref(), Some("Program"));
+        assert_eq!(event.text.as_deref(), Some("Summary"));
+        assert_eq!(
+            event.description_items(),
+            vec![("Cast".to_string(), "Alice Bob".to_string())]
+        );
     }
 
     #[test]
