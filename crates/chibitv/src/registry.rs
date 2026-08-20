@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use chrono::{NaiveDateTime, TimeDelta};
 use papaya::HashMap;
-use tracing::debug;
+use tracing::{debug, info};
 
 use chibitv_b10::descriptor::Descriptor as B10Descriptor;
 use chibitv_b10::table::{
@@ -11,6 +12,8 @@ use chibitv_b10::table::{
 use chibitv_b24::decode as decode_b24;
 use chibitv_b60::descriptor::Descriptor;
 use chibitv_b60::table::{BroadcasterInformation, EventInformation, ServiceInformation};
+
+use crate::store::{EventWriter, SectionId, SectionUpdate, Store, StoredEvent};
 
 #[derive(Clone, Debug)]
 #[expect(
@@ -71,9 +74,47 @@ impl Event {
 pub struct Registry {
     broadcasters: HashMap<u8, Broadcaster>,
     services: HashMap<u16, Service>,
+    events: Option<EventWriter>,
 }
 
 impl Registry {
+    /// Keeps the schedule this collects between runs.
+    pub fn storing_events(mut self, events: EventWriter) -> Self {
+        self.events = Some(events);
+        self
+    }
+
+    /// Fills the registry with the schedule of the previous run.
+    pub async fn restore_events(&self, store: &Arc<dyn Store>) -> anyhow::Result<usize> {
+        let events = store
+            .load_events()
+            .await
+            .context("Could not read the stored schedule")?;
+
+        // The services come from the configuration while starting up, so the
+        // schedule of one that has never been scanned has nowhere to go.
+        let restored = events
+            .into_iter()
+            .filter(|event| {
+                let services = self.services.pin();
+                let Some(service) = services.get(&event.service_id) else {
+                    return false;
+                };
+
+                service
+                    .events
+                    .pin()
+                    .insert(event.event_id, event.clone().into());
+
+                true
+            })
+            .count();
+
+        info!(restored, "Restored the stored schedule");
+
+        Ok(restored)
+    }
+
     pub fn get_all_services(&self) -> Vec<Service> {
         let services = self.services.pin();
         services.values().cloned().collect()
@@ -237,12 +278,79 @@ impl Registry {
         );
     }
 
+    /// Stores the events one EIT section describes, reporting whether every
+    /// one of them could be stored.
+    ///
+    /// A section named by `section` is kept between runs under that name, so
+    /// that revising it replaces what it described before. One left unnamed —
+    /// the present and following events, which the schedule describes as well
+    /// — stays in memory only.
+    pub fn put_events(
+        &self,
+        service_id: u16,
+        section: Option<SectionId>,
+        events: &[EventInformation],
+    ) -> bool {
+        // Every event is offered, so short circuiting on the first one dropped
+        // would lose the rest.
+        let mut stored = Vec::with_capacity(events.len());
+        let mut complete = true;
+        for event in events {
+            if self.put_event(service_id, event) {
+                stored.push(event.event_id);
+            } else {
+                complete = false;
+            }
+        }
+
+        complete && self.keep_events(service_id, section, &stored)
+    }
+
+    /// The ISDB-T counterpart of [`Registry::put_events`].
+    pub fn put_b10_events(
+        &self,
+        service_id: u16,
+        section: Option<SectionId>,
+        events: &[B10EventInformation],
+    ) -> bool {
+        let mut stored = Vec::with_capacity(events.len());
+        let mut complete = true;
+        for event in events {
+            if self.put_b10_event(service_id, event) {
+                stored.push(event.event_id);
+            } else {
+                complete = false;
+            }
+        }
+
+        complete && self.keep_events(service_id, section, &stored)
+    }
+
+    /// Queues the events for the store, reporting whether it took them.
+    ///
+    /// The events are read back rather than taken from the section, as the
+    /// registry is the one that assembled them out of everything the
+    /// descriptors of a service carried.
+    fn keep_events(&self, service_id: u16, section: Option<SectionId>, event_ids: &[u16]) -> bool {
+        let (Some(section), Some(writer)) = (section, &self.events) else {
+            return true;
+        };
+
+        let events = event_ids
+            .iter()
+            .filter_map(|event_id| self.get_event_by_id(service_id, *event_id))
+            .map(|event| StoredEvent::of_service(service_id, &event))
+            .collect();
+
+        writer.enqueue(SectionUpdate { section, events })
+    }
+
     /// Stores an event of a service, reporting whether it could be stored.
     ///
     /// An event of a service the registry does not know yet — an EIT ahead of
     /// the SDT describes one — is dropped, and `false` tells the caller the
     /// schedule it carried is still missing.
-    pub fn put_event(&self, service_id: u16, event: &EventInformation) -> bool {
+    fn put_event(&self, service_id: u16, event: &EventInformation) -> bool {
         let services = self.services.pin();
         let Some(service) = services.get(&service_id) else {
             return false;
@@ -312,25 +420,9 @@ impl Registry {
         true
     }
 
-    /// Puts an event read back from the store into the service carrying it,
-    /// reporting whether it could be stored.
-    ///
-    /// The services come from the configuration while starting up, so the
-    /// schedule of one that has never been scanned has nowhere to go.
-    pub fn put_loaded_event(&self, service_id: u16, event: Event) -> bool {
-        let services = self.services.pin();
-        let Some(service) = services.get(&service_id) else {
-            return false;
-        };
-
-        service.events.pin().insert(event.id, event);
-
-        true
-    }
-
     /// Stores an ISDB-T event of a service, reporting whether it could be
     /// stored. See [`Registry::put_event`].
-    pub fn put_b10_event(&self, service_id: u16, event: &B10EventInformation) -> bool {
+    fn put_b10_event(&self, service_id: u16, event: &B10EventInformation) -> bool {
         let services = self.services.pin();
         let Some(service) = services.get(&service_id) else {
             return false;
@@ -421,6 +513,55 @@ mod tests {
     };
 
     use super::*;
+
+    #[tokio::test]
+    async fn restores_the_schedule_of_the_services_it_knows() {
+        let store = crate::store::open("sqlite::memory:").await.unwrap();
+        let section = SectionId {
+            original_network_id: 4,
+            stream_id: 0x1234,
+            service_id: 0x5678,
+            table_id: 0x50,
+            section_number: 0,
+        };
+        store
+            .replace_section(
+                section,
+                &[
+                    stored_event(0x5678, 0x0001, "Programme"),
+                    // The configuration knows nothing of this service, so its
+                    // schedule has nowhere to go.
+                    stored_event(0x9ABC, 0x0002, "Elsewhere"),
+                ],
+            )
+            .await
+            .unwrap();
+
+        let registry = Registry::default();
+        registry.put_cached_service(0, 0x1234, 0x5678, "Channel".to_string(), String::new());
+
+        assert_eq!(registry.restore_events(&store).await.unwrap(), 1);
+        assert_eq!(
+            registry
+                .get_event_by_id(0x5678, 0x0001)
+                .and_then(|event| event.name)
+                .as_deref(),
+            Some("Programme")
+        );
+    }
+
+    fn stored_event(service_id: u16, event_id: u16, name: &str) -> StoredEvent {
+        StoredEvent {
+            service_id,
+            event_id,
+            start_time: None,
+            duration: None,
+            language_code: None,
+            name: Some(name.to_string()),
+            text: None,
+            description: vec![],
+        }
+    }
 
     #[test]
     fn registers_isdb_s_service_with_channel_id() {

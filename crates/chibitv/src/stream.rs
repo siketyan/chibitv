@@ -19,7 +19,6 @@ use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
 use crate::registry::Registry;
 use crate::remux::Remuxer;
 use crate::service_information::{ServiceInformationProcessor, Signal};
-use crate::store::EventWriter;
 use crate::tuner::{AcquireError, TunerLease, Tuners};
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
@@ -114,20 +113,11 @@ impl Drop for Stream {
 }
 
 /// Starts and shares [`Stream`]s, one per requested service.
-/// Where a stream hands the service information it demultiplexes.
-#[derive(Clone)]
-struct ServiceInformationSink {
-    registry: Arc<Registry>,
-    /// Where the schedule is kept between runs.
-    events: EventWriter,
-}
-
 pub struct Streams {
     registry: Arc<Registry>,
     tuners: Arc<Tuners>,
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
-    events: EventWriter,
     streams: tokio::sync::Mutex<HashMap<u16, Weak<Stream>>>,
 }
 
@@ -137,14 +127,12 @@ impl Streams {
         tuners: Arc<Tuners>,
         cas: Arc<PcscCasModule>,
         b61_descrambler: Option<Descrambler>,
-        events: EventWriter,
     ) -> Self {
         Self {
             registry,
             tuners,
             cas,
             b61_descrambler,
-            events,
             streams: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -193,10 +181,7 @@ impl Streams {
         service_id: u16,
         channel: &Channel,
     ) -> impl FnOnce() -> Result<Arc<Stream>, SubscribeError> + Send + 'static {
-        let service_information = ServiceInformationSink {
-            registry: Arc::clone(&self.registry),
-            events: self.events.clone(),
-        };
+        let registry = Arc::clone(&self.registry);
         let tuners = Arc::clone(&self.tuners);
         let cas = Arc::clone(&self.cas);
         let b61_descrambler = self.b61_descrambler.clone();
@@ -209,21 +194,14 @@ impl Streams {
             })?;
             info!(tuner_id = tuner.id(), service_id, "Acquired tuner");
 
-            start_stream(
-                service_information,
-                cas,
-                b61_descrambler,
-                tuner,
-                service_id,
-                &channel,
-            )
-            .map_err(SubscribeError::Internal)
+            start_stream(registry, cas, b61_descrambler, tuner, service_id, &channel)
+                .map_err(SubscribeError::Internal)
         }
     }
 }
 
 fn start_stream(
-    service_information: ServiceInformationSink,
+    registry: Arc<Registry>,
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
     tuner: TunerLease,
@@ -249,7 +227,7 @@ fn start_stream(
                     channel_id: channel.id,
                     service_id: Some(service_id),
                 },
-                service_information,
+                registry,
                 &fmp4_tx,
                 &fmp4_init_segment,
                 &signal_tx,
@@ -271,7 +249,7 @@ fn start_stream(
                     channel_id: channel.id,
                     service_id: target_service_id,
                 },
-                service_information,
+                registry,
                 &fmp4_tx,
                 &fmp4_init_segment,
                 &signal_tx,
@@ -295,7 +273,7 @@ fn start_stream(
 fn spawn_remuxer<D>(
     demux: D,
     target: StreamTarget,
-    service_information: ServiceInformationSink,
+    registry: Arc<Registry>,
     fmp4_tx: &Sender<Bytes>,
     fmp4_init_segment: &Arc<Mutex<Option<Bytes>>>,
     signal_tx: &Sender<Signal>,
@@ -312,11 +290,10 @@ where
     let mut remuxer = Remuxer::new(demux, mux)?;
     let mut processor = ServiceInformationProcessor::new(
         target.channel_id,
-        Some(service_information.registry),
+        Some(registry),
         Some(signal_tx.clone()),
     )
-    .watching_service(target.service_id)
-    .storing_events(service_information.events);
+    .watching_service(target.service_id);
 
     let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel();
     let event_id = Arc::clone(event_id);

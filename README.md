@@ -184,8 +184,6 @@ scheme of the URL picks the backend:
 url = "sqlite://chibitv.db"
 ```
 
-The server needs it: a database it cannot open is an error to start up over.
-
 The GUI is a Progressive Web App, so a browser loading a built GUI (`pnpm build`, or the Docker image below) offers
 to install it as a standalone app. Installing requires a secure context, so serve it over HTTPS or from `localhost`.
 Its Service Worker caches the application shell and the bundles, so that an installed app still opens while the

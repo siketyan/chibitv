@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use anyhow::bail;
 
-pub use event::{EventStore, EventWriter, SectionId, SectionUpdate, StoredEvent, restore_events};
+pub use event::{EventStore, EventWriter, SectionId, SectionUpdate, StoredEvent};
 pub use sqlite::SqliteStore;
 
 /// A database chibitv keeps its state in.

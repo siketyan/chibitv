@@ -173,16 +173,17 @@ mod tests {
                 format!("Service {service_id}"),
                 String::new(),
             );
-            registry.put_b10_event(
+            registry.put_b10_events(
                 service_id,
-                &EventInformation {
+                None,
+                &[EventInformation {
                     event_id,
                     start_time: None,
                     duration: None,
                     running_status: 0,
                     free_ca_mode: false,
                     descriptors: vec![],
-                },
+                }],
             );
         }
         let workspace = Arc::new(Workspace::new(registry, vec![], None));

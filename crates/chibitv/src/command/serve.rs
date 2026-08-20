@@ -37,16 +37,17 @@ fn warn_unless_broadcast_time_zone() {
 pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     warn_unless_broadcast_time_zone();
 
-    let registry = Arc::new(Registry::default());
+    let store = store::open(&config.database.url)
+        .await
+        .with_context(|| format!("Could not open the database at `{}`", config.database.url))?;
+
+    let registry =
+        Arc::new(Registry::default().storing_events(EventWriter::spawn(Arc::clone(&store))));
     seed_registry(&registry, &config.channels);
 
     // The schedule of the previous run is restored before anything is tuned,
     // so the programme guide is there without crawling first.
-    let store = store::open(&config.database.url)
-        .await
-        .with_context(|| format!("Could not open the database at `{}`", config.database.url))?;
-    store::restore_events(&store, &registry).await?;
-    let events = EventWriter::spawn(store);
+    registry.restore_events(&store).await?;
 
     let channels = config
         .channels
@@ -90,11 +91,10 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         Arc::clone(&tuners),
         cas.clone(),
         b61_descrambler,
-        events.clone(),
     );
 
     let address = config.server.address;
-    let event_crawler = EventCrawler::new(tuners, cas, config.cas.master_key.into(), events);
+    let event_crawler = EventCrawler::new(tuners, cas, config.cas.master_key.into());
     let state = Arc::new(
         Workspace::new(registry, channels, Some(streams)).with_event_crawler(event_crawler),
     );
