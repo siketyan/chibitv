@@ -130,6 +130,92 @@ impl ShortEventDescriptor {
     }
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExtendedEventItem {
+    pub item_description: Vec<u8>,
+    pub item: Vec<u8>,
+}
+
+impl ExtendedEventItem {
+    pub fn read(bytes: &mut Bytes) -> Result<Self> {
+        let item_description_length = bytes.get_u8();
+        let item_description = split_to(bytes, item_description_length as usize)?.into();
+
+        let item_length = bytes.get_u8();
+        let item = split_to(bytes, item_length as usize)?.into();
+
+        Ok(Self {
+            item_description,
+            item,
+        })
+    }
+}
+
+/// Carries the detailed description of an event, in items keyed by their
+/// description (e.g. the cast of a programme).
+///
+/// One event may be described by up to 16 of these descriptors: an item longer
+/// than a single descriptor can hold continues in the next one, as an item
+/// whose `item_description` is empty.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExtendedEventDescriptor {
+    pub descriptor_number: u8,
+    pub last_descriptor_number: u8,
+    pub iso_639_language_code: [u8; 3],
+    pub items: Vec<ExtendedEventItem>,
+    pub text: Vec<u8>,
+}
+
+impl ExtendedEventDescriptor {
+    pub fn read(bytes: &mut Bytes) -> Result<Self> {
+        if bytes.remaining() < 5 {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "extended event descriptor must be at least 5 bytes",
+            ));
+        }
+
+        let head = bytes.get_u8();
+        let descriptor_number = (head & 0xF0) >> 4;
+        let last_descriptor_number = head & 0x0F;
+
+        let iso_639_language_code = bytes.get_byte_array::<3>();
+
+        let items = {
+            let length_of_items = bytes.get_u8();
+            let mut bytes = split_to(bytes, length_of_items as usize)?;
+            let mut items = Vec::new();
+            while bytes.has_remaining() {
+                items.push(ExtendedEventItem::read(&mut bytes)?);
+            }
+
+            items
+        };
+
+        let text_length = bytes.get_u8();
+        let text = split_to(bytes, text_length as usize)?.into();
+
+        Ok(Self {
+            descriptor_number,
+            last_descriptor_number,
+            iso_639_language_code,
+            items,
+            text,
+        })
+    }
+}
+
+fn split_to(bytes: &mut Bytes, length: usize) -> Result<Bytes> {
+    if bytes.remaining() < length {
+        return Err(Error::new(
+            ErrorKind::UnexpectedEof,
+            "descriptor field runs past the end of the descriptor",
+        ));
+    }
+
+    Ok(bytes.split_to(length))
+}
+
 #[derive(Clone, Debug, FromRepr)]
 #[repr(u8)]
 pub enum DescriptorTag {
@@ -138,6 +224,7 @@ pub enum DescriptorTag {
     ServiceListDescriptor = 0x41,
     ServiceDescriptor = 0x48,
     ShortEventDescriptor = 0x4D,
+    ExtendedEventDescriptor = 0x4E,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -147,6 +234,7 @@ pub enum Descriptor {
     ServiceList(ServiceListDescriptor),
     Service(ServiceDescriptor),
     ShortEvent(ShortEventDescriptor),
+    ExtendedEvent(ExtendedEventDescriptor),
     Unknown(u8, Vec<u8>),
 }
 
@@ -171,6 +259,9 @@ impl Descriptor {
             DescriptorTag::ServiceDescriptor => Self::Service(ServiceDescriptor::read(&mut bytes)?),
             DescriptorTag::ShortEventDescriptor => {
                 Self::ShortEvent(ShortEventDescriptor::read(&mut bytes)?)
+            }
+            DescriptorTag::ExtendedEventDescriptor => {
+                Self::ExtendedEvent(ExtendedEventDescriptor::read(&mut bytes)?)
             }
         })
     }
@@ -247,6 +338,56 @@ mod tests {
                 private_data: vec![],
             })
         );
+    }
+
+    #[test]
+    fn read_extended_event_descriptor() {
+        let descriptor = Descriptor::read(&mut Bytes::from_static(&[
+            0x4E, 0x19, // descriptor_tag, descriptor_length
+            0x01, // descriptor_number, last_descriptor_number
+            b'j', b'p', b'n', // ISO_639_language_code
+            0x0E, // length_of_items
+            0x04, b'C', b'a', b's', b't', // item_description_length, item_description
+            0x03, b'B', b'o', b'b', // item_length, item
+            0x00, // item_description_length (a continued item)
+            0x03, b'a', b'n', b'd', // item_length, item
+            0x05, b'H', b'e', b'l', b'l', b'o', // text_length, text
+        ]))
+        .unwrap();
+
+        assert_eq!(
+            descriptor,
+            Descriptor::ExtendedEvent(ExtendedEventDescriptor {
+                descriptor_number: 0,
+                last_descriptor_number: 1,
+                iso_639_language_code: *b"jpn",
+                items: vec![
+                    ExtendedEventItem {
+                        item_description: b"Cast".to_vec(),
+                        item: b"Bob".to_vec(),
+                    },
+                    ExtendedEventItem {
+                        item_description: vec![],
+                        item: b"and".to_vec(),
+                    },
+                ],
+                text: b"Hello".to_vec(),
+            })
+        );
+    }
+
+    #[test]
+    fn reject_extended_event_descriptor_with_an_item_running_past_its_end() {
+        let error = Descriptor::read(&mut Bytes::from_static(&[
+            0x4E, 0x08, // descriptor_tag, descriptor_length
+            0x00, // descriptor_number, last_descriptor_number
+            b'j', b'p', b'n', // ISO_639_language_code
+            0x03, // length_of_items
+            0x04, b'C', b'a', // item_description_length, truncated item_description
+        ]))
+        .unwrap_err();
+
+        assert_eq!(error.kind(), ErrorKind::UnexpectedEof);
     }
 
     #[test]
