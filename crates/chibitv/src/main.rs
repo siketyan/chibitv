@@ -18,6 +18,7 @@ mod remux;
 mod rpc;
 mod server;
 mod service_information;
+mod store;
 mod stream;
 mod tuner;
 mod workspace;

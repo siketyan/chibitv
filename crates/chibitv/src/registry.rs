@@ -312,6 +312,22 @@ impl Registry {
         true
     }
 
+    /// Puts an event read back from the store into the service carrying it,
+    /// reporting whether it could be stored.
+    ///
+    /// The services come from the configuration while starting up, so the
+    /// schedule of one that has never been scanned has nowhere to go.
+    pub fn put_loaded_event(&self, service_id: u16, event: Event) -> bool {
+        let services = self.services.pin();
+        let Some(service) = services.get(&service_id) else {
+            return false;
+        };
+
+        service.events.pin().insert(event.id, event);
+
+        true
+    }
+
     /// Stores an ISDB-T event of a service, reporting whether it could be
     /// stored. See [`Registry::put_event`].
     pub fn put_b10_event(&self, service_id: u16, event: &B10EventInformation) -> bool {
