@@ -1,10 +1,10 @@
 import { CalendarDaysIcon, InformationCircleIcon, QueueListIcon, XMarkIcon } from "@heroicons/react/24/outline";
-import { Button, Tooltip } from "@heroui/react";
+import { Button, Modal } from "@heroui/react";
 import clsx from "clsx";
-import type { JSX } from "react";
+import { type JSX, useState } from "react";
 
 import { useStream } from "../api/stream";
-import { chromeTransition, usePlayerChrome } from "../player/chrome";
+import { chromeTransition, useChromeHold, usePlayerChrome } from "../player/chrome";
 
 interface OverlayNavbarProps {
   isChannelsOpen: boolean;
@@ -21,11 +21,16 @@ export function OverlayNavbar({
 }: OverlayNavbarProps): JSX.Element {
   const { isVisible } = usePlayerChrome();
   const { state } = useStream();
+  const [areDetailsOpen, setAreDetailsOpen] = useState(false);
   const event = state?.event;
   const description = event?.description.filter(({ content }) => content.length > 0) ?? [];
   // The programme on air is known only once its SI has been received, so until
   // then the service names what is being watched.
   const title = event?.title || state?.service?.name;
+
+  // The details are a dialog rather than a tooltip because a touch screen has
+  // no hover to open one with, so the UI stays put while it is open.
+  useChromeHold("event-details", areDetailsOpen);
 
   return (
     <nav
@@ -47,7 +52,7 @@ export function OverlayNavbar({
         </Button>
         {title && <h1 className="truncate text-sm font-medium drop-shadow sm:text-base">{title}</h1>}
         {description.length > 0 && (
-          <Tooltip delay={0}>
+          <Modal isOpen={areDetailsOpen} onOpenChange={setAreDetailsOpen}>
             <Button
               aria-label="Event details"
               className="pointer-events-auto text-white data-[hover=true]:bg-white/15"
@@ -57,20 +62,32 @@ export function OverlayNavbar({
             >
               <InformationCircleIcon />
             </Button>
-            <Tooltip.Content className="max-w-lg p-4 text-start" placement="bottom" showArrow>
-              <dl className="flex flex-col gap-4">
-                {description.map(({ name, content }, index) => (
-                  // The summary carries no name of its own, and a detail may
-                  // well repeat one, so the position is the only stable key.
-                  // biome-ignore lint/suspicious/noArrayIndexKey: see above
-                  <div key={index} className="flex flex-col gap-2">
-                    <dt className="text-muted">{name}</dt>
-                    <dd className="whitespace-pre-line text-sm leading-5">{content.replaceAll("\r", "\n") || "-"}</dd>
-                  </div>
-                ))}
-              </dl>
-            </Tooltip.Content>
-          </Tooltip>
+            <Modal.Backdrop variant="blur">
+              <Modal.Container placement="center" size="lg">
+                <Modal.Dialog>
+                  <Modal.Header>
+                    <Modal.Heading className="pe-8">{title ?? "Event details"}</Modal.Heading>
+                  </Modal.Header>
+                  <Modal.CloseTrigger />
+                  <Modal.Body>
+                    <dl className="flex flex-col gap-4">
+                      {description.map(({ name, content }, index) => (
+                        // The summary carries no name of its own, and a detail may
+                        // well repeat one, so the position is the only stable key.
+                        // biome-ignore lint/suspicious/noArrayIndexKey: see above
+                        <div key={index} className="flex flex-col gap-2">
+                          <dt className="text-muted">{name}</dt>
+                          <dd className="whitespace-pre-line text-sm leading-5 text-foreground">
+                            {content.replaceAll("\r", "\n") || "-"}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
+                  </Modal.Body>
+                </Modal.Dialog>
+              </Modal.Container>
+            </Modal.Backdrop>
+          </Modal>
         )}
       </div>
       <Button
