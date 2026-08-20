@@ -96,9 +96,6 @@ pub trait EventStore: Send + Sync {
         section: SectionId,
         events: &[StoredEvent],
     ) -> anyhow::Result<()>;
-
-    /// Drops the events that started before `at`, reporting how many went.
-    async fn prune_events_before(&self, at: NaiveDateTime) -> anyhow::Result<u64>;
 }
 
 /// Hands sections to the store from wherever they are demultiplexed.

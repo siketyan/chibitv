@@ -28,8 +28,6 @@ rust-embed = { version = "8.12.0", features = ["mime-guess"], optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 shiguredo_mp4 = "2026.3.0"
-# The SQLite C library is bundled so the runtime image, which carries no
-# libsqlite3, needs nothing installed.
 sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "runtime-tokio", "sqlite-bundled"] }
 tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "sync"] }
 tokio-stream = { version = "0.1.18", features = ["sync"] }

@@ -19,13 +19,7 @@ frequency = 551142857
 # Optional. Defaults to 6000000.
 bandwidth_hz = 6000000
 
-# Optional. Where the server keeps what has to survive a restart, which is the
-# broadcast schedule so far: the programme guide is there before anything is
-# crawled again.
 [database]
 # Defaults to a SQLite database in the working directory. The scheme picks the
 # backend.
 url = "sqlite://chibitv.db"
-# Optional. How long a programme is kept once it has been broadcast. Defaults
-# to 1.
-retention_days = 1

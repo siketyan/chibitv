@@ -1,10 +1,9 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use chibitv_b61::Descrambler;
-use chrono::{Local, Offset, TimeDelta};
+use chrono::{Local, Offset};
 use clap::Parser;
-use tracing::{error, info, warn};
+use tracing::{error, warn};
 
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
@@ -21,9 +20,6 @@ pub struct Options {}
 
 /// The offset ARIB SI expresses every date and time in.
 const BROADCAST_UTC_OFFSET_SECONDS: i32 = 9 * 60 * 60;
-
-/// How often the programmes that have been broadcast are dropped.
-const PRUNE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// Warns when the clock of the server disagrees with the one the broadcast
 /// schedules against, which leaves the programme on air unrecognised.
@@ -120,36 +116,9 @@ async fn open_store(config: &DatabaseConfig, registry: &Registry) -> Option<Arc<
         }
     };
 
-    let retention = TimeDelta::days(i64::from(config.retention_days));
-    prune_events(&store, retention).await;
     store::restore_events(&store, registry).await;
-    spawn_pruning(Arc::clone(&store), retention);
 
     Some(store)
-}
-
-/// Drops the programmes that finished longer than the retention ago.
-async fn prune_events(store: &Arc<dyn Store>, retention: TimeDelta) {
-    // The SI carries JST wall-clock time and the server runs on that zone.
-    let at = Local::now().naive_local() - retention;
-    match store.prune_events_before(at).await {
-        Ok(0) => {}
-        Ok(pruned) => info!(pruned, "Dropped the programmes already broadcast"),
-        Err(error) => error!(%error, "Could not drop the programmes already broadcast"),
-    }
-}
-
-fn spawn_pruning(store: Arc<dyn Store>, retention: TimeDelta) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(PRUNE_INTERVAL);
-        // The first tick is immediate and the schedule has just been pruned.
-        interval.tick().await;
-
-        loop {
-            interval.tick().await;
-            prune_events(&store, retention).await;
-        }
-    });
 }
 
 fn seed_registry(registry: &Registry, channels: &[ChannelConfig]) {

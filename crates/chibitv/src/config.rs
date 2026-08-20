@@ -50,16 +50,12 @@ impl Default for ServerConfig {
 pub struct DatabaseConfig {
     /// The database to keep it in, as a URL whose scheme picks the backend.
     pub url: String,
-
-    /// How long a programme is kept once it has been broadcast.
-    pub retention_days: u32,
 }
 
 impl Default for DatabaseConfig {
     fn default() -> Self {
         Self {
             url: "sqlite://chibitv.db".to_string(),
-            retention_days: 1,
         }
     }
 }

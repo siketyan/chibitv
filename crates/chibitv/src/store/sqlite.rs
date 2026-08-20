@@ -116,15 +116,6 @@ impl EventStore for SqliteStore {
 
         Ok(())
     }
-
-    async fn prune_events_before(&self, at: NaiveDateTime) -> anyhow::Result<u64> {
-        let result = sqlx::query("DELETE FROM events WHERE start_time < ?")
-            .bind(to_timestamp(at))
-            .execute(&self.pool)
-            .await?;
-
-        Ok(result.rows_affected())
-    }
 }
 
 /// The wall clock the SI carries, as the seconds a database column holds.
@@ -277,34 +268,6 @@ mod tests {
         assert_eq!(
             store.load_events().await.unwrap(),
             [event(0x0001, "Programme", 12)]
-        );
-    }
-
-    #[tokio::test]
-    async fn prunes_what_has_been_broadcast_already() {
-        let store = store().await;
-        store
-            .replace_section(
-                SECTION,
-                &[event(0x0001, "Over", 12), event(0x0002, "Upcoming", 15)],
-            )
-            .await
-            .unwrap();
-
-        let pruned = store
-            .prune_events_before(
-                NaiveDate::from_ymd_opt(2026, 7, 11)
-                    .unwrap()
-                    .and_hms_opt(14, 0, 0)
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-
-        assert_eq!(pruned, 1);
-        assert_eq!(
-            store.load_events().await.unwrap(),
-            [event(0x0002, "Upcoming", 15)]
         );
     }
 }

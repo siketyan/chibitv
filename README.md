@@ -182,8 +182,6 @@ scheme of the URL picks the backend:
 ```toml
 [database]
 url = "sqlite://chibitv.db"
-# How long a programme is kept once it has been broadcast. Defaults to 1.
-retention_days = 1
 ```
 
 A database that cannot be opened is reported and the server runs without one, collecting the schedule from the

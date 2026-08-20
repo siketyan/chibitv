@@ -27,8 +27,7 @@ CREATE TABLE events (
 -- Reading a programme guide asks for one service over a range of time.
 CREATE INDEX events_by_service_and_start_time ON events (service_id, start_time);
 
--- Replacing a section and pruning what has been broadcast already both delete
--- a whole range of rows at once.
+-- Replacing a section deletes every row it delivered at once.
 CREATE INDEX events_by_section ON events (
     original_network_id,
     stream_id,
@@ -36,4 +35,3 @@ CREATE INDEX events_by_section ON events (
     table_id,
     section_number
 );
-CREATE INDEX events_by_start_time ON events (start_time);
