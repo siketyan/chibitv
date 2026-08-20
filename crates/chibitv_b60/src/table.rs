@@ -435,6 +435,7 @@ fn parse_bcd(bcd: u8) -> u8 {
 /// MH-EIT (Event Information Table).
 #[derive(Clone, Debug)]
 pub struct MhEit {
+    pub table_id: u8,
     pub section_syntax_indicator: bool,
     pub section_length: u16,
     pub service_id: u16,
@@ -451,7 +452,7 @@ pub struct MhEit {
 }
 
 impl MhEit {
-    pub fn read(bytes: &mut Bytes) -> Result<Self> {
+    pub fn read(table_id: u8, bytes: &mut Bytes) -> Result<Self> {
         let head = bytes.get_u16();
         let section_syntax_indicator = ((head & 0x8000) >> 15) == 1;
         let section_length = head & 0x0FFF;
@@ -477,6 +478,7 @@ impl MhEit {
         let crc_32 = bytes.get_u32();
 
         Ok(Self {
+            table_id,
             section_syntax_indicator,
             section_length,
             service_id,
@@ -806,7 +808,7 @@ impl Table {
             MPT_ID => Self::Mpt(Mpt::read(bytes)?),
             PLT_ID => Self::Plt(Plt::read(bytes)?),
             MH_EIT_ID | MH_EIT_SCHEDULE_ID_START..=MH_EIT_SCHEDULE_ID_END => {
-                Self::MhEit(MhEit::read(bytes)?)
+                Self::MhEit(MhEit::read(table_id, bytes)?)
             }
             MH_BIT_ID => Self::MhBit(MhBit::read(bytes)?),
             MH_SDT_ID | MH_SDT_OTHER_ID => Self::MhSdt(MhSdt::read(bytes)?),

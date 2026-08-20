@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::sync::broadcast::Sender;
@@ -18,12 +19,37 @@ pub enum Signal {
     EventChanged { event_id: u16 },
 }
 
+/// Identifies one EIT section among the ones a stream carries.
+///
+/// The table id is part of it because the present/following and the schedule
+/// tables number their sections independently.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+struct SectionKey {
+    table_id: u8,
+    original_network_id: u16,
+    /// The TLV stream id on ISDB-S, the transport stream id on ISDB-T.
+    stream_id: u16,
+    service_id: u16,
+    section_number: u8,
+}
+
+/// Tells one revision of a section apart from the next.
+///
+/// The CRC comes along because `version_number` is five bits wide and wraps
+/// around.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SectionVersion {
+    version_number: u8,
+    crc_32: u32,
+}
+
 pub struct ServiceInformationProcessor {
     channel_id: usize,
     watched_service_id: Option<u16>,
     registry: Option<Arc<Registry>>,
     signal_tx: Option<Sender<Signal>>,
     current_event_id: Option<u16>,
+    stored_sections: HashMap<SectionKey, SectionVersion>,
 }
 
 impl ServiceInformationProcessor {
@@ -38,6 +64,7 @@ impl ServiceInformationProcessor {
             registry,
             signal_tx,
             current_event_id: None,
+            stored_sections: HashMap::new(),
         }
     }
 
@@ -77,7 +104,7 @@ impl ServiceInformationProcessor {
                 if table_id == EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID
                     || EIT_ACTUAL_SCHEDULE_TABLE_IDS.contains(&table_id) =>
             {
-                self.process_b10_eit(table)
+                self.process_b10_eit(table_id, table)
             }
             B10Table::Sdt(table) if table_id == SDT_ACTUAL_TABLE_ID => {
                 self.process_b10_sdt(table);
@@ -95,12 +122,30 @@ impl ServiceInformationProcessor {
         }
     }
 
-    fn process_b10_eit(&mut self, table: Eit) -> anyhow::Result<()> {
-        if let Some(registry) = &self.registry {
-            for event in &table.events {
-                registry.put_b10_event(table.service_id, event);
-            }
-        }
+    fn process_b10_eit(&mut self, table_id: u8, table: Eit) -> anyhow::Result<()> {
+        self.store_section(
+            SectionKey {
+                table_id,
+                original_network_id: table.original_network_id,
+                stream_id: table.transport_stream_id,
+                service_id: table.service_id,
+                section_number: table.section_number,
+            },
+            SectionVersion {
+                version_number: table.version_number,
+                crc_32: table.crc_32,
+            },
+            |registry| {
+                // Every event is offered to the registry, so short circuiting
+                // on the first one it drops would lose the rest.
+                let mut stored = true;
+                for event in &table.events {
+                    stored &= registry.put_b10_event(table.service_id, event);
+                }
+
+                stored
+            },
+        );
 
         if !self.is_watched_service(table.service_id) {
             return Ok(());
@@ -134,11 +179,29 @@ impl ServiceInformationProcessor {
     }
 
     fn process_mh_eit(&mut self, table: MhEit) -> anyhow::Result<()> {
-        if let Some(registry) = &self.registry {
-            for event in &table.events {
-                registry.put_event(table.service_id, event);
-            }
-        }
+        self.store_section(
+            SectionKey {
+                table_id: table.table_id,
+                original_network_id: table.original_network_id,
+                stream_id: table.tlv_stream_id,
+                service_id: table.service_id,
+                section_number: table.section_number,
+            },
+            SectionVersion {
+                version_number: table.version_number,
+                crc_32: table.crc_32,
+            },
+            |registry| {
+                // Every event is offered to the registry, so short circuiting
+                // on the first one it drops would lose the rest.
+                let mut stored = true;
+                for event in &table.events {
+                    stored &= registry.put_event(table.service_id, event);
+                }
+
+                stored
+            },
+        );
 
         if !self.is_watched_service(table.service_id) {
             return Ok(());
@@ -169,6 +232,34 @@ impl ServiceInformationProcessor {
             for service in &table.services {
                 registry.put_service(self.channel_id, table.tlv_stream_id, service);
             }
+        }
+    }
+
+    /// Hands the events of an EIT section to the registry, unless it already
+    /// holds them.
+    ///
+    /// A stream repeats every section every few seconds and only bumps its
+    /// version when the content changes, so remembering the version keeps the
+    /// registry from rebuilding a schedule that did not move.
+    ///
+    /// A section is only remembered once every event of it made it into the
+    /// registry: one describing a service the registry does not know yet is
+    /// dropped, and the next repetition has to retry it.
+    fn store_section(
+        &mut self,
+        key: SectionKey,
+        version: SectionVersion,
+        store: impl FnOnce(&Registry) -> bool,
+    ) {
+        let Some(registry) = self.registry.clone() else {
+            return;
+        };
+        if self.stored_sections.get(&key) == Some(&version) {
+            return;
+        }
+
+        if store(&registry) {
+            self.stored_sections.insert(key, version);
         }
     }
 
@@ -222,7 +313,9 @@ mod tests {
     use chrono::TimeDelta;
     use tokio::sync::broadcast::error::TryRecvError;
 
-    use chibitv_b10::descriptor::{Descriptor as B10Descriptor, ServiceDescriptor};
+    use chibitv_b10::descriptor::{
+        Descriptor as B10Descriptor, ServiceDescriptor, ShortEventDescriptor,
+    };
     use chibitv_b10::table::{Eit, EventInformation, ServiceInformation as B10ServiceInformation};
 
     use super::*;
@@ -256,6 +349,22 @@ mod tests {
             }],
             crc_32: 0,
         }
+    }
+
+    /// The same EIT[p/f] carrying the name of the event it announces.
+    fn eit_named(service_id: u16, event_id: u16, name: &str) -> Eit {
+        let mut eit = eit_on_air(service_id, event_id);
+        eit.events[0].descriptors = vec![B10Descriptor::ShortEvent(ShortEventDescriptor {
+            iso_639_language_code: *b"jpn",
+            event_name: [b"\x0e", name.as_bytes()].concat(),
+            text: vec![],
+        })];
+
+        eit
+    }
+
+    fn event_name_of(registry: &Registry, event_id: u16) -> Option<String> {
+        registry.get_event_by_id(SERVICE_ID, event_id)?.name
     }
 
     fn sdt_of(service_id: u16) -> Sdt {
@@ -351,6 +460,50 @@ mod tests {
 
         // The schedule of the other service is still collected.
         assert!(registry.get_event_by_id(OTHER_SERVICE_ID, 0x0002).is_some());
+    }
+
+    #[test]
+    fn stores_a_section_once_per_version() {
+        let registry = Arc::new(Registry::default());
+        let mut processor = ServiceInformationProcessor::new(0, Some(Arc::clone(&registry)), None);
+
+        processor
+            .process(SignalingEvent::B10Table {
+                table_id: SDT_ACTUAL_TABLE_ID,
+                table: B10Table::Sdt(sdt_of(SERVICE_ID)),
+            })
+            .unwrap();
+        processor
+            .process(signaling(B10Table::Eit(eit_named(
+                SERVICE_ID,
+                0x0001,
+                "Programme",
+            ))))
+            .unwrap();
+
+        // A section of a version already stored is dropped without reaching
+        // the registry, which the rewritten name it carries here shows.
+        processor
+            .process(signaling(B10Table::Eit(eit_named(
+                SERVICE_ID,
+                0x0001,
+                "Rewritten",
+            ))))
+            .unwrap();
+
+        assert_eq!(
+            event_name_of(&registry, 0x0001).as_deref(),
+            Some("Programme")
+        );
+
+        // A new version of it is stored again.
+        let mut updated = eit_named(SERVICE_ID, 0x0001, "Updated");
+        updated.version_number = 1;
+        processor
+            .process(signaling(B10Table::Eit(updated)))
+            .unwrap();
+
+        assert_eq!(event_name_of(&registry, 0x0001).as_deref(), Some("Updated"));
     }
 
     #[test]
