@@ -102,8 +102,8 @@ impl ServiceInformationProcessor {
     }
 
     /// Keeps the schedule this reads between runs.
-    pub fn storing_events(mut self, events: Option<EventWriter>) -> Self {
-        self.events = events;
+    pub fn storing_events(mut self, events: EventWriter) -> Self {
+        self.events = Some(events);
         self
     }
 
@@ -595,7 +595,7 @@ mod tests {
         let registry = Arc::new(Registry::default());
         let (writer, mut sections) = EventWriter::for_test();
         let mut processor =
-            ServiceInformationProcessor::new(0, Some(registry), None).storing_events(Some(writer));
+            ServiceInformationProcessor::new(0, Some(registry), None).storing_events(writer);
 
         processor
             .process(SignalingEvent::B10Table {

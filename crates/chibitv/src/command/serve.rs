@@ -1,16 +1,17 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use chibitv_b61::Descrambler;
 use chrono::{Local, Offset};
 use clap::Parser;
-use tracing::{error, warn};
+use tracing::warn;
 
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
-use crate::config::{ChannelConfig, Config, DatabaseConfig};
+use crate::config::{ChannelConfig, Config};
 use crate::event_crawler::EventCrawler;
 use crate::registry::Registry;
-use crate::store::{self, EventWriter, Store};
+use crate::store::{self, EventWriter};
 use crate::stream::Streams;
 use crate::tuner::Tuners;
 use crate::workspace::Workspace;
@@ -41,10 +42,11 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
 
     // The schedule of the previous run is restored before anything is tuned,
     // so the programme guide is there without crawling first.
-    let store = open_store(&config.database, &registry).await;
-    let events = store
-        .as_ref()
-        .map(|store| EventWriter::spawn(store.clone()));
+    let store = store::open(&config.database.url)
+        .await
+        .with_context(|| format!("Could not open the database at `{}`", config.database.url))?;
+    store::restore_events(&store, &registry).await?;
+    let events = EventWriter::spawn(store);
 
     let channels = config
         .channels
@@ -92,33 +94,12 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     );
 
     let address = config.server.address;
-    let event_crawler =
-        EventCrawler::new(tuners, cas, config.cas.master_key.into()).storing_events(events);
+    let event_crawler = EventCrawler::new(tuners, cas, config.cas.master_key.into(), events);
     let state = Arc::new(
         Workspace::new(registry, channels, Some(streams)).with_event_crawler(event_crawler),
     );
 
     crate::server::serve(address, state).await
-}
-
-/// Opens the store the schedule is kept in and hands the registry what it
-/// holds.
-///
-/// A database that cannot be opened is reported rather than refused over: the
-/// schedule is collected from the broadcast anyway, so the server is still
-/// worth running without one.
-async fn open_store(config: &DatabaseConfig, registry: &Registry) -> Option<Arc<dyn Store>> {
-    let store = match store::open(&config.url).await {
-        Ok(store) => store,
-        Err(error) => {
-            error!(url = %config.url, %error, "Could not open the database, so the schedule is not kept");
-            return None;
-        }
-    };
-
-    store::restore_events(&store, registry).await;
-
-    Some(store)
 }
 
 fn seed_registry(registry: &Registry, channels: &[ChannelConfig]) {

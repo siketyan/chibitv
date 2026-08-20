@@ -33,23 +33,22 @@ pub struct EventCrawler {
     tuners: Arc<Tuners>,
     cas: Arc<PcscCasModule>,
     cas_master_key: [u8; 32],
-    events: Option<EventWriter>,
+    events: EventWriter,
 }
 
 impl EventCrawler {
-    pub fn new(tuners: Arc<Tuners>, cas: Arc<PcscCasModule>, cas_master_key: [u8; 32]) -> Self {
+    pub fn new(
+        tuners: Arc<Tuners>,
+        cas: Arc<PcscCasModule>,
+        cas_master_key: [u8; 32],
+        events: EventWriter,
+    ) -> Self {
         Self {
             tuners,
             cas,
             cas_master_key,
-            events: None,
+            events,
         }
-    }
-
-    /// Keeps what this crawls between runs.
-    pub fn storing_events(mut self, events: Option<EventWriter>) -> Self {
-        self.events = events;
-        self
     }
 
     pub fn crawl(
@@ -121,7 +120,7 @@ fn crawl_channel<D: Demux>(
     demux: &mut D,
     channel: &Channel,
     registry: &Arc<Registry>,
-    events: Option<EventWriter>,
+    events: EventWriter,
     deadline: Instant,
     emit: &mut impl FnMut(CrawledEvent) -> bool,
 ) -> anyhow::Result<bool> {

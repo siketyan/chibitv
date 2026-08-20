@@ -118,8 +118,8 @@ impl Drop for Stream {
 #[derive(Clone)]
 struct ServiceInformationSink {
     registry: Arc<Registry>,
-    /// Where the schedule is kept between runs, when it is kept at all.
-    events: Option<EventWriter>,
+    /// Where the schedule is kept between runs.
+    events: EventWriter,
 }
 
 pub struct Streams {
@@ -127,7 +127,7 @@ pub struct Streams {
     tuners: Arc<Tuners>,
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
-    events: Option<EventWriter>,
+    events: EventWriter,
     streams: tokio::sync::Mutex<HashMap<u16, Weak<Stream>>>,
 }
 
@@ -137,7 +137,7 @@ impl Streams {
         tuners: Arc<Tuners>,
         cas: Arc<PcscCasModule>,
         b61_descrambler: Option<Descrambler>,
-        events: Option<EventWriter>,
+        events: EventWriter,
     ) -> Self {
         Self {
             registry,

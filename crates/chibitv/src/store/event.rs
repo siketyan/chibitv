@@ -9,6 +9,7 @@
 
 use std::sync::Arc;
 
+use anyhow::Context;
 use async_trait::async_trait;
 use chrono::{NaiveDateTime, TimeDelta};
 use tokio::sync::mpsc;
@@ -144,14 +145,14 @@ impl EventWriter {
 }
 
 /// Fills the registry with the schedule of the previous run.
-pub async fn restore_events(store: &Arc<dyn Store>, registry: &registry::Registry) -> usize {
-    let events = match store.load_events().await {
-        Ok(events) => events,
-        Err(error) => {
-            error!(%error, "Could not read the stored schedule");
-            return 0;
-        }
-    };
+pub async fn restore_events(
+    store: &Arc<dyn Store>,
+    registry: &registry::Registry,
+) -> anyhow::Result<usize> {
+    let events = store
+        .load_events()
+        .await
+        .context("Could not read the stored schedule")?;
 
     let restored = events
         .into_iter()
@@ -160,7 +161,7 @@ pub async fn restore_events(store: &Arc<dyn Store>, registry: &registry::Registr
 
     info!(restored, "Restored the stored schedule");
 
-    restored
+    Ok(restored)
 }
 
 #[cfg(test)]

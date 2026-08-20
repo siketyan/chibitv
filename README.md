@@ -184,8 +184,7 @@ scheme of the URL picks the backend:
 url = "sqlite://chibitv.db"
 ```
 
-A database that cannot be opened is reported and the server runs without one, collecting the schedule from the
-broadcast as it did before.
+The server needs it: a database it cannot open is an error to start up over.
 
 The GUI is a Progressive Web App, so a browser loading a built GUI (`pnpm build`, or the Docker image below) offers
 to install it as a standalone app. Installing requires a secure context, so serve it over HTTPS or from `localhost`.
@@ -207,8 +206,8 @@ docker build --tag chibitv .
 
 The image sets `TZ=JST-9` so that the container reads the broadcast schedule on the clock the SI is expressed in.
 The container reads `/app/config.toml` and needs access to the tuner devices and the PC/SC daemon of the host.
-Its working directory is not writable, so keeping the schedule between runs takes a volume to write the database
-into and a `[database]` URL pointing at it, for example `url = "sqlite://data/chibitv.db"`.
+Its working directory is not writable, so the database takes a volume to write into and a `[database]` URL pointing
+at it, for example `url = "sqlite://data/chibitv.db"`.
 Note that `server.address` has to listen on more than the loopback interface of the container, for example
 `address = "[::]:3001"`:
 
