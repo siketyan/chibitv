@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Context;
 use chibitv_b61::Descrambler;
 use chrono::{Local, Offset};
 use clap::Parser;
@@ -10,6 +11,7 @@ use crate::channel::{Channel, ChannelInner};
 use crate::config::{ChannelConfig, Config};
 use crate::event_crawler::EventCrawler;
 use crate::registry::Registry;
+use crate::store::{self, EventWriter};
 use crate::stream::Streams;
 use crate::tuner::Tuners;
 use crate::workspace::Workspace;
@@ -35,8 +37,17 @@ fn warn_unless_broadcast_time_zone() {
 pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     warn_unless_broadcast_time_zone();
 
-    let registry = Arc::new(Registry::default());
+    let store = store::open(&config.database.url)
+        .await
+        .with_context(|| format!("Could not open the database at `{}`", config.database.url))?;
+
+    let registry =
+        Arc::new(Registry::default().storing_events(EventWriter::spawn(Arc::clone(&store))));
     seed_registry(&registry, &config.channels);
+
+    // The schedule of the previous run is restored before anything is tuned,
+    // so the programme guide is there without crawling first.
+    registry.restore_events(&store).await?;
 
     let channels = config
         .channels

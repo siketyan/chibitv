@@ -288,7 +288,7 @@ where
     };
     let mux = FragmentedMp4Muxer::new(fmp4_writer);
     let mut remuxer = Remuxer::new(demux, mux)?;
-    let mut service_information = ServiceInformationProcessor::new(
+    let mut processor = ServiceInformationProcessor::new(
         target.channel_id,
         Some(registry),
         Some(signal_tx.clone()),
@@ -307,8 +307,8 @@ where
                 let Some(signaling) = remuxer.next()? else {
                     break;
                 };
-                service_information.process(signaling)?;
-                *event_id.write().unwrap() = service_information.current_event_id();
+                processor.process(signaling)?;
+                *event_id.write().unwrap() = processor.current_event_id();
             }
 
             remuxer.finish()

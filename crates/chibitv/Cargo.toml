@@ -11,6 +11,7 @@ chibitv_b60 = { path = "../chibitv_b60" }
 chibitv_b61 = { path = "../chibitv_b61" }
 
 anyhow = "1.0.103"
+async-trait = "0.1.90"
 axum = "0.8.9"
 bitstream-io = "4.10.0"
 buffa = "0.8.1"
@@ -25,7 +26,9 @@ papaya = "0.2.4"
 pcsc = "2.9.0"
 rust-embed = { version = "8.12.0", features = ["mime-guess"], optional = true }
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
 shiguredo_mp4 = "2026.3.0"
+sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "runtime-tokio", "sqlite-bundled"] }
 tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "sync"] }
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 toml = "1.1.2"
@@ -38,6 +41,7 @@ connectrpc-build = "0.8.0"
 protoc-bin-vendored = "3"
 
 [dev-dependencies]
+tempfile = "3.24.0"
 tower = { version = "0.5.3", features = ["util"] }
 
 [target.'cfg(unix)'.dependencies]

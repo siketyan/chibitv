@@ -44,6 +44,22 @@ impl Default for ServerConfig {
     }
 }
 
+/// Where the server keeps what has to survive a restart.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct DatabaseConfig {
+    /// The database to keep it in, as a URL whose scheme picks the backend.
+    pub url: String,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            url: "sqlite://chibitv.db".to_string(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TunerConfig {
@@ -106,6 +122,9 @@ pub struct Config {
 
     #[serde(default)]
     pub server: ServerConfig,
+
+    #[serde(default)]
+    pub database: DatabaseConfig,
 
     #[serde(default)]
     pub tuners: Vec<TunerConfig>,
