@@ -136,9 +136,14 @@ impl ServiceInformationProcessor {
                 crc_32: table.crc_32,
             },
             |registry| {
-                table.events.iter().fold(true, |stored, event| {
-                    registry.put_b10_event(table.service_id, event) && stored
-                })
+                // Every event is offered to the registry, so short circuiting
+                // on the first one it drops would lose the rest.
+                let mut stored = true;
+                for event in &table.events {
+                    stored &= registry.put_b10_event(table.service_id, event);
+                }
+
+                stored
             },
         );
 
@@ -187,9 +192,14 @@ impl ServiceInformationProcessor {
                 crc_32: table.crc_32,
             },
             |registry| {
-                table.events.iter().fold(true, |stored, event| {
-                    registry.put_event(table.service_id, event) && stored
-                })
+                // Every event is offered to the registry, so short circuiting
+                // on the first one it drops would lose the rest.
+                let mut stored = true;
+                for event in &table.events {
+                    stored &= registry.put_event(table.service_id, event);
+                }
+
+                stored
             },
         );
 
