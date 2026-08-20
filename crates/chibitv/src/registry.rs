@@ -40,7 +40,31 @@ pub struct Event {
     pub duration: Option<TimeDelta>,
     pub language_code: Option<String>,
     pub name: Option<String>,
+    /// The summary of the event, from the short event descriptor.
+    pub text: Option<String>,
+    /// The detailed description of the event, one entry per extended event
+    /// descriptor: an event is described by up to 16 of them, each numbered so
+    /// that they can be collected in order as they arrive.
     pub description: Vec<Vec<(String, String)>>,
+}
+
+impl Event {
+    /// The detailed description as a flat list of items.
+    ///
+    /// An item too long for one descriptor continues in the next one, as an
+    /// item carrying no description of its own, so those are joined back to the
+    /// item they belong to.
+    pub fn description_items(&self) -> Vec<(String, String)> {
+        let mut items: Vec<(String, String)> = Vec::new();
+        for (name, content) in self.description.iter().flatten() {
+            match items.last_mut() {
+                Some((_, previous)) if name.is_empty() => previous.push_str(content),
+                _ => items.push((name.clone(), content.clone())),
+            }
+        }
+
+        items
+    }
 }
 
 #[derive(Default)]
@@ -225,6 +249,7 @@ impl Registry {
 
         let mut language_code = previous.and_then(|e| e.language_code.clone());
         let mut name = previous.and_then(|e| e.name.clone());
+        let mut text = previous.and_then(|e| e.text.clone());
         let mut description = previous.map(|e| e.description.clone()).unwrap_or_default();
 
         for descriptor in &event.descriptors {
@@ -234,6 +259,9 @@ impl Registry {
                         String::from_utf8_lossy(&descriptor.iso_639_language_code[..]).to_string(),
                     );
                     name = Some(String::from_utf8_lossy(&descriptor.event_name).to_string());
+
+                    let summary = String::from_utf8_lossy(&descriptor.text);
+                    text = (!summary.is_empty()).then(|| summary.into_owned());
                 }
                 Descriptor::MhExtendedEvent(descriptor) => {
                     let descriptors_len = (descriptor.last_descriptor_number + 1) as usize;
@@ -243,16 +271,18 @@ impl Registry {
                         description = std::iter::repeat_n(vec![], descriptors_len).collect();
                     }
 
-                    description[descriptor_idx] = descriptor
-                        .items
-                        .iter()
-                        .map(|item| {
-                            (
-                                String::from_utf8_lossy(&item.item_description).to_string(),
-                                String::from_utf8_lossy(&item.item).to_string(),
-                            )
-                        })
-                        .collect();
+                    if let Some(items) = description.get_mut(descriptor_idx) {
+                        *items = descriptor
+                            .items
+                            .iter()
+                            .map(|item| {
+                                (
+                                    String::from_utf8_lossy(&item.item_description).to_string(),
+                                    String::from_utf8_lossy(&item.item).to_string(),
+                                )
+                            })
+                            .collect();
+                    }
                 }
                 _ => {}
             }
@@ -268,6 +298,7 @@ impl Registry {
             duration: event.duration,
             language_code,
             name,
+            text,
             description,
         };
 
@@ -286,21 +317,43 @@ impl Registry {
 
         let mut language_code = previous.and_then(|event| event.language_code.clone());
         let mut name = previous.and_then(|event| event.name.clone());
+        let mut text = previous.and_then(|event| event.text.clone());
         let mut description = previous
             .map(|event| event.description.clone())
             .unwrap_or_default();
 
         for descriptor in &event.descriptors {
-            if let B10Descriptor::ShortEvent(descriptor) = descriptor {
-                language_code =
-                    Some(String::from_utf8_lossy(&descriptor.iso_639_language_code).into_owned());
-                name = Some(decode_b24(&descriptor.event_name));
-                let text = decode_b24(&descriptor.text);
-                description = if text.is_empty() {
-                    vec![]
-                } else {
-                    vec![vec![(String::new(), text)]]
-                };
+            match descriptor {
+                B10Descriptor::ShortEvent(descriptor) => {
+                    language_code = Some(
+                        String::from_utf8_lossy(&descriptor.iso_639_language_code).into_owned(),
+                    );
+                    name = Some(decode_b24(&descriptor.event_name));
+
+                    let decoded = decode_b24(&descriptor.text);
+                    text = (!decoded.is_empty()).then_some(decoded);
+                }
+                // The detailed description of a terrestrial programme is
+                // carried here, split over as many descriptors as it needs.
+                B10Descriptor::ExtendedEvent(descriptor) => {
+                    let descriptors_len = (descriptor.last_descriptor_number + 1) as usize;
+                    let descriptor_idx = descriptor.descriptor_number as usize;
+
+                    if description.len() != descriptors_len {
+                        description = std::iter::repeat_n(vec![], descriptors_len).collect();
+                    }
+
+                    if let Some(items) = description.get_mut(descriptor_idx) {
+                        *items = descriptor
+                            .items
+                            .iter()
+                            .map(|item| {
+                                (decode_b24(&item.item_description), decode_b24(&item.item))
+                            })
+                            .collect();
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -316,6 +369,7 @@ impl Registry {
                 duration: event.duration,
                 language_code,
                 name,
+                text,
                 description,
             },
         );
@@ -327,10 +381,17 @@ mod tests {
     use chrono::{Duration, NaiveDate};
 
     use chibitv_b10::descriptor::{
-        Descriptor as B10Descriptor, ServiceDescriptor, ShortEventDescriptor,
+        Descriptor as B10Descriptor, ExtendedEventDescriptor, ExtendedEventItem, ServiceDescriptor,
+        ShortEventDescriptor,
     };
-    use chibitv_b60::descriptor::{Descriptor as B60Descriptor, MhServiceDescriptor};
-    use chibitv_b60::table::ServiceInformation as B60ServiceInformation;
+    use chibitv_b60::descriptor::{
+        Descriptor as B60Descriptor, ExtendedEventItem as MhExtendedEventItem,
+        MhExtendedEventDescriptor, MhServiceDescriptor, MhShortEventDescriptor,
+    };
+    use chibitv_b60::table::{
+        EventInformation as B60EventInformation, EventRunningStatus,
+        ServiceInformation as B60ServiceInformation,
+    };
 
     use super::*;
 
@@ -358,6 +419,81 @@ mod tests {
         let service = registry.get_service_by_id(0x5678).unwrap();
         assert_eq!(service.channel_id, 4);
         assert_eq!(service.transport_stream_id, 0x1234);
+    }
+
+    #[test]
+    fn collects_isdb_s_event_summary_and_details() {
+        let registry = Registry::default();
+        registry.put_service(
+            0,
+            0x1234,
+            &B60ServiceInformation {
+                service_id: 0x5678,
+                eit_user_defined_flags: 0,
+                eit_schedule_flag: true,
+                eit_present_following_flag: true,
+                running_status: 4,
+                free_ca_mode: false,
+                descriptors: vec![B60Descriptor::MhService(MhServiceDescriptor {
+                    service_type: 0x01,
+                    service_provider_name: b"Provider".to_vec(),
+                    service_name: b"Channel".to_vec(),
+                })],
+            },
+        );
+
+        let event = |descriptors| B60EventInformation {
+            event_id: 0x9ABC,
+            start_time: None,
+            duration: None,
+            running_status: EventRunningStatus::InOperation,
+            free_ca_mode: false,
+            descriptors,
+        };
+
+        registry.put_event(
+            0x5678,
+            &event(vec![B60Descriptor::MhExtendedEvent(
+                MhExtendedEventDescriptor {
+                    descriptor_number: 1,
+                    last_descriptor_number: 1,
+                    iso_639_language_code: *b"jpn",
+                    items: vec![MhExtendedEventItem {
+                        item_description: vec![],
+                        item: b" Bob".to_vec(),
+                    }],
+                    text: vec![],
+                },
+            )]),
+        );
+        registry.put_event(
+            0x5678,
+            &event(vec![
+                B60Descriptor::MhShortEvent(MhShortEventDescriptor {
+                    iso_639_language_code: *b"jpn",
+                    event_name: b"Program".to_vec(),
+                    text: b"Summary".to_vec(),
+                }),
+                B60Descriptor::MhExtendedEvent(MhExtendedEventDescriptor {
+                    descriptor_number: 0,
+                    last_descriptor_number: 1,
+                    iso_639_language_code: *b"jpn",
+                    items: vec![MhExtendedEventItem {
+                        item_description: b"Cast".to_vec(),
+                        item: b"Alice".to_vec(),
+                    }],
+                    text: vec![],
+                }),
+            ]),
+        );
+
+        let event = registry.get_event_by_id(0x5678, 0x9ABC).unwrap();
+        assert_eq!(event.name.as_deref(), Some("Program"));
+        assert_eq!(event.text.as_deref(), Some("Summary"));
+        assert_eq!(
+            event.description_items(),
+            vec![("Cast".to_string(), "Alice Bob".to_string())]
+        );
     }
 
     #[test]
@@ -419,9 +555,89 @@ mod tests {
         assert_eq!(event.language_code.as_deref(), Some("jpn"));
         assert_eq!(event.start_time, Some(start_time));
         assert_eq!(event.duration, Some(Duration::minutes(30)));
-        assert_eq!(
-            event.description,
-            vec![vec![(String::new(), "Description".to_string())]]
+        assert_eq!(event.text.as_deref(), Some("Description"));
+        assert!(event.description.is_empty());
+    }
+
+    #[test]
+    fn collects_isdb_t_event_details_from_every_extended_event_descriptor() {
+        let registry = Registry::default();
+        registry.put_cached_service(0, 0x1234, 0x5678, "Channel".to_string(), String::new());
+
+        let extended_event = |descriptor_number, items: Vec<(&[u8], &[u8])>| B10EventInformation {
+            event_id: 0x9ABC,
+            start_time: None,
+            duration: None,
+            running_status: 4,
+            free_ca_mode: false,
+            descriptors: vec![B10Descriptor::ExtendedEvent(ExtendedEventDescriptor {
+                descriptor_number,
+                last_descriptor_number: 1,
+                iso_639_language_code: *b"jpn",
+                items: items
+                    .into_iter()
+                    .map(|(item_description, item)| ExtendedEventItem {
+                        item_description: item_description.to_vec(),
+                        item: item.to_vec(),
+                    })
+                    .collect(),
+                text: vec![],
+            })],
+        };
+
+        // The second descriptor may well arrive first, and its leading item
+        // continues the last item of the first one.
+        registry.put_b10_event(0x5678, &extended_event(1, vec![(b"", b"\x0e Bob")]));
+        registry.put_b10_event(
+            0x5678,
+            &extended_event(
+                0,
+                vec![(b"\x0eDetails", b"\x0eA show"), (b"\x0eCast", b"\x0eAlice")],
+            ),
         );
+
+        let event = registry.get_event_by_id(0x5678, 0x9ABC).unwrap();
+        assert_eq!(
+            event.description_items(),
+            vec![
+                ("Details".to_string(), "A show".to_string()),
+                ("Cast".to_string(), "Alice Bob".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn keeps_the_isdb_t_summary_when_only_the_schedule_is_known() {
+        let registry = Registry::default();
+        registry.put_cached_service(0, 0x1234, 0x5678, "Channel".to_string(), String::new());
+        registry.put_b10_event(
+            0x5678,
+            &B10EventInformation {
+                event_id: 0x9ABC,
+                start_time: None,
+                duration: None,
+                running_status: 4,
+                free_ca_mode: false,
+                descriptors: vec![B10Descriptor::ShortEvent(ShortEventDescriptor {
+                    iso_639_language_code: *b"jpn",
+                    event_name: b"\x0eProgram".to_vec(),
+                    text: b"\x0eSummary".to_vec(),
+                })],
+            },
+        );
+        registry.put_b10_event(
+            0x5678,
+            &B10EventInformation {
+                event_id: 0x9ABC,
+                start_time: None,
+                duration: None,
+                running_status: 4,
+                free_ca_mode: false,
+                descriptors: vec![],
+            },
+        );
+
+        let event = registry.get_event_by_id(0x5678, 0x9ABC).unwrap();
+        assert_eq!(event.text.as_deref(), Some("Summary"));
     }
 }

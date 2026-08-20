@@ -273,11 +273,13 @@ fn event_message(service_id: u16, value: &registry::Event) -> Event {
     Event {
         id: value.id.into(),
         title: value.name.clone().unwrap_or_default(),
+        // The summary leads the detailed description, as the two describe the
+        // event at different lengths rather than repeating each other.
         description: value
-            .description
+            .text
             .iter()
-            .flatten()
-            .cloned()
+            .map(|text| (String::new(), text.clone()))
+            .chain(value.description_items())
             .map(|(name, content)| EventDescription {
                 name,
                 content,
