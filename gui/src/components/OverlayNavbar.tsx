@@ -59,8 +59,11 @@ export function OverlayNavbar({
             </Button>
             <Tooltip.Content className="max-w-lg p-4 text-start" placement="bottom" showArrow>
               <dl className="flex flex-col gap-4">
-                {description.map(({ name, content }) => (
-                  <div key={name} className="flex flex-col gap-2">
+                {description.map(({ name, content }, index) => (
+                  // The summary carries no name of its own, and a detail may
+                  // well repeat one, so the position is the only stable key.
+                  // biome-ignore lint/suspicious/noArrayIndexKey: see above
+                  <div key={index} className="flex flex-col gap-2">
                     <dt className="text-muted">{name}</dt>
                     <dd className="whitespace-pre-line text-sm leading-5">{content.replaceAll("\r", "\n") || "-"}</dd>
                   </div>
