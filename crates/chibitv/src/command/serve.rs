@@ -11,7 +11,7 @@ use crate::channel::{Channel, ChannelInner};
 use crate::config::{ChannelConfig, Config, DatabaseConfig};
 use crate::event_crawler::EventCrawler;
 use crate::registry::Registry;
-use crate::store::{self, EventStore, EventWriter};
+use crate::store::{self, EventWriter, Store};
 use crate::stream::Streams;
 use crate::tuner::Tuners;
 use crate::workspace::Workspace;
@@ -111,7 +111,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
 /// A database that cannot be opened is reported rather than refused over: the
 /// schedule is collected from the broadcast anyway, so the server is still
 /// worth running without one.
-async fn open_store(config: &DatabaseConfig, registry: &Registry) -> Option<Arc<dyn EventStore>> {
+async fn open_store(config: &DatabaseConfig, registry: &Registry) -> Option<Arc<dyn Store>> {
     let store = match store::open(&config.url).await {
         Ok(store) => store,
         Err(error) => {
@@ -122,14 +122,14 @@ async fn open_store(config: &DatabaseConfig, registry: &Registry) -> Option<Arc<
 
     let retention = TimeDelta::days(i64::from(config.retention_days));
     prune_events(&store, retention).await;
-    store::restore(&store, registry).await;
+    store::restore_events(&store, registry).await;
     spawn_pruning(Arc::clone(&store), retention);
 
     Some(store)
 }
 
 /// Drops the programmes that finished longer than the retention ago.
-async fn prune_events(store: &Arc<dyn EventStore>, retention: TimeDelta) {
+async fn prune_events(store: &Arc<dyn Store>, retention: TimeDelta) {
     // The SI carries JST wall-clock time and the server runs on that zone.
     let at = Local::now().naive_local() - retention;
     match store.prune_events_before(at).await {
@@ -139,7 +139,7 @@ async fn prune_events(store: &Arc<dyn EventStore>, retention: TimeDelta) {
     }
 }
 
-fn spawn_pruning(store: Arc<dyn EventStore>, retention: TimeDelta) {
+fn spawn_pruning(store: Arc<dyn Store>, retention: TimeDelta) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(PRUNE_INTERVAL);
         // The first tick is immediate and the schedule has just been pruned.

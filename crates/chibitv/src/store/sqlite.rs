@@ -6,7 +6,7 @@ use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
-use super::{EventStore, SectionId, StoredEvent};
+use super::{EventStore, SectionId, Store, StoredEvent};
 
 /// How long a statement waits for the database to be free again.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -21,12 +21,16 @@ const COLUMNS: &str = "service_id, event_id, original_network_id, stream_id, tab
 const SELECT_EVENTS: &str = "SELECT service_id, event_id, start_time, duration_seconds, \
                              language_code, name, text, description FROM events";
 
-/// The broadcast schedule kept in a SQLite database.
-pub struct SqliteEventStore {
+/// The state chibitv keeps in a SQLite database.
+///
+/// Its schema lives in `migrations/sqlite`, one migration per thing kept.
+pub struct SqliteStore {
     pool: SqlitePool,
 }
 
-impl SqliteEventStore {
+impl Store for SqliteStore {}
+
+impl SqliteStore {
     /// Opens the database the URL points at, creating it when it is not there
     /// yet and bringing its schema up to date.
     pub async fn open(url: &str) -> anyhow::Result<Self> {
@@ -53,7 +57,7 @@ impl SqliteEventStore {
 }
 
 #[async_trait]
-impl EventStore for SqliteEventStore {
+impl EventStore for SqliteStore {
     async fn load_events(&self) -> anyhow::Result<Vec<StoredEvent>> {
         let rows = sqlx::query(SELECT_EVENTS).fetch_all(&self.pool).await?;
 
@@ -172,8 +176,8 @@ mod tests {
         section_number: 0,
     };
 
-    async fn store() -> SqliteEventStore {
-        SqliteEventStore::open("sqlite::memory:").await.unwrap()
+    async fn store() -> SqliteStore {
+        SqliteStore::open("sqlite::memory:").await.unwrap()
     }
 
     fn event(event_id: u16, name: &str, hour: u32) -> StoredEvent {
@@ -259,7 +263,7 @@ mod tests {
         let url = format!("sqlite://{}", directory.path().join("chibitv.db").display());
 
         {
-            let store = SqliteEventStore::open(&url).await.unwrap();
+            let store = SqliteStore::open(&url).await.unwrap();
             store
                 .replace_section(SECTION, &[event(0x0001, "Programme", 12)])
                 .await
@@ -268,7 +272,7 @@ mod tests {
 
         // Opening it again migrates a schema that is already there, and finds
         // what the previous run wrote.
-        let store = SqliteEventStore::open(&url).await.unwrap();
+        let store = SqliteStore::open(&url).await.unwrap();
 
         assert_eq!(
             store.load_events().await.unwrap(),

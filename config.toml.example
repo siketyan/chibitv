@@ -19,8 +19,9 @@ frequency = 551142857
 # Optional. Defaults to 6000000.
 bandwidth_hz = 6000000
 
-# Optional. The broadcast schedule is kept between runs so that the programme
-# guide is there before anything is crawled again.
+# Optional. Where the server keeps what has to survive a restart, which is the
+# broadcast schedule so far: the programme guide is there before anything is
+# crawled again.
 [database]
 # Defaults to a SQLite database in the working directory. The scheme picks the
 # backend.

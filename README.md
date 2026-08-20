@@ -175,8 +175,9 @@ The server supports ISDB-S and ISDB-T channels and requires at least one configu
 generate the service catalog with `scan` first so that every configured physical channel's services are available
 before tuning.
 
-The broadcast schedule is kept in a database between runs, so that the programme guide is there before anything is
-crawled again. It defaults to a SQLite file in the working directory, and the scheme of the URL picks the backend:
+The server keeps what has to survive a restart in a database, which is the broadcast schedule so far: the programme
+guide is there before anything is crawled again. It defaults to a SQLite file in the working directory, and the
+scheme of the URL picks the backend:
 
 ```toml
 [database]

@@ -44,7 +44,7 @@ impl Default for ServerConfig {
     }
 }
 
-/// Where the broadcast schedule is kept between runs.
+/// Where the server keeps what has to survive a restart.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(default)]
 pub struct DatabaseConfig {
