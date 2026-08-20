@@ -5,6 +5,11 @@ target/
 # Config file
 config.toml
 
+# The broadcast schedule the server keeps between runs
+chibitv.db
+chibitv.db-shm
+chibitv.db-wal
+
 # Media files
 *.h264
 *.hevc

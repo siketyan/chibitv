@@ -18,3 +18,13 @@ delivery_system = "ISDB-T"
 frequency = 551142857
 # Optional. Defaults to 6000000.
 bandwidth_hz = 6000000
+
+# Optional. The broadcast schedule is kept between runs so that the programme
+# guide is there before anything is crawled again.
+[database]
+# Defaults to a SQLite database in the working directory. The scheme picks the
+# backend.
+url = "sqlite://chibitv.db"
+# Optional. How long a programme is kept once it has been broadcast. Defaults
+# to 1.
+retention_days = 1

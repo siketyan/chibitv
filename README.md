@@ -175,6 +175,19 @@ The server supports ISDB-S and ISDB-T channels and requires at least one configu
 generate the service catalog with `scan` first so that every configured physical channel's services are available
 before tuning.
 
+The broadcast schedule is kept in a database between runs, so that the programme guide is there before anything is
+crawled again. It defaults to a SQLite file in the working directory, and the scheme of the URL picks the backend:
+
+```toml
+[database]
+url = "sqlite://chibitv.db"
+# How long a programme is kept once it has been broadcast. Defaults to 1.
+retention_days = 1
+```
+
+A database that cannot be opened is reported and the server runs without one, collecting the schedule from the
+broadcast as it did before.
+
 The GUI is a Progressive Web App, so a browser loading a built GUI (`pnpm build`, or the Docker image below) offers
 to install it as a standalone app. Installing requires a secure context, so serve it over HTTPS or from `localhost`.
 Its Service Worker caches the application shell and the bundles, so that an installed app still opens while the
@@ -195,6 +208,8 @@ docker build --tag chibitv .
 
 The image sets `TZ=JST-9` so that the container reads the broadcast schedule on the clock the SI is expressed in.
 The container reads `/app/config.toml` and needs access to the tuner devices and the PC/SC daemon of the host.
+Its working directory is not writable, so keeping the schedule between runs takes a volume to write the database
+into and a `[database]` URL pointing at it, for example `url = "sqlite://data/chibitv.db"`.
 Note that `server.address` has to listen on more than the loopback interface of the container, for example
 `address = "[::]:3001"`:
 
@@ -204,6 +219,7 @@ docker run --rm \
   --user "$(id -u):$(id -g)" \
   --group-add "$(getent group video | cut -d: -f3)" \
   --volume "$PWD/config.toml:/app/config.toml:ro" \
+  --volume "$PWD/data:/app/data" \
   --volume /run/pcscd/pcscd.comm:/run/pcscd/pcscd.comm \
   --device /dev/dvb/adapter0/frontend0 \
   --device /dev/dvb/adapter0/demux0 \

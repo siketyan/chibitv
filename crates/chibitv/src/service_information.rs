@@ -9,10 +9,12 @@ use chibitv_b60::table::{MhBit, MhEit, MhSdt, Table};
 
 use crate::demux::SignalingEvent;
 use crate::registry::Registry;
+use crate::store::{EventWriter, SectionId, SectionUpdate, StoredEvent};
 
 const SDT_ACTUAL_TABLE_ID: u8 = 0x42;
 const EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID: u8 = 0x4E;
 const EIT_ACTUAL_SCHEDULE_TABLE_IDS: std::ops::RangeInclusive<u8> = 0x50..=0x5F;
+const MH_EIT_ACTUAL_SCHEDULE_TABLE_IDS: std::ops::RangeInclusive<u8> = 0x8C..=0x9B;
 
 #[derive(Clone, Debug)]
 pub enum Signal {
@@ -33,6 +35,23 @@ struct SectionKey {
     section_number: u8,
 }
 
+/// Which of the EIT tables a section belongs to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum SectionKind {
+    PresentFollowing,
+    Schedule,
+}
+
+impl SectionKind {
+    fn of_table(table_id: u8, schedule_table_ids: std::ops::RangeInclusive<u8>) -> Self {
+        if schedule_table_ids.contains(&table_id) {
+            Self::Schedule
+        } else {
+            Self::PresentFollowing
+        }
+    }
+}
+
 /// Tells one revision of a section apart from the next.
 ///
 /// The CRC comes along because `version_number` is five bits wide and wraps
@@ -43,6 +62,18 @@ struct SectionVersion {
     crc_32: u32,
 }
 
+impl From<SectionKey> for SectionId {
+    fn from(value: SectionKey) -> Self {
+        Self {
+            original_network_id: value.original_network_id,
+            stream_id: value.stream_id,
+            service_id: value.service_id,
+            table_id: value.table_id,
+            section_number: value.section_number,
+        }
+    }
+}
+
 pub struct ServiceInformationProcessor {
     channel_id: usize,
     watched_service_id: Option<u16>,
@@ -50,6 +81,7 @@ pub struct ServiceInformationProcessor {
     signal_tx: Option<Sender<Signal>>,
     current_event_id: Option<u16>,
     stored_sections: HashMap<SectionKey, SectionVersion>,
+    events: Option<EventWriter>,
 }
 
 impl ServiceInformationProcessor {
@@ -65,7 +97,14 @@ impl ServiceInformationProcessor {
             signal_tx,
             current_event_id: None,
             stored_sections: HashMap::new(),
+            events: None,
         }
+    }
+
+    /// Keeps the schedule this reads between runs.
+    pub fn storing_events(mut self, events: Option<EventWriter>) -> Self {
+        self.events = events;
+        self
     }
 
     /// Tracks what is on air on one service only.
@@ -135,15 +174,21 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
+            SectionKind::of_table(table_id, EIT_ACTUAL_SCHEDULE_TABLE_IDS),
             |registry| {
                 // Every event is offered to the registry, so short circuiting
                 // on the first one it drops would lose the rest.
-                let mut stored = true;
+                let mut stored = Vec::with_capacity(table.events.len());
+                let mut complete = true;
                 for event in &table.events {
-                    stored &= registry.put_b10_event(table.service_id, event);
+                    if registry.put_b10_event(table.service_id, event) {
+                        stored.push(event.event_id);
+                    } else {
+                        complete = false;
+                    }
                 }
 
-                stored
+                complete.then_some(stored)
             },
         );
 
@@ -191,15 +236,21 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
+            SectionKind::of_table(table.table_id, MH_EIT_ACTUAL_SCHEDULE_TABLE_IDS),
             |registry| {
                 // Every event is offered to the registry, so short circuiting
                 // on the first one it drops would lose the rest.
-                let mut stored = true;
+                let mut stored = Vec::with_capacity(table.events.len());
+                let mut complete = true;
                 for event in &table.events {
-                    stored &= registry.put_event(table.service_id, event);
+                    if registry.put_event(table.service_id, event) {
+                        stored.push(event.event_id);
+                    } else {
+                        complete = false;
+                    }
                 }
 
-                stored
+                complete.then_some(stored)
             },
         );
 
@@ -243,13 +294,15 @@ impl ServiceInformationProcessor {
     /// registry from rebuilding a schedule that did not move.
     ///
     /// A section is only remembered once every event of it made it into the
-    /// registry: one describing a service the registry does not know yet is
-    /// dropped, and the next repetition has to retry it.
+    /// registry and, where one is configured, into the store: one describing a
+    /// service the registry does not know yet is dropped, and the next
+    /// repetition has to retry it.
     fn store_section(
         &mut self,
         key: SectionKey,
         version: SectionVersion,
-        store: impl FnOnce(&Registry) -> bool,
+        kind: SectionKind,
+        store: impl FnOnce(&Registry) -> Option<Vec<u16>>,
     ) {
         let Some(registry) = self.registry.clone() else {
             return;
@@ -258,9 +311,32 @@ impl ServiceInformationProcessor {
             return;
         }
 
-        if store(&registry) {
-            self.stored_sections.insert(key, version);
+        let Some(event_ids) = store(&registry) else {
+            return;
+        };
+
+        // Only the schedule tables are kept between runs. The present and
+        // following events they announce are described by the schedule as
+        // well, and a section of their own would only replace what the
+        // schedule stored.
+        if kind == SectionKind::Schedule
+            && let Some(writer) = &self.events
+        {
+            let events = event_ids
+                .iter()
+                .filter_map(|event_id| registry.get_event_by_id(key.service_id, *event_id))
+                .map(|event| StoredEvent::of_service(key.service_id, &event))
+                .collect();
+
+            if !writer.enqueue(SectionUpdate {
+                section: key.into(),
+                events,
+            }) {
+                return;
+            }
         }
+
+        self.stored_sections.insert(key, version);
     }
 
     fn process_event(
@@ -319,6 +395,7 @@ mod tests {
     use chibitv_b10::table::{Eit, EventInformation, ServiceInformation as B10ServiceInformation};
 
     use super::*;
+    use crate::store::EventWriter;
 
     const SERVICE_ID: u16 = 0x0400;
     const OTHER_SERVICE_ID: u16 = 0x0401;
@@ -397,6 +474,13 @@ mod tests {
     fn signaling(table: B10Table) -> SignalingEvent {
         SignalingEvent::B10Table {
             table_id: EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID,
+            table,
+        }
+    }
+
+    fn schedule_signaling(table: B10Table) -> SignalingEvent {
+        SignalingEvent::B10Table {
+            table_id: *EIT_ACTUAL_SCHEDULE_TABLE_IDS.start(),
             table,
         }
     }
@@ -504,6 +588,66 @@ mod tests {
             .unwrap();
 
         assert_eq!(event_name_of(&registry, 0x0001).as_deref(), Some("Updated"));
+    }
+
+    #[test]
+    fn stores_the_schedule_but_not_what_is_on_air() {
+        let registry = Arc::new(Registry::default());
+        let (writer, mut sections) = EventWriter::for_test();
+        let mut processor =
+            ServiceInformationProcessor::new(0, Some(registry), None).storing_events(Some(writer));
+
+        processor
+            .process(SignalingEvent::B10Table {
+                table_id: SDT_ACTUAL_TABLE_ID,
+                table: B10Table::Sdt(sdt_of(SERVICE_ID)),
+            })
+            .unwrap();
+
+        // What is on air is described by the schedule as well, so the
+        // present/following table is not worth a section of its own.
+        processor
+            .process(signaling(B10Table::Eit(eit_named(
+                SERVICE_ID, 0x0001, "On air",
+            ))))
+            .unwrap();
+
+        assert!(sections.try_recv().is_err());
+
+        processor
+            .process(schedule_signaling(B10Table::Eit(eit_named(
+                SERVICE_ID,
+                0x0002,
+                "Scheduled",
+            ))))
+            .unwrap();
+
+        let update = sections.try_recv().unwrap();
+
+        assert_eq!(update.section.service_id, SERVICE_ID);
+        assert_eq!(
+            update.section.table_id,
+            *EIT_ACTUAL_SCHEDULE_TABLE_IDS.start()
+        );
+        assert_eq!(
+            update
+                .events
+                .iter()
+                .map(|event| event.name.as_deref())
+                .collect::<Vec<_>>(),
+            [Some("Scheduled")]
+        );
+
+        // A repeat of a section already stored does not reach the store again.
+        processor
+            .process(schedule_signaling(B10Table::Eit(eit_named(
+                SERVICE_ID,
+                0x0002,
+                "Scheduled",
+            ))))
+            .unwrap();
+
+        assert!(sections.try_recv().is_err());
     }
 
     #[test]

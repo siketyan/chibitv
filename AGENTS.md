@@ -61,6 +61,9 @@ The shared data flow is a pipeline:
 
 `serve` (`server.rs`, `rpc.rs`) runs an axum server exposing the ConnectRPC `ChibitvService` plus the live stream;
 `registry.rs`/`stream.rs`/`event_crawler.rs` manage shared tuner/channel state and EPG events.
+`store.rs` keeps the EPG between runs: it defines the backend-agnostic `EventStore` trait and the writer the
+demultiplexers queue sections on, with the SQLite backend (sqlx, bundled SQLite) in `store/sqlite.rs` and its schema
+in `crates/chibitv/migrations/sqlite/`.
 Configuration is loaded from `./config.toml` in the working directory (`config.rs`; template in `config.toml.example`).
 
 Cargo features on `chibitv`:

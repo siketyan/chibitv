@@ -17,6 +17,7 @@ use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
 use crate::registry::{Event, Registry};
 use crate::service_information::ServiceInformationProcessor;
+use crate::store::EventWriter;
 use crate::tuner::Tuners;
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
@@ -32,6 +33,7 @@ pub struct EventCrawler {
     tuners: Arc<Tuners>,
     cas: Arc<PcscCasModule>,
     cas_master_key: [u8; 32],
+    events: Option<EventWriter>,
 }
 
 impl EventCrawler {
@@ -40,7 +42,14 @@ impl EventCrawler {
             tuners,
             cas,
             cas_master_key,
+            events: None,
         }
+    }
+
+    /// Keeps what this crawls between runs.
+    pub fn storing_events(mut self, events: Option<EventWriter>) -> Self {
+        self.events = events;
+        self
     }
 
     pub fn crawl(
@@ -72,7 +81,14 @@ impl EventCrawler {
                 ChannelInner::IsdbT { .. } => {
                     let descrambler = B25Descrambler::init(self.cas.clone())?;
                     let mut demux = M2tsDemuxer::new(reader, descrambler);
-                    crawl_channel(&mut demux, channel, &registry, deadline, &mut emit)?
+                    crawl_channel(
+                        &mut demux,
+                        channel,
+                        &registry,
+                        self.events.clone(),
+                        deadline,
+                        &mut emit,
+                    )?
                 }
                 ChannelInner::IsdbS { .. } => {
                     let descrambler =
@@ -81,7 +97,14 @@ impl EventCrawler {
                         BufReader::with_capacity(READ_BUFFER_SIZE, reader),
                         descrambler,
                     );
-                    crawl_channel(&mut demux, channel, &registry, deadline, &mut emit)?
+                    crawl_channel(
+                        &mut demux,
+                        channel,
+                        &registry,
+                        self.events.clone(),
+                        deadline,
+                        &mut emit,
+                    )?
                 }
             };
 
@@ -98,11 +121,13 @@ fn crawl_channel<D: Demux>(
     demux: &mut D,
     channel: &Channel,
     registry: &Arc<Registry>,
+    events: Option<EventWriter>,
     deadline: Instant,
     emit: &mut impl FnMut(CrawledEvent) -> bool,
 ) -> anyhow::Result<bool> {
     let mut processor =
-        ServiceInformationProcessor::new(channel.id, Some(Arc::clone(registry)), None);
+        ServiceInformationProcessor::new(channel.id, Some(Arc::clone(registry)), None)
+            .storing_events(events);
 
     while Instant::now() < deadline {
         let packet = match demux.next_packet() {

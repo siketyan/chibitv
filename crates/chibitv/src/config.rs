@@ -44,6 +44,26 @@ impl Default for ServerConfig {
     }
 }
 
+/// Where the broadcast schedule is kept between runs.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(default)]
+pub struct DatabaseConfig {
+    /// The database to keep it in, as a URL whose scheme picks the backend.
+    pub url: String,
+
+    /// How long a programme is kept once it has been broadcast.
+    pub retention_days: u32,
+}
+
+impl Default for DatabaseConfig {
+    fn default() -> Self {
+        Self {
+            url: "sqlite://chibitv.db".to_string(),
+            retention_days: 1,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TunerConfig {
@@ -106,6 +126,9 @@ pub struct Config {
 
     #[serde(default)]
     pub server: ServerConfig,
+
+    #[serde(default)]
+    pub database: DatabaseConfig,
 
     #[serde(default)]
     pub tuners: Vec<TunerConfig>,
