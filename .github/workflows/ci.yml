@@ -27,7 +27,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --component rustfmt --no-self-update
+        run: rustup toolchain install --no-self-update
       - name: Check formatting
         run: cargo fmt --all --check
 
@@ -47,7 +47,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libdvbv5-dev libpcsclite-dev
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --component clippy --no-self-update
+        run: rustup toolchain install --no-self-update
       - name: Cache dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Run Clippy
@@ -107,7 +107,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libdvbv5-dev libpcsclite-dev
       - name: Install Rust
-        run: rustup toolchain install stable --profile minimal --no-self-update
+        run: rustup toolchain install --no-self-update
       - name: Cache dependencies
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Run tests

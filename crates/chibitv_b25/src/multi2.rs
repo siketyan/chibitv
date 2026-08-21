@@ -19,8 +19,8 @@ pub(crate) struct Multi2 {
 impl Multi2 {
     pub(crate) fn new(system_key: [u8; 32], init_cbc: [u8; 8]) -> Self {
         let mut key = [0; 8];
-        for (index, chunk) in system_key.chunks_exact(4).enumerate() {
-            key[index] = u32::from_be_bytes(chunk.try_into().unwrap());
+        for (word, chunk) in key.iter_mut().zip(system_key.as_chunks::<4>().0) {
+            *word = u32::from_be_bytes(*chunk);
         }
 
         Self {
@@ -67,8 +67,8 @@ impl Multi2 {
         };
 
         let mut cbc = self.init_cbc.expect("CBC initial value is not set");
-        let mut chunks = data.chunks_exact_mut(8);
-        for chunk in &mut chunks {
+        let (blocks, rest) = data.as_chunks_mut::<8>();
+        for chunk in blocks {
             let src = CoreData {
                 l: u32::from_be_bytes(chunk[0..4].try_into().unwrap()),
                 r: u32::from_be_bytes(chunk[4..8].try_into().unwrap()),
@@ -81,7 +81,6 @@ impl Multi2 {
             chunk[4..8].copy_from_slice(&dst.r.to_be_bytes());
         }
 
-        let rest = chunks.into_remainder();
         if !rest.is_empty() {
             let stream = core_encrypt(cbc, work_key, self.round);
             let mut key_stream = [0; 8];

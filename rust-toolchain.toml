@@ -1,0 +1,8 @@
+# The toolchain this workspace is built with, pinned so that a new release of
+# Rust reaches every checkout and CI through a change to this file rather than
+# on its own. The Dockerfile pins the same version in its builder image, which
+# never sees this file: `.dockerignore` keeps the build context to the sources.
+[toolchain]
+channel = "1.98.0"
+profile = "minimal"
+components = ["clippy", "rustfmt"]

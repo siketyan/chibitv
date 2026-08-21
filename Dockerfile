@@ -26,7 +26,7 @@ COPY packages/ packages/
 COPY --from=wasm-builder /work/dist/ packages/mediabunny-mpeg2/lib/dist/
 RUN pnpm build
 
-FROM rust:1.97-trixie AS chef
+FROM rust:1.98-trixie AS chef
 WORKDIR /app
 RUN apt-get update \
     && apt-get install --no-install-recommends -y libdvbv5-dev libpcsclite-dev libudev-dev \

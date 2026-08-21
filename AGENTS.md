@@ -11,6 +11,7 @@ runtime setup (tuner devices, PC/SC, `config.toml`).
 
 - `[patch.crates-io]` in the workspace `Cargo.toml` replaces some crates.io dependencies (`cros-codecs`, `dvbv5-sys`, `mpeg2ts`, `shiguredo_mp4`) with forks pinned to a Git revision. To try a local change to one of them, add a `[patch]` override to `.cargo/config.toml` instead of editing the manifest.
 - System libraries for the default `dvb` feature and PC/SC: `libdvbv5-dev` and `libpcsclite-dev`.
+- The Rust toolchain is pinned in `rust-toolchain.toml`, so rustup picks it up on its own. Bumping it means editing that file and the builder image the `Dockerfile` starts its Rust stage from, which never sees it.
 - JS tooling: Node 24 with pnpm (via corepack); run `pnpm install` at the repo root.
 
 ## Commands
