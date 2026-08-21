@@ -13,6 +13,21 @@
 }
 
 /*
+ * How tall the page is. `dvh` follows the browser UI that comes and goes while
+ * scrolling, but an installed app has none to follow: iOS still measures it
+ * there as if Safari's toolbar were on screen, leaving a gap under the picture
+ * until something forces a relayout. The document already spans the display in
+ * that mode, so its own height is the honest one.
+ */
+@utility h-viewport {
+  height: 100dvh;
+
+  @media (display-mode: standalone) {
+    height: 100%;
+  }
+}
+
+/*
  * The picture is shown at 16:9 whatever the browser makes of the stream, so the
  * frame sizes the element rather than the element sizing itself: `max-height`
  * would clamp one axis and break the ratio instead of scaling both.

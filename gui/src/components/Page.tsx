@@ -31,7 +31,7 @@ export function Page(): JSX.Element {
   };
 
   return (
-    <main className={clsx("relative h-dvh overflow-hidden bg-black text-foreground", !isVisible && "cursor-none")}>
+    <main className={clsx("relative h-viewport overflow-hidden bg-black text-foreground", !isVisible && "cursor-none")}>
       <Player />
       {/* The video fills the display, while everything drawn on top of it stays
           inside the safe area so that an installed app keeps it reachable. */}
