@@ -29,6 +29,11 @@ interface Document {
   webkitExitFullscreen?(): void;
 }
 
+interface Navigator {
+  /** Whether Safari for iOS is running this page as an app installed to the Home Screen. */
+  readonly standalone?: boolean;
+}
+
 // TypeScript does not ship DOM types for the Managed Media Source API, which is the only MSE
 // implementation available on Safari for iOS.
 interface ManagedMediaSourceEventMap extends MediaSourceEventMap {
