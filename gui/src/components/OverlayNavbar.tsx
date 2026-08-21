@@ -50,10 +50,10 @@ export function OverlayNavbar({
         >
           {isChannelsOpen ? <XMarkIcon /> : <QueueListIcon />}
         </Button>
-        {/* A `text-shadow` rather than a `drop-shadow`: the latter is a filter,
-            and WebKit rasterizes the filtered text into a layer of its own,
-            which comes out visibly smudged on an installed app for iOS. */}
-        {title && <h1 className="truncate text-sm font-medium text-shadow-sm sm:text-base">{title}</h1>}
+        {/* No shadow under the title: the gradient behind this bar is what
+            keeps it legible over the picture, and a shadow on top of that only
+            showed up as a smudge on an installed app for iOS. */}
+        {title && <h1 className="truncate text-sm font-medium sm:text-base">{title}</h1>}
         {description.length > 0 && (
           <Modal isOpen={areDetailsOpen} onOpenChange={setAreDetailsOpen}>
             <Button
