@@ -14,17 +14,12 @@
 
 /*
  * How tall the page is. `dvh` follows the browser UI that comes and goes while
- * scrolling, but an installed app has none to follow: iOS still measures it
- * there as if Safari's toolbar were on screen, leaving a gap under the picture
- * until something forces a relayout. The document already spans the display in
- * that mode, so its own height is the honest one.
+ * scrolling, which is what a browser wants. An installed app on iOS has no such
+ * UI and WebKit measures the unit wrongly there, so `viewport.ts` measures the
+ * viewport itself and sets this property; everywhere else it stays unset.
  */
 @utility h-viewport {
-  height: 100dvh;
-
-  @media (display-mode: standalone) {
-    height: 100%;
-  }
+  height: var(--viewport-height, 100dvh);
 }
 
 /*
@@ -49,12 +44,17 @@
   color: var(--foreground);
 }
 
+/* The same height as the page itself, so that nothing it holds can overflow
+   into a scroll of its own. */
 html,
 body,
 #root {
-  height: 100%;
+  height: var(--viewport-height, 100%);
 }
 
 body {
   margin: 0;
+  /* The player fills the display and nothing below it is meant to come into
+     view, so the page neither bounces past its edges nor pulls to refresh. */
+  overscroll-behavior: none;
 }

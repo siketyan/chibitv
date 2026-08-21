@@ -3,8 +3,11 @@ import { createRoot } from "react-dom/client";
 
 import App from "./App.js";
 import { registerServiceWorker } from "./pwa.js";
+import { trackViewportHeight } from "./viewport.js";
 
 import "./styles.css";
+
+trackViewportHeight();
 
 const container = document.getElementById("root");
 if (!container) {

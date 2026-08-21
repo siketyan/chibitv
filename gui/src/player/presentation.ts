@@ -7,6 +7,8 @@
  * neither, letting the GUI leave the control out.
  */
 
+import { isIosWebApp } from "../platform";
+
 /** How WebKit announces that the video moved between inline, Picture-in-Picture and fullscreen. */
 const PRESENTATION_MODE_EVENT = "webkitpresentationmodechanged";
 
@@ -15,16 +17,6 @@ const PICTURE_IN_PICTURE_EVENTS = ["enterpictureinpicture", "leavepictureinpictu
 
 /** The events either flavour announces a fullscreen change with. */
 const FULLSCREEN_EVENTS = ["fullscreenchange", "webkitfullscreenchange"];
-
-/**
- * Whether this is an app installed to the Home Screen on iOS.
- *
- * `standalone` is set by Safari for iOS alone, and only there, so it says both
- * which platform this is and that it is not running in a browser tab.
- */
-function isIosWebApp(): boolean {
-  return window.navigator.standalone === true;
-}
 
 export function supportsPictureInPicture(video: HTMLVideoElement): boolean {
   // An installed app on iOS claims the WebKit presentation mode below and then
