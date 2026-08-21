@@ -1,9 +1,11 @@
+import { Spinner } from "@heroui/react";
 import { type JSX, useEffect, useState } from "react";
 
 import { useServices } from "../api/services";
 import { useStream } from "../api/stream";
 import { bindMediaSession, publishNowPlaying } from "../player/mediaSession";
 import { startPlayback } from "../player/playback";
+import { useIsWaitingForMedia } from "../player/readiness";
 import { useServiceId } from "../router";
 import { PlayerControls } from "./PlayerControls";
 
@@ -15,6 +17,7 @@ export function Player(): JSX.Element {
   const { state, subscribeFmp4, playbackGeneration } = useStream();
   const serviceId = useServiceId();
   const { data: services = [] } = useServices();
+  const isWaitingForMedia = useIsWaitingForMedia(video);
   const serviceName = state?.service?.name;
   const providerName = state?.service?.providerName ?? "";
   const eventTitle = state?.event?.title;
@@ -54,6 +57,14 @@ export function Player(): JSX.Element {
         <video ref={setVideo} muted autoPlay playsInline className="player-picture object-fill" />
       </div>
       {video && <PlayerControls video={video} />}
+      {/* Tuning, descrambling and transcoding all happen before the first frame
+          arrives, and the picture stays black until then, so say it is coming. */}
+      {serviceId !== undefined && !error && isWaitingForMedia && (
+        // The colour lives on the wrapper because the spinner inherits it.
+        <div className="pointer-events-none absolute z-10 text-white/70">
+          <Spinner aria-label="Loading the picture" color="current" size="lg" />
+        </div>
+      )}
       {serviceId === undefined && services.length === 0 && (
         <p className="absolute z-10 text-sm text-white/70">No channels are available.</p>
       )}

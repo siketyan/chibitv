@@ -4,6 +4,12 @@ const AVC_BITRATE = 8_000_000;
 const MIN_START_BUFFER_SECONDS = 2;
 const MAX_BUFFER_AHEAD_SECONDS = 30;
 const RETAIN_BUFFER_BEHIND_SECONDS = 30;
+/** How far behind the newest media playback may drift before it is pulled back up to it. */
+const MAX_LIVE_DELAY_SECONDS = 5;
+/** How far short of the newest media it resumes, so that the decoder is not left with nothing. */
+const LIVE_EDGE_MARGIN_SECONDS = 1;
+/** What may have left playback behind the newest media the buffer holds. */
+const LIVE_DRIFT_EVENTS = ["play", "seeked"];
 
 type SubscribeFmp4 = (listener: (data: Uint8Array) => void) => () => void;
 
@@ -69,8 +75,15 @@ class MediaSourcePlayback {
   private stopped = false;
   private playbackStarted = false;
   private streaming = true;
+  private readonly catchUp = () => this.catchUpToLive();
 
   constructor(private readonly video: HTMLVideoElement) {
+    // Nothing in the GUI seeks, but the platform controls, a stray key or a
+    // pause taken over the picture all leave playback behind what is on air.
+    for (const event of LIVE_DRIFT_EVENTS) {
+      video.addEventListener(event, this.catchUp);
+    }
+
     this.sourceOpen = new Promise((resolve, reject) => {
       this.mediaSource.addEventListener("sourceopen", () => resolve(), { once: true });
       this.mediaSource.addEventListener(
@@ -128,6 +141,7 @@ class MediaSourcePlayback {
 
     await waitForSourceBuffer(sourceBuffer, () => sourceBuffer.appendBuffer(data));
     await this.startPlaybackWhenReady();
+    this.catchUpToLive();
     await this.trimOldBuffer();
     await this.waitForBufferRoom();
   }
@@ -141,6 +155,9 @@ class MediaSourcePlayback {
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
+    for (const event of LIVE_DRIFT_EVENTS) {
+      this.video.removeEventListener(event, this.catchUp);
+    }
     try {
       this.sourceBuffer?.abort();
     } catch {
@@ -171,6 +188,33 @@ class MediaSourcePlayback {
     this.playbackStarted = true;
     this.video.currentTime = bufferedStart;
     await this.video.play().catch(() => {});
+  }
+
+  /**
+   * Pulls playback back up to the newest media the buffer holds.
+   *
+   * What is being watched is live, so the buffer only runs ahead of playback
+   * while the picture is standing still: a pause, a seek backwards, a tab the
+   * browser throttled. Whatever left it behind, the viewer wants what is on air
+   * now rather than to sit through the delay, so playback jumps over it.
+   *
+   * A pause is left alone until it ends, because playback resuming raises one
+   * of the events above and comes back through here.
+   */
+  private catchUpToLive(): void {
+    // The SourceBuffer is detached once stopped, when reading it would throw.
+    if (this.stopped || !this.playbackStarted || this.video.paused) return;
+
+    const buffered = this.sourceBuffer?.buffered;
+    if (!buffered || buffered.length === 0) return;
+
+    const bufferedEnd = buffered.end(buffered.length - 1);
+    if (bufferedEnd - this.video.currentTime <= MAX_LIVE_DELAY_SECONDS) return;
+
+    // The newest range alone: an older one holds media playback has already
+    // passed, and the gap between them has nothing to play at all.
+    const newestStart = buffered.start(buffered.length - 1);
+    this.video.currentTime = Math.max(newestStart, bufferedEnd - LIVE_EDGE_MARGIN_SECONDS);
   }
 
   private async trimOldBuffer(): Promise<void> {
