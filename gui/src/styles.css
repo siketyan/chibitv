@@ -5,6 +5,27 @@
   inset: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
+/*
+ * Headroom that keeps the bar overlaid at the top out from under the status bar.
+ *
+ * An installed app on iOS paints the page background down from the top of the
+ * display as a gradient, over what the page draws there, to keep the status bar
+ * legible against it. It does not stop at the safe area: measured against a
+ * 59px inset it carried to 95px, washing over a title sitting just below the
+ * inset. Dropping `apple-mobile-web-app-status-bar-style` does not stop it
+ * being drawn, so the bar is moved out from under it instead.
+ *
+ * The overshoot scales with the inset, and goes with it wherever there is no
+ * status bar to inset from — landscape on a phone, and every installed app that
+ * is not iOS — so this is a fraction of the inset rather than a length of its
+ * own. At 0.7 the whole bar clears the gradient, icons included.
+ */
+@utility clear-status-bar {
+  @media (display-mode: standalone) {
+    margin-top: calc(env(safe-area-inset-top) * 0.7);
+  }
+}
+
 /* The same for UI anchored to an edge, which pads itself away from them instead. */
 @utility pad-safe {
   padding-right: env(safe-area-inset-right);
