@@ -14,17 +14,12 @@
 
 /*
  * How tall the page is. `dvh` follows the browser UI that comes and goes while
- * scrolling, but an installed app has none to follow: iOS still measures it
- * there as if Safari's toolbar were on screen, leaving a gap under the picture
- * until something forces a relayout. The document already spans the display in
- * that mode, so its own height is the honest one.
+ * scrolling, which is what a browser wants. An installed app on iOS has no such
+ * UI and WebKit measures the unit wrongly there, so `viewport.ts` measures the
+ * viewport itself and sets this property; everywhere else it stays unset.
  */
 @utility h-viewport {
-  height: 100dvh;
-
-  @media (display-mode: standalone) {
-    height: 100%;
-  }
+  height: var(--viewport-height, 100dvh);
 }
 
 /*
@@ -45,16 +40,29 @@
 :root {
   font-family: "Noto Sans Symbols", ui-sans-serif, system-ui, sans-serif;
   color-scheme: dark;
-  background: var(--background);
+  /*
+   * The same black the player is drawn on rather than the surface colour of the
+   * theme, which is a shade off it. An installed app on iOS paints this colour
+   * into the safe areas the picture cannot reach — solid under the home
+   * indicator, and as a gradient under the status bar that carries a little way
+   * into the page — so any other shade shows up as a band beside the picture
+   * and a wash over the top of the UI overlaid on it.
+   */
+  background: #000;
   color: var(--foreground);
 }
 
+/* The same height as the page itself, so that nothing it holds can overflow
+   into a scroll of its own. */
 html,
 body,
 #root {
-  height: 100%;
+  height: var(--viewport-height, 100%);
 }
 
 body {
   margin: 0;
+  /* The player fills the display and nothing below it is meant to come into
+     view, so the page neither bounces past its edges nor pulls to refresh. */
+  overscroll-behavior: none;
 }
