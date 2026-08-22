@@ -40,7 +40,15 @@
 :root {
   font-family: "Noto Sans Symbols", ui-sans-serif, system-ui, sans-serif;
   color-scheme: dark;
-  background: var(--background);
+  /*
+   * The same black the player is drawn on rather than the surface colour of the
+   * theme, which is a shade off it. An installed app on iOS paints this colour
+   * into the safe areas the picture cannot reach — solid under the home
+   * indicator, and as a gradient under the status bar that carries a little way
+   * into the page — so any other shade shows up as a band beside the picture
+   * and a wash over the top of the UI overlaid on it.
+   */
+  background: #000;
   color: var(--foreground);
 }
 
