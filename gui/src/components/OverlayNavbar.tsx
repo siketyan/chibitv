@@ -35,7 +35,7 @@ export function OverlayNavbar({
   return (
     <nav
       className={clsx(
-        "pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent px-3 pb-10 pt-3 text-white clear-status-bar sm:px-5 sm:pt-4",
+        "pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent px-3 pb-10 pt-3 text-white sm:px-5 sm:pt-4",
         chromeTransition(isVisible),
       )}
     >
