@@ -2,7 +2,7 @@
 
 # Builds the minimal FFmpeg WebAssembly module the GUI decodes MPEG-2 video
 # with. The base image must match EMSDK_VERSION in the build script below.
-FROM emscripten/emsdk:6.0.7 AS wasm-builder
+FROM emscripten/emsdk:6.0.8 AS wasm-builder
 WORKDIR /work
 COPY packages/mediabunny-mpeg2/lib/ ./
 RUN FFMPEG_VERSION="$(sed -n 's/^FFMPEG_VERSION="\(.*\)"$/\1/p' build.sh)" \
