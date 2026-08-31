@@ -44,13 +44,21 @@ protoc-bin-vendored = "3"
 tempfile = "3.24.0"
 tower = { version = "0.5.3", features = ["util"] }
 
+[target.'cfg(windows)'.dependencies]
+chibitv_bon = { path = "../chibitv_bon", optional = true }
+
 [target.'cfg(unix)'.dependencies]
 dvbv5-sys = { version = "0.2.1", optional = true }
 libc = { version = "0.2.186", optional = true }
 
 [features]
-default = ["dvb"]
+default = ["dvb", "bon"]
 dvb = ["dep:dvbv5-sys", "dep:libc"]
+
+# BonDriver tuner support. Both this and `dvb` are on by default and each only
+# takes effect on the platform it exists for, so a plain build is right either
+# way round.
+bon = ["dep:chibitv_bon"]
 
 # Embeds the GUI built into `gui/dist` in the binary and serves it from the
 # `serve` command. Development uses the rsbuild dev server instead, so this is

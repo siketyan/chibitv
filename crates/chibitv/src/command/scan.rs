@@ -297,6 +297,22 @@ fn format_scan_output(channels: &[ChannelConfig]) -> String {
                     table["bandwidth_hz"] = toml_edit::value(i64::from(bandwidth_hz));
                 }
             }
+            ChannelConfigInner::BonIsdbS {
+                space,
+                channel: number,
+            } => {
+                table["delivery_system"] = toml_edit::value("Bon-ISDB-S");
+                table["space"] = toml_edit::value(i64::from(space));
+                table["channel"] = toml_edit::value(i64::from(number));
+            }
+            ChannelConfigInner::BonIsdbT {
+                space,
+                channel: number,
+            } => {
+                table["delivery_system"] = toml_edit::value("Bon-ISDB-T");
+                table["space"] = toml_edit::value(i64::from(space));
+                table["channel"] = toml_edit::value(i64::from(number));
+            }
         }
 
         if !channel.services.is_empty() {

@@ -69,12 +69,12 @@ impl EventCrawler {
             };
             let deadline = Instant::now() + dwell_time;
             let keep_crawling = match channel.inner {
-                ChannelInner::IsdbT { .. } => {
+                ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => {
                     let descrambler = B25Descrambler::init(self.cas.clone())?;
                     let mut demux = M2tsDemuxer::new(reader, descrambler);
                     crawl_channel(&mut demux, channel, &registry, deadline, &mut emit)?
                 }
-                ChannelInner::IsdbS { .. } => {
+                ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => {
                     let descrambler =
                         Descrambler::init(self.cas.clone(), self.cas_master_key, false)?;
                     let mut demux = MmtDemuxer::new(

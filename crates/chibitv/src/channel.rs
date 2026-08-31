@@ -1,9 +1,24 @@
 use crate::config::ChannelConfigInner;
 
+/// How a channel is tuned to, and what it delivers once tuned.
+///
+/// The `Bon*` variants name a channel a BonDriver enumerates rather than
+/// tuning parameters, because a BonDriver holds those itself. They still say
+/// which delivery system it is, since that is what decides how the stream is
+/// demultiplexed: ISDB-T carries MPEG-2 TS and ISDB-S carries MMT/TLV.
 #[derive(Clone, Debug)]
 pub enum ChannelInner {
+    // Only the DVB tuner reads the tuning parameters; a build without it keeps
+    // them purely to describe the channel.
+    #[cfg_attr(not(all(feature = "dvb", unix)), allow(dead_code))]
     IsdbS { frequency: u32, stream_id: u32 },
+    #[cfg_attr(not(all(feature = "dvb", unix)), allow(dead_code))]
     IsdbT { frequency: u32, bandwidth_hz: u32 },
+
+    #[cfg_attr(not(all(feature = "bon", windows)), allow(dead_code))]
+    BonIsdbS { space: u32, channel: u32 },
+    #[cfg_attr(not(all(feature = "bon", windows)), allow(dead_code))]
+    BonIsdbT { space: u32, channel: u32 },
 }
 
 impl From<&ChannelConfigInner> for ChannelInner {
@@ -22,6 +37,14 @@ impl From<&ChannelConfigInner> for ChannelInner {
             } => Self::IsdbT {
                 frequency: *frequency,
                 bandwidth_hz: *bandwidth_hz,
+            },
+            ChannelConfigInner::BonIsdbS { space, channel } => Self::BonIsdbS {
+                space: *space,
+                channel: *channel,
+            },
+            ChannelConfigInner::BonIsdbT { space, channel } => Self::BonIsdbT {
+                space: *space,
+                channel: *channel,
             },
         }
     }

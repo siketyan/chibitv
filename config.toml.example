@@ -6,6 +6,12 @@ type = "dvb"
 adapter_num = 0
 frontend_num = 0
 
+# Windows only. The DLL reads its own tuning parameters from the .ini file
+# sitting next to it.
+[[tuners]]
+type = "bon"
+path = 'C:\BonDriver\BonDriver_BDA.dll'
+
 [[channels]]
 name = "BS Example"
 delivery_system = "ISDB-S"
@@ -18,6 +24,21 @@ delivery_system = "ISDB-T"
 frequency = 551142857
 # Optional. Defaults to 6000000.
 bandwidth_hz = 6000000
+
+# A BonDriver holds the tuning parameters itself, so a channel only names the
+# tuning space and channel numbers it enumerates. The delivery system still has
+# to be named: ISDB-T carries MPEG-2 TS and ISDB-S carries MMT/TLV.
+[[channels]]
+name = "BonDriver Terrestrial Example"
+delivery_system = "Bon-ISDB-T"
+space = 0
+channel = 0
+
+[[channels]]
+name = "BonDriver 4K Example"
+delivery_system = "Bon-ISDB-S"
+space = 0
+channel = 1
 
 [database]
 # Defaults to a SQLite database in the working directory. The scheme picks the
