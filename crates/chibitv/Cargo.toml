@@ -44,6 +44,9 @@ protoc-bin-vendored = "3"
 tempfile = "3.24.0"
 tower = { version = "0.5.3", features = ["util"] }
 
+[target.'cfg(windows)'.dependencies]
+chibitv_bon = { path = "../chibitv_bon", optional = true }
+
 [target.'cfg(unix)'.dependencies]
 dvbv5-sys = { version = "0.2.1", optional = true }
 libc = { version = "0.2.186", optional = true }
@@ -51,6 +54,10 @@ libc = { version = "0.2.186", optional = true }
 [features]
 default = ["dvb"]
 dvb = ["dep:dvbv5-sys", "dep:libc"]
+
+# BonDriver tuner support, which only exists on Windows. It is not a default
+# feature because Cargo cannot make one depend on the platform.
+bon = ["dep:chibitv_bon"]
 
 # Embeds the GUI built into `gui/dist` in the binary and serves it from the
 # `serve` command. Development uses the rsbuild dev server instead, so this is

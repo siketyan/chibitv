@@ -217,7 +217,7 @@ fn start_stream(
     let event_id = Arc::new(RwLock::new(None));
 
     let kill_tx = match &channel.inner {
-        ChannelInner::IsdbS { .. } => {
+        ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => {
             let descrambler = b61_descrambler
                 .ok_or_else(|| anyhow::anyhow!("B61 descrambler is not configured"))?;
             let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
@@ -234,7 +234,7 @@ fn start_stream(
                 &event_id,
             )
         }
-        ChannelInner::IsdbT { .. } => {
+        ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => {
             let descrambler = B25Descrambler::init(cas)?;
             // A service of zero streams the whole transport stream instead of
             // picking one service out of it.

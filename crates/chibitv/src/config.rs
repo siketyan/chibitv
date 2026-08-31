@@ -64,7 +64,18 @@ impl Default for DatabaseConfig {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TunerConfig {
     Stdin,
-    Dvb { adapter_num: u8, frontend_num: u8 },
+
+    #[cfg(feature = "dvb")]
+    Dvb {
+        adapter_num: u8,
+        frontend_num: u8,
+    },
+
+    /// A BonDriver DLL, which is how tuners are driven on Windows.
+    #[cfg(feature = "bon")]
+    Bon {
+        path: std::path::PathBuf,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -83,6 +94,16 @@ pub enum ChannelConfigInner {
         )]
         bandwidth_hz: u32,
     },
+
+    /// A channel identified by the tuning space and channel numbers a
+    /// BonDriver enumerates, rather than by tuning parameters, which a
+    /// BonDriver holds in its own configuration. The delivery system still
+    /// has to be named, because it decides how the stream is demultiplexed.
+    #[serde(rename = "Bon-ISDB-S")]
+    BonIsdbS { space: u32, channel: u32 },
+
+    #[serde(rename = "Bon-ISDB-T")]
+    BonIsdbT { space: u32, channel: u32 },
 }
 
 fn default_isdb_t_bandwidth_hz() -> u32 {

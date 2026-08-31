@@ -186,6 +186,9 @@ impl Tuner for DvbTuner {
             let p = self.dev.fe_parms;
 
             match channel.inner {
+                ChannelInner::BonIsdbS { .. } | ChannelInner::BonIsdbT { .. } => {
+                    bail!("A DVB tuner cannot take a BonDriver channel");
+                }
                 ChannelInner::IsdbS {
                     frequency,
                     stream_id,

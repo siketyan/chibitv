@@ -68,12 +68,12 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     let service_information = ServiceInformationProcessor::new(channel.id, None, Some(signal_tx));
     match channel.inner {
-        ChannelInner::IsdbS { .. } => {
+        ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => {
             let descrambler = Descrambler::init(cas, config.cas.master_key.into(), false)?;
             let demux = MmtDemuxer::new(BufReader::new(input), descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }
-        ChannelInner::IsdbT { .. } => {
+        ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => {
             let descrambler = B25Descrambler::init(cas)?;
             let demux = M2tsDemuxer::new(input, descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)

@@ -47,6 +47,7 @@ The library crates map directly to ARIB standard documents and hold the parsing/
 - `chibitv_b25` — ISDB-T conditional access: MULTI2 descrambling and the classic CAS card protocol (STD-B25).
 - `chibitv_b60` — MMT/TLV container parsing for ISDB-S 4K: TLV packets, compressed IP, MMTP, messages/tables/descriptors, MFU (STD-B60).
 - `chibitv_b61` — ISDB-S conditional access: AES-CTR descrambling and the ACAS card protocol; needs the externally provided _Kd_ master key (STD-B61).
+- `chibitv_bon` — BonDriver, the de-facto tuner interface on Windows; a hand-written binding to its `IBonDriver2` vtable. Empty on other platforms.
 
 ### The `chibitv` binary
 
@@ -54,7 +55,7 @@ The library crates map directly to ARIB standard documents and hold the parsing/
 
 The shared data flow is a pipeline:
 
-1. A tuner source (`tuner/dvb.rs` behind the default `dvb` feature, or `tuner/stdin.rs` / file input) produces a raw stream
+1. A tuner source (`tuner/dvb.rs` behind the default `dvb` feature, `tuner/bon.rs` behind `bon`, or `tuner/stdin.rs` / file input) produces a raw stream
 2. Demux (`demux.rs`, `mmt.rs` for MMT/TLV, `m2ts.rs` for MPEG-2 TS)
 3. CAS descrambling (`cas.rs`, backed by the b25/b61 crates over PC/SC)
 4. Remux (`remux.rs`, `mp4.rs`, codec helpers `aac.rs`/`hevc.rs`/`mp2.rs`)
@@ -71,6 +72,7 @@ Configuration is loaded from `./config.toml` in the working directory (`config.r
 Cargo features on `chibitv`:
 
 - `dvb` (default, Linux DVB tuner support)
+- `bon` (BonDriver tuner support on Windows; not a default because Cargo cannot make one depend on the platform)
 - `gui` (embeds the built `gui/dist` into the binary via rust-embed — used only by the Docker image; development keeps GUI and server separate).
 
 ### GUI and JS packages
