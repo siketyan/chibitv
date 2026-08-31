@@ -353,6 +353,7 @@ dependencies = [
  "chibitv_b25",
  "chibitv_b60",
  "chibitv_b61",
+ "chibitv_bon",
  "chrono",
  "clap",
  "connectrpc",
@@ -438,6 +439,14 @@ dependencies = [
  "sha2 0.11.0",
  "strum",
  "tracing",
+]
+
+[[package]]
+name = "chibitv_bon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "windows-sys",
 ]
 
 [[package]]
