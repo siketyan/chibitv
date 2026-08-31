@@ -93,8 +93,14 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    # Windows builds the bundled SQLite and the rest from scratch more slowly
+    # than Linux does, so this is not the 20 minutes the other jobs get.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -103,6 +109,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install system dependencies
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y libdvbv5-dev libpcsclite-dev
