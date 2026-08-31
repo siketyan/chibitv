@@ -1,6 +1,6 @@
-#[cfg(feature = "bon")]
+#[cfg(all(feature = "bon", windows))]
 mod bon;
-#[cfg(feature = "dvb")]
+#[cfg(all(feature = "dvb", unix))]
 mod dvb;
 mod stdin;
 
@@ -148,7 +148,7 @@ impl Tuners {
                 self.add_tuner(id, stdin::StdinTuner);
             }
 
-            #[cfg(feature = "dvb")]
+            #[cfg(all(feature = "dvb", unix))]
             TunerConfig::Dvb {
                 adapter_num,
                 frontend_num,
@@ -156,7 +156,7 @@ impl Tuners {
                 self.add_tuner(id, dvb::DvbTuner::new(*adapter_num, *frontend_num)?);
             }
 
-            #[cfg(feature = "bon")]
+            #[cfg(all(feature = "bon", windows))]
             TunerConfig::Bon { path } => {
                 self.add_tuner(id, bon::BonTuner::new(path)?);
             }

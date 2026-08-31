@@ -19,7 +19,7 @@ runtime setup (tuner devices, PC/SC, `config.toml`).
 Rust (workspace of `crates/*`, edition 2024):
 
 - Build: `cargo build`
-- Test all: `cargo test --all-targets` (CI runs exactly this)
+- Test all: `cargo test --all-targets` (CI runs exactly this, on Linux and Windows)
 - Test one crate: `cargo test -p chibitv_b60`
 - Test one test: `cargo test -p chibitv_b60 <test_name>`
 - Lint: `cargo clippy --all-targets -- -D warnings` (warnings fail CI)
@@ -72,8 +72,11 @@ Configuration is loaded from `./config.toml` in the working directory (`config.r
 Cargo features on `chibitv`:
 
 - `dvb` (default, Linux DVB tuner support)
-- `bon` (BonDriver tuner support on Windows; not a default because Cargo cannot make one depend on the platform)
+- `bon` (default, BonDriver tuner support on Windows)
 - `gui` (embeds the built `gui/dist` into the binary via rust-embed — used only by the Docker image; development keeps GUI and server separate).
+
+Both tuner features are on by default and each is gated on the platform it exists
+for as well, so a plain build does the right thing on either one.
 
 ### GUI and JS packages
 

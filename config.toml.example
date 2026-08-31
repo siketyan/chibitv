@@ -6,8 +6,8 @@ type = "dvb"
 adapter_num = 0
 frontend_num = 0
 
-# Windows only, and needs the `bon` feature. The DLL reads its own tuning
-# parameters from the .ini file sitting next to it.
+# Windows only. The DLL reads its own tuning parameters from the .ini file
+# sitting next to it.
 [[tuners]]
 type = "bon"
 path = 'C:\BonDriver\BonDriver_BDA.dll'

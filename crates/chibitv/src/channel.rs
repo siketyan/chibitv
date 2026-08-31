@@ -10,14 +10,14 @@ use crate::config::ChannelConfigInner;
 pub enum ChannelInner {
     // Only the DVB tuner reads the tuning parameters; a build without it keeps
     // them purely to describe the channel.
-    #[cfg_attr(not(feature = "dvb"), allow(dead_code))]
+    #[cfg_attr(not(all(feature = "dvb", unix)), allow(dead_code))]
     IsdbS { frequency: u32, stream_id: u32 },
-    #[cfg_attr(not(feature = "dvb"), allow(dead_code))]
+    #[cfg_attr(not(all(feature = "dvb", unix)), allow(dead_code))]
     IsdbT { frequency: u32, bandwidth_hz: u32 },
 
-    #[cfg_attr(not(feature = "bon"), allow(dead_code))]
+    #[cfg_attr(not(all(feature = "bon", windows)), allow(dead_code))]
     BonIsdbS { space: u32, channel: u32 },
-    #[cfg_attr(not(feature = "bon"), allow(dead_code))]
+    #[cfg_attr(not(all(feature = "bon", windows)), allow(dead_code))]
     BonIsdbT { space: u32, channel: u32 },
 }
 

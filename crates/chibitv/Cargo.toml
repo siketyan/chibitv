@@ -52,11 +52,12 @@ dvbv5-sys = { version = "0.2.1", optional = true }
 libc = { version = "0.2.186", optional = true }
 
 [features]
-default = ["dvb"]
+default = ["dvb", "bon"]
 dvb = ["dep:dvbv5-sys", "dep:libc"]
 
-# BonDriver tuner support, which only exists on Windows. It is not a default
-# feature because Cargo cannot make one depend on the platform.
+# BonDriver tuner support. Both this and `dvb` are on by default and each only
+# takes effect on the platform it exists for, so a plain build is right either
+# way round.
 bon = ["dep:chibitv_bon"]
 
 # Embeds the GUI built into `gui/dist` in the binary and serves it from the

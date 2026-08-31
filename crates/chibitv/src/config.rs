@@ -65,14 +65,14 @@ impl Default for DatabaseConfig {
 pub enum TunerConfig {
     Stdin,
 
-    #[cfg(feature = "dvb")]
+    #[cfg(all(feature = "dvb", unix))]
     Dvb {
         adapter_num: u8,
         frontend_num: u8,
     },
 
     /// A BonDriver DLL, which is how tuners are driven on Windows.
-    #[cfg(feature = "bon")]
+    #[cfg(all(feature = "bon", windows))]
     Bon {
         path: std::path::PathBuf,
     },
