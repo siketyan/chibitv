@@ -34,24 +34,22 @@ pub trait StorageObject: Write + Send {
 
 pub fn open(config: &StorageConfig) -> anyhow::Result<Box<dyn Storage>> {
     Ok(match config {
-        StorageConfig::Local { directory } => Box::new(LocalStorage::new(directory)),
+        StorageConfig::Directory { path } => Box::new(DirectoryStorage::new(path)),
     })
 }
 
 /// Keeps objects as files in one directory.
-pub struct LocalStorage {
-    directory: PathBuf,
+pub struct DirectoryStorage {
+    path: PathBuf,
 }
 
-impl LocalStorage {
-    pub fn new(directory: impl Into<PathBuf>) -> Self {
-        Self {
-            directory: directory.into(),
-        }
+impl DirectoryStorage {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
     }
 }
 
-impl Storage for LocalStorage {
+impl Storage for DirectoryStorage {
     fn create(&self, name: &str) -> anyhow::Result<Box<dyn StorageObject>> {
         // A name is what an object is called, not where it goes, so anything
         // that would take the file out of the directory is refused rather than
@@ -61,17 +59,17 @@ impl Storage for LocalStorage {
             bail!("`{name}` is not a valid object name");
         }
 
-        create_dir_all(&self.directory)
-            .with_context(|| format!("Could not create `{}`", self.directory.display()))?;
+        create_dir_all(&self.path)
+            .with_context(|| format!("Could not create `{}`", self.path.display()))?;
 
-        let path = self.directory.join(name);
-        let partial_path = self.directory.join(format!("{name}{PARTIAL_SUFFIX}"));
+        let path = self.path.join(name);
+        let partial_path = self.path.join(format!("{name}{PARTIAL_SUFFIX}"));
         let file = File::create(&partial_path)
             .with_context(|| format!("Could not create `{}`", partial_path.display()))?;
 
-        info!(path = %path.display(), "Writing to a local object");
+        info!(path = %path.display(), "Writing to a file");
 
-        Ok(Box::new(LocalObject {
+        Ok(Box::new(FileObject {
             writer: Some(BufWriter::new(file)),
             partial_path,
             path,
@@ -79,7 +77,7 @@ impl Storage for LocalStorage {
     }
 }
 
-struct LocalObject {
+struct FileObject {
     /// Taken once the object is finished, so that finishing it twice, or
     /// writing to it afterwards, does not touch the file again.
     writer: Option<BufWriter<File>>,
@@ -87,7 +85,7 @@ struct LocalObject {
     path: PathBuf,
 }
 
-impl Write for LocalObject {
+impl Write for FileObject {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match &mut self.writer {
             Some(writer) => writer.write(buf),
@@ -103,7 +101,7 @@ impl Write for LocalObject {
     }
 }
 
-impl StorageObject for LocalObject {
+impl StorageObject for FileObject {
     fn finish(&mut self) -> anyhow::Result<()> {
         let Some(mut writer) = self.writer.take() else {
             return Ok(());
@@ -131,7 +129,7 @@ mod tests {
     #[test]
     fn keeps_a_finished_object_under_its_name() {
         let directory = tempfile::tempdir().unwrap();
-        let storage = LocalStorage::new(directory.path());
+        let storage = DirectoryStorage::new(directory.path());
 
         let mut object = storage.create("recording.m2ts").unwrap();
         object.write_all(b"stream").unwrap();
@@ -144,7 +142,7 @@ mod tests {
     #[test]
     fn leaves_an_unfinished_object_marked_as_partial() {
         let directory = tempfile::tempdir().unwrap();
-        let storage = LocalStorage::new(directory.path());
+        let storage = DirectoryStorage::new(directory.path());
 
         let mut object = storage.create("recording.m2ts").unwrap();
         object.write_all(b"stream").unwrap();
@@ -158,7 +156,7 @@ mod tests {
     #[test]
     fn creates_the_directory_it_stores_into() {
         let directory = tempfile::tempdir().unwrap();
-        let storage = LocalStorage::new(directory.path().join("recordings"));
+        let storage = DirectoryStorage::new(directory.path().join("recordings"));
 
         storage.create("recording.m2ts").unwrap().finish().unwrap();
 
@@ -168,7 +166,7 @@ mod tests {
     #[test]
     fn refuses_a_name_that_is_a_path() {
         let directory = tempfile::tempdir().unwrap();
-        let storage = LocalStorage::new(directory.path());
+        let storage = DirectoryStorage::new(directory.path());
 
         for name in ["", "..", "sub/recording.m2ts", "/etc/passwd"] {
             assert!(storage.create(name).is_err(), "`{name}` was accepted");

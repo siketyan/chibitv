@@ -48,5 +48,5 @@ url = "sqlite://chibitv.db"
 [storage]
 # Where recordings are kept. Defaults to `./recordings` in the working
 # directory.
-type = "local"
-directory = "./recordings"
+type = "directory"
+path = "./recordings"

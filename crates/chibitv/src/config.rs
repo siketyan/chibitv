@@ -62,26 +62,26 @@ impl Default for DatabaseConfig {
 
 /// Where recordings are kept.
 ///
-/// Only local files are stored for now; the tag is what a remote store, such
-/// as an S3 bucket, would be picked with.
+/// Only a directory of the file system is stored into for now; the tag is what
+/// a remote store, such as an S3 bucket, would be picked with.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum StorageConfig {
-    Local {
-        #[serde(default = "default_storage_directory")]
-        directory: std::path::PathBuf,
+    Directory {
+        #[serde(default = "default_storage_path")]
+        path: std::path::PathBuf,
     },
 }
 
 impl Default for StorageConfig {
     fn default() -> Self {
-        Self::Local {
-            directory: default_storage_directory(),
+        Self::Directory {
+            path: default_storage_path(),
         }
     }
 }
 
-fn default_storage_directory() -> std::path::PathBuf {
+fn default_storage_path() -> std::path::PathBuf {
     std::path::PathBuf::from("./recordings")
 }
 
@@ -239,16 +239,16 @@ mod tests {
         let configured = toml::from_str::<Storage>(
             r#"
                 [storage]
-                type = "local"
-                directory = "/srv/recordings"
+                type = "directory"
+                path = "/srv/recordings"
             "#,
         )
         .unwrap();
-        let StorageConfig::Local { directory } = configured.storage;
-        assert_eq!(directory, std::path::Path::new("/srv/recordings"));
+        let StorageConfig::Directory { path } = configured.storage;
+        assert_eq!(path, std::path::Path::new("/srv/recordings"));
 
-        let StorageConfig::Local { directory } = toml::from_str::<Storage>("").unwrap().storage;
-        assert_eq!(directory, std::path::Path::new("./recordings"));
+        let StorageConfig::Directory { path } = toml::from_str::<Storage>("").unwrap().storage;
+        assert_eq!(path, std::path::Path::new("./recordings"));
     }
 
     #[test]
