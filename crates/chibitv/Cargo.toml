@@ -14,11 +14,11 @@ anyhow = "1.0.103"
 async-trait = "0.1.90"
 axum = "0.8.9"
 bitstream-io = "4.10.0"
-buffa = "0.8.1"
+buffa = "0.9.1"
 bytes = "1.12.0"
 chrono = "0.4.45"
 clap = { version = "4.6.1", features = ["derive"] }
-connectrpc = { version = "0.8.1", features = ["axum"] }
+connectrpc = { version = "0.9.0", features = ["axum"] }
 cros-codecs = "0.0.6"
 hex = "0.4.3"
 mpeg2ts = "0.6.0"
@@ -37,7 +37,7 @@ tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [build-dependencies]
-connectrpc-build = "0.8.0"
+connectrpc-build = "0.9.0"
 protoc-bin-vendored = "3"
 
 [dev-dependencies]
