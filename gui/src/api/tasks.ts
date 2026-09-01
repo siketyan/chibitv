@@ -50,7 +50,18 @@ export function useWatchTasks(): void {
     const watch = async () => {
       while (!abortController.signal.aborted) {
         try {
-          for await (const task of chibitvClient.watchTasks({}, { signal: abortController.signal })) {
+          for await (const { payload } of chibitvClient.watchTasks({}, { signal: abortController.signal })) {
+            if (payload.case === "deleted") {
+              queryClient.setQueryData<Task[]>(queryKeys.tasks, (tasks = []) =>
+                tasks.filter((current) => current.id !== payload.value),
+              );
+              continue;
+            }
+            if (payload.case !== "changed") {
+              continue;
+            }
+
+            const task = payload.value;
             queryClient.setQueryData<Task[]>(queryKeys.tasks, (tasks = []) =>
               [...tasks.filter((current) => current.id !== task.id), task].toSorted((a, b) =>
                 a.id === b.id ? 0 : a.id < b.id ? -1 : 1,
@@ -140,6 +151,18 @@ export function useCancelTask(): UseMutationResult<Task | undefined, Error, Task
 
   return useMutation({
     mutationFn: async (task: Task) => (await chibitvClient.cancelTask({ taskId: task.id })).task,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
+  });
+}
+
+/** Forgets a task that is over, so that it stops being listed. */
+export function useDeleteTask(): UseMutationResult<void, Error, Task> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (task: Task) => {
+      await chibitvClient.deleteTask({ taskId: task.id });
+    },
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
   });
 }

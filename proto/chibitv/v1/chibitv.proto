@@ -18,12 +18,16 @@ service ChibitvService {
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
 
   // WatchTasks streams the current tasks, then one message per task whenever
-  // it changes, until the call is cancelled.
-  rpc WatchTasks(WatchTasksRequest) returns (stream Task);
+  // it changes or stops being kept, until the call is cancelled.
+  rpc WatchTasks(WatchTasksRequest) returns (stream TaskEvent);
 
   // CancelTask asks a cancellable task to stop. It returns once the task is
   // told to stop, which it may take a moment to act on.
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+
+  // DeleteTask forgets a task that is over, so that it stops being listed. A
+  // task that has yet to finish is cancelled instead.
+  rpc DeleteTask(DeleteTaskRequest) returns (DeleteTaskResponse);
 
   // ScheduleRecording books a recording of the event, as a task that starts
   // shortly before the event does. Cancelling that task calls the recording
@@ -107,6 +111,23 @@ message CancelTaskRequest {
 message CancelTaskResponse {
   // The task as it stands once it has been told to stop.
   Task task = 1;
+}
+
+message DeleteTaskRequest {
+  uint64 task_id = 1;
+}
+
+message DeleteTaskResponse {}
+
+// TaskEvent is what has happened to one task.
+message TaskEvent {
+  oneof payload {
+    // The task as it now stands, having just been added or changed.
+    Task changed = 1;
+
+    // The identifier of a task that is no longer kept.
+    uint64 deleted = 2;
+  }
 }
 
 message ScheduleRecordingRequest {

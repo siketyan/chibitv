@@ -110,8 +110,9 @@ export function OverlayNavbar({
       <div className="flex shrink-0 items-center gap-2">
         {/* The server starts no task of its own accord, so the button appears
             once there is something to look at — a task, or a task that could
-            not be started — and stays for as long as it is kept. */}
-        {(tasks.length > 0 || startTaskError !== undefined) && (
+            not be started — and stays for as long as it is kept, or for as
+            long as the panel is open to close it again with. */}
+        {(areTasksOpen || tasks.length > 0 || startTaskError !== undefined) && (
           <Button
             aria-label={areTasksOpen ? "Close background tasks" : "Open background tasks"}
             aria-pressed={areTasksOpen}

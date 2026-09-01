@@ -102,6 +102,15 @@ pub struct Task {
     pub finished_at: Option<DateTime<Local>>,
 }
 
+/// What happened to a task, as told to whoever follows them.
+#[derive(Clone, Debug)]
+pub enum TaskUpdate {
+    /// The task as it now stands, having just been added or changed.
+    Changed(Task),
+    /// The task is no longer kept, so it is dropped from what is shown.
+    Deleted(TaskId),
+}
+
 #[derive(Debug)]
 pub enum SpawnError {
     /// A task of the same kind is already running, and the kind allows only one.
@@ -113,6 +122,13 @@ pub enum CancelError {
     NotFound,
     /// The task runs to its end once started.
     NotCancellable,
+}
+
+#[derive(Debug)]
+pub enum DeleteError {
+    NotFound,
+    /// The task is still to run, or running: it is cancelled, not deleted.
+    NotFinished,
 }
 
 /// The flag a task watches to learn that it should stop.
@@ -171,7 +187,7 @@ struct State {
 /// Every background task of the server, running and recently finished alike.
 pub struct Tasks {
     state: Mutex<State>,
-    updates: Sender<Task>,
+    updates: Sender<TaskUpdate>,
 }
 
 impl Default for Tasks {
@@ -353,8 +369,29 @@ impl Tasks {
     }
 
     /// Follows every change to any task from now on.
-    pub fn subscribe(&self) -> Receiver<Task> {
+    pub fn subscribe(&self) -> Receiver<TaskUpdate> {
         self.updates.subscribe()
+    }
+
+    /// Forgets a task that is over, so that it stops being shown.
+    ///
+    /// A task still to run or running is cancelled rather than deleted: it
+    /// has work of its own to stop, which forgetting it would leave running.
+    pub fn delete(&self, id: TaskId) -> Result<(), DeleteError> {
+        {
+            let mut state = self.state.lock().unwrap();
+            let entry = state.entries.get(&id).ok_or(DeleteError::NotFound)?;
+            if !entry.task.state.is_finished() {
+                return Err(DeleteError::NotFinished);
+            }
+
+            state.entries.remove(&id);
+        }
+
+        info!(task_id = id, "Task deleted");
+        self.published(TaskUpdate::Deleted(id));
+
+        Ok(())
     }
 
     /// Asks a task to stop, which it may take a moment to act on.
@@ -388,7 +425,7 @@ impl Tasks {
 
         info!(task_id = id, "Task cancellation requested");
         if is_finished {
-            let _ = self.updates.send(task.clone());
+            self.published(TaskUpdate::Changed(task.clone()));
             self.prune();
         }
 
@@ -443,32 +480,45 @@ impl Tasks {
     /// Publishes the task as it stands, and returns that snapshot.
     fn broadcast(&self, id: TaskId) -> Option<Task> {
         let task = self.get(id)?;
-        // Nobody watching is the common case, and no client is required for a
-        // task to run, so a failed send is not an error.
-        let _ = self.updates.send(task.clone());
+        self.published(TaskUpdate::Changed(task.clone()));
 
         Some(task)
+    }
+
+    /// Tells whoever is following the tasks what has happened to one.
+    fn published(&self, update: TaskUpdate) {
+        // Nobody watching is the common case, and no client is required for a
+        // task to run, so a failed send is not an error.
+        let _ = self.updates.send(update);
     }
 
     /// Forgets the oldest of the finished tasks, so that a server left running
     /// does not keep every task it has ever run.
     fn prune(&self) {
-        let mut state = self.state.lock().unwrap();
-        let finished = state
-            .entries
-            .values()
-            .filter(|entry| entry.task.state.is_finished())
-            .count();
+        let forgotten = {
+            let mut state = self.state.lock().unwrap();
+            let finished = state
+                .entries
+                .values()
+                .filter(|entry| entry.task.state.is_finished())
+                .count();
+            let forgotten = state
+                .entries
+                .iter()
+                .filter(|(_, entry)| entry.task.state.is_finished())
+                .map(|(id, _)| *id)
+                .take(finished.saturating_sub(FINISHED_HISTORY))
+                .collect::<Vec<_>>();
 
-        for id in state
-            .entries
-            .iter()
-            .filter(|(_, entry)| entry.task.state.is_finished())
-            .map(|(id, _)| *id)
-            .take(finished.saturating_sub(FINISHED_HISTORY))
-            .collect::<Vec<_>>()
-        {
-            state.entries.remove(&id);
+            for id in &forgotten {
+                state.entries.remove(id);
+            }
+
+            forgotten
+        };
+
+        for id in forgotten {
+            self.published(TaskUpdate::Deleted(id));
         }
     }
 }
@@ -607,6 +657,10 @@ mod tests {
             .unwrap();
 
         let states = std::iter::from_fn(|| updates.blocking_recv().ok())
+            .filter_map(|update| match update {
+                TaskUpdate::Changed(task) => Some(task),
+                TaskUpdate::Deleted(_) => None,
+            })
             .take_while(|task| !task.state.is_finished())
             .map(|update| (update.state, update.progress, update.message))
             .collect::<Vec<_>>();
@@ -619,16 +673,73 @@ mod tests {
     }
 
     #[test]
-    fn forgets_the_oldest_finished_tasks() {
+    fn deletes_a_task_that_is_over() {
+        let tasks = Arc::new(Tasks::default());
+        let mut updates = tasks.subscribe();
+
+        let (task, result_tx, _cancelled) = spawn_blocked(&tasks);
+        wait_until(&tasks, task.id, TaskState::Running);
+        result_tx.send(Ok(())).unwrap();
+        wait_until(&tasks, task.id, TaskState::Succeeded);
+
+        tasks.delete(task.id).unwrap();
+
+        assert!(tasks.get(task.id).is_none());
+        assert!(tasks.list().is_empty());
+        let deleted = std::iter::from_fn(|| updates.try_recv().ok())
+            .any(|update| matches!(update, TaskUpdate::Deleted(id) if id == task.id));
+        assert!(deleted, "the deletion was not published");
+    }
+
+    #[test]
+    fn refuses_to_delete_a_task_that_is_still_to_finish() {
         let tasks = Arc::new(Tasks::default());
 
+        let (task, result_tx, _cancelled) = spawn_blocked(&tasks);
+        wait_until(&tasks, task.id, TaskState::Running);
+
+        assert!(matches!(
+            tasks.delete(task.id),
+            Err(DeleteError::NotFinished)
+        ));
+
+        result_tx.send(Ok(())).unwrap();
+        wait_until(&tasks, task.id, TaskState::Succeeded);
+        assert!(tasks.delete(task.id).is_ok());
+    }
+
+    #[test]
+    fn deleting_an_unknown_task_fails() {
+        let tasks = Arc::new(Tasks::default());
+
+        assert!(matches!(tasks.delete(42), Err(DeleteError::NotFound)));
+    }
+
+    #[test]
+    fn forgets_the_oldest_finished_tasks() {
+        let tasks = Arc::new(Tasks::default());
+        let mut updates = tasks.subscribe();
+
+        let mut started = Vec::new();
+        let mut deleted = Vec::new();
         for _ in 0..FINISHED_HISTORY + 8 {
             let task = tasks
                 .spawn_blocking(TaskKind::RefreshEvents, "Refreshing", |_| Ok(()))
                 .unwrap();
             wait_until(&tasks, task.id, TaskState::Succeeded);
+            started.push(task.id);
+            // The updates are read as they are published: a subscriber left
+            // behind for the whole run would be dropping them instead.
+            while let Ok(update) = updates.try_recv() {
+                if let TaskUpdate::Deleted(id) = update {
+                    deleted.push(id);
+                }
+            }
         }
 
         assert_eq!(tasks.list().len(), FINISHED_HISTORY);
+        // A client following the tasks is told about the ones forgotten here,
+        // so that it stops showing them as well.
+        assert_eq!(deleted, started[..8]);
     }
 }
