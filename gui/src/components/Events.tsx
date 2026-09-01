@@ -1,18 +1,12 @@
-import {
-  ArrowPathIcon,
-  ChevronDownIcon,
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  XMarkIcon,
-} from "@heroicons/react/24/outline";
-import { Button, Spinner } from "@heroui/react";
+import { ArrowPathIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
+import { Button } from "@heroui/react";
 import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, type JSX, useMemo, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
 import { useServices } from "../api/services";
-import { isTaskRunning, useCancelTask, useRefreshEvents, useTasks } from "../api/tasks";
-import { type DateTime, type Event, TaskKind, TaskState } from "../gen/chibitv/v1/chibitv_pb";
+import { isTaskRunning, useRefreshEvents, useTasks } from "../api/tasks";
+import { type DateTime, type Event, TaskKind } from "../gen/chibitv/v1/chibitv_pb";
 
 const MINUTES_PER_DAY = 24 * 60;
 const PIXELS_PER_MINUTE = 1.5;
@@ -91,14 +85,11 @@ export function Events(): JSX.Element {
     queryFn: async () => (await chibitvClient.listEvents({})).events,
   });
 
-  // The refresh runs on the server as a background task, which keeps going
-  // when this panel is closed, and stores what it collects as it goes.
-  const refreshTask = useTasks().findLast((task) => task.kind === TaskKind.REFRESH_EVENTS);
+  // Refreshing is a background task: this button only starts one, and how it
+  // is getting on is shown with every other task rather than here. Starting a
+  // second one is refused by the server, so the button waits for the first.
   const refreshEvents = useRefreshEvents();
-  const cancelTask = useCancelTask();
-  const isRefreshing = refreshTask !== undefined && isTaskRunning(refreshTask);
-  const refreshError =
-    refreshEvents.error?.message ?? (refreshTask?.state === TaskState.FAILED ? refreshTask.error : undefined);
+  const isRefreshing = useTasks().some((task) => task.kind === TaskKind.REFRESH_EVENTS && isTaskRunning(task));
 
   const allEvents = useMemo(() => toGuideEvents(events), [events]);
   const eventsByServiceId = useMemo(() => {
@@ -148,25 +139,6 @@ export function Events(): JSX.Element {
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex shrink-0 items-center gap-3 border-b border-white/10 px-3 py-2">
         <h2 className="mr-auto font-semibold">Program guide</h2>
-        {isRefreshing && (
-          <div className="flex items-center gap-2 text-xs text-muted">
-            <Spinner size="sm" />
-            <span className="max-w-40 truncate">{refreshTask.message || "Refreshing events"}</span>
-            {refreshTask.cancellable && (
-              <Button
-                aria-label="Stop refreshing events"
-                isDisabled={cancelTask.isPending}
-                isIconOnly
-                size="sm"
-                variant="ghost"
-                onPress={() => cancelTask.mutate(refreshTask)}
-              >
-                <XMarkIcon />
-              </Button>
-            )}
-          </div>
-        )}
-        {refreshError && <p className="max-w-80 truncate text-xs text-danger">{refreshError}</p>}
         <Button
           aria-label="Refresh events"
           isDisabled={isRefreshing || refreshEvents.isPending}

@@ -56,6 +56,14 @@ export function Page(): JSX.Element {
             </div>
           </aside>
         )}
+        {isScheduleOpen && (
+          <aside className="pointer-events-auto absolute inset-x-3 bottom-18 top-18 z-20 flex min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-surface/80 shadow-2xl backdrop-blur-xl sm:inset-x-4 sm:bottom-20 sm:top-20">
+            <Events />
+          </aside>
+        )}
+        {/* The tasks are drawn over the other panels rather than beside them:
+            the panel is small, and it is opened to look at while whatever
+            started the task stays where it was. */}
         {areTasksOpen && (
           <aside className="pointer-events-auto absolute right-3 top-18 z-20 flex max-h-[min(24rem,calc(100%-6rem))] w-[min(22rem,calc(100%-1.5rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-surface/75 p-3 shadow-2xl backdrop-blur-xl sm:right-4 sm:top-20">
             <div className="flex items-center justify-between px-2 pb-3 pt-1">
@@ -64,11 +72,6 @@ export function Page(): JSX.Element {
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
               <Tasks />
             </div>
-          </aside>
-        )}
-        {isScheduleOpen && (
-          <aside className="pointer-events-auto absolute inset-x-3 bottom-18 top-18 z-20 flex min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-surface/80 shadow-2xl backdrop-blur-xl sm:inset-x-4 sm:bottom-20 sm:top-20">
-            <Events />
           </aside>
         )}
       </div>

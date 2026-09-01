@@ -1,4 +1,4 @@
-import { type UseMutationResult, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { type UseMutationResult, useMutation, useMutationState, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { type Task, TaskKind, TaskState } from "../gen/chibitv/v1/chibitv_pb";
@@ -6,6 +6,14 @@ import { chibitvClient, queryKeys } from ".";
 
 /** How long the task stream waits before it is opened again after it drops. */
 const RECONNECT_DELAY = 1000;
+
+/**
+ * The key every mutation starting a task shares.
+ *
+ * A task that never started is not in the list of tasks, so this is what the
+ * tasks are shown with reads to report it having gone wrong.
+ */
+const START_TASK_MUTATION_KEY = ["start-task"] as const;
 
 /** Whether the task is still to do its work, or is doing it right now. */
 export function isTaskRunning(task: Task): boolean {
@@ -86,11 +94,22 @@ export function useRefreshEvents(): UseMutationResult<Task | undefined, Error, v
   const queryClient = useQueryClient();
 
   return useMutation({
+    mutationKey: START_TASK_MUTATION_KEY,
     mutationFn: async () => (await chibitvClient.refreshEvents({})).task,
     // The task is reported by the stream as well, but the list is read again so
     // that the task shows up even while the stream is being opened again.
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
   });
+}
+
+/** Why the last task that could not be started failed to start. */
+export function useStartTaskError(): string | undefined {
+  const errors = useMutationState({
+    filters: { mutationKey: START_TASK_MUTATION_KEY, status: "error" },
+    select: (mutation) => mutation.state.error?.message,
+  });
+
+  return errors.at(-1);
 }
 
 /** Asks a task to stop, which it may take a moment to act on. */
