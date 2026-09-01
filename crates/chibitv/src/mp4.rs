@@ -1,21 +1,22 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Cursor, Seek, SeekFrom, Write};
 use std::num::{NonZeroU16, NonZeroU32};
+use std::slice;
 
 use bytes::{BufMut, Bytes, BytesMut};
-use cros_codecs::codec::h265::parser::{
-    Nalu, NaluType, Parser as H265Parser, Pps, ProfileTierLevel, Sps, Vps,
+use shiguredo_mp4::bitstream::h265::{
+    H265ConstantFrameRate, H265NalUnitType, H265SampleEntryConfig, LengthSize, build_hev1_box,
+    parse_annexb_nal_units, parse_sps,
 };
 use shiguredo_mp4::boxes::{
-    AudioSampleEntryFields, EsdsBox, Hev1Box, HvccBox, HvccNalUintArray, Mp4aBox, Mp4vBox,
-    SampleEntry, VisualSampleEntryFields,
+    AudioSampleEntryFields, EsdsBox, Mp4aBox, Mp4vBox, SampleEntry, VisualSampleEntryFields,
 };
 use shiguredo_mp4::descriptors::{
     DecoderConfigDescriptor, DecoderSpecificInfo, EsDescriptor, SlConfigDescriptor,
 };
 use shiguredo_mp4::mux::{Fmp4SegmentMuxer, Mp4FileMuxer, Sample};
 use shiguredo_mp4::{FixedPointNumber, TrackKind, Uint};
-use tracing::{debug, error, info};
+use tracing::{debug, info, warn};
 
 use crate::aac::{AdtsHeader, AdtsParser, LoasFrame, SamplingFrequency};
 use crate::demux::TrackType;
@@ -23,6 +24,17 @@ use crate::mp2::{Mp2Parser, PictureCodingType, SequenceHeader, picture_coding_ty
 use crate::remux::Mux;
 
 const VIDEO_TIMESCALE: u32 = 90_000;
+
+/// The frame rate assumed when an H.265 SPS carries no VUI timing information.
+///
+/// Only the very first sample keeps this duration: every later sample has its
+/// duration recomputed from the DTS delta of the following sample.
+const DEFAULT_H265_FRAME_RATE: u32 = 30;
+
+/// NAL unit types that start a random access point (ITU-T H.265 Table 7-1).
+///
+/// IDR_W_RADL (19) / IDR_N_LP (20) / CRA_NUT (21).
+const H265_RANDOM_ACCESS_NAL_UNIT_TYPES: [u8; 3] = [19, 20, 21];
 
 #[derive(Clone, Debug)]
 struct TrackMetadata {
@@ -85,7 +97,11 @@ impl FragmentedTrackState {
     }
 }
 
-trait Track {
+/// A per-track sample writer.
+///
+/// The muxers own their tracks and are moved into a remuxer thread, so every
+/// implementation must be `Send`.
+trait Track: Send {
     fn write_sample(
         &mut self,
         data: Bytes,
@@ -202,10 +218,10 @@ impl Track for Mpeg2VideoTrack {
 }
 
 struct H265Track {
-    parser: H265Parser,
-    vps: Option<(Bytes, Vps)>,
-    pps: Option<(Bytes, Pps)>,
-    sps: Option<(Bytes, Sps)>,
+    /// The parameter set NAL units, kept as EBSP for the `hvcC` box.
+    vps: Option<Vec<u8>>,
+    pps: Option<Vec<u8>>,
+    sps: Option<Vec<u8>>,
     metadata: Option<TrackMetadata>,
     pending: Option<PendingSample>,
 }
@@ -213,13 +229,62 @@ struct H265Track {
 impl H265Track {
     fn new() -> Self {
         Self {
-            parser: H265Parser::default(),
             vps: None,
             pps: None,
             sps: None,
             metadata: None,
             pending: None,
         }
+    }
+
+    /// Builds the `hev1` sample entry once all three parameter sets are known.
+    fn build_sample_entry(&self) -> anyhow::Result<(SampleEntry, TrackMetadata)> {
+        let (Some(vps), Some(sps), Some(pps)) = (&self.vps, &self.sps, &self.pps) else {
+            anyhow::bail!("VPS, SPS and PPS are all required to build a sample entry");
+        };
+
+        let parsed = parse_sps(sps)?;
+        let (sample_duration, avg_frame_rate) = match parsed.vui_timing_info {
+            Some(timing) => {
+                let num_units_in_tick = u64::from(timing.num_units_in_tick.get());
+                let time_scale = u64::from(timing.time_scale.get());
+                let sample_duration = u64::from(VIDEO_TIMESCALE) * num_units_in_tick / time_scale;
+                // hvcC の avgFrameRate は 256 秒あたりのフレーム数
+                let avg_frame_rate = 256 * time_scale / num_units_in_tick;
+                (
+                    u32::try_from(sample_duration).unwrap_or(u32::MAX),
+                    u16::try_from(avg_frame_rate)
+                        .unwrap_or(H265SampleEntryConfig::AVG_FRAME_RATE_UNSPECIFIED),
+                )
+            }
+            None => {
+                warn!("H265 SPS has no VUI timing info; assuming {DEFAULT_H265_FRAME_RATE} fps");
+                (
+                    VIDEO_TIMESCALE / DEFAULT_H265_FRAME_RATE,
+                    H265SampleEntryConfig::AVG_FRAME_RATE_UNSPECIFIED,
+                )
+            }
+        };
+
+        let mut hev1 = build_hev1_box(
+            slice::from_ref(vps),
+            slice::from_ref(sps),
+            slice::from_ref(pps),
+            &H265SampleEntryConfig {
+                length_size: LengthSize::FourBytes,
+                avg_frame_rate,
+                constant_frame_rate: H265ConstantFrameRate::Unknown,
+            },
+        )?;
+        hev1.visual.compressorname = compressor_name();
+
+        Ok((
+            SampleEntry::Hev1(hev1),
+            TrackMetadata {
+                sample_duration,
+                timescale: VIDEO_TIMESCALE,
+            },
+        ))
     }
 }
 
@@ -230,53 +295,53 @@ impl Track for H265Track {
         dts: Option<f64>,
         pts: Option<f64>,
     ) -> anyhow::Result<Vec<TrackSample>> {
+        // A corrupted access unit must not tear down the whole remux: log it and
+        // drop the sample instead.
+        let nal_units = match parse_annexb_nal_units(&data) {
+            Ok(nal_units) => nal_units,
+            Err(err) => {
+                warn!("Failed to parse an H265 access unit: {err}");
+                return Ok(vec![]);
+            }
+        };
+
         let mut keyframe = false;
         let mut sample_entry = None::<SampleEntry>;
-        let mut nalus = Vec::<Nalu>::new();
+        let mut bytes = BytesMut::new();
+        let collecting_parameter_sets = self.metadata.is_none();
 
-        let mut cursor = Cursor::new(data.as_ref());
-        while let Ok(nalu) = Nalu::next(&mut cursor) {
-            match nalu.header.type_ {
-                NaluType::VpsNut if self.metadata.is_none() => match self.parser.parse_vps(&nalu) {
-                    Ok(vps) => {
-                        self.vps = Some((Bytes::copy_from_slice(nalu.as_ref()), vps.clone()));
-                        debug!("VPS NALU found: {:?}", vps);
-                    }
-                    Err(err) => error!("VPS parse error: {}", err),
-                },
-                NaluType::PpsNut if self.metadata.is_none() => match self.parser.parse_pps(&nalu) {
-                    Ok(pps) => {
-                        self.pps = Some((Bytes::copy_from_slice(nalu.as_ref()), pps.clone()));
-                        debug!("PPS NALU found: {:?}", pps);
-                    }
-                    Err(err) => error!("PPS parse error: {}", err),
-                },
-                NaluType::SpsNut if self.metadata.is_none() => match self.parser.parse_sps(&nalu) {
-                    Ok(sps) => {
-                        self.sps = Some((Bytes::copy_from_slice(nalu.as_ref()), sps.clone()));
-                        debug!("SPS NALU found: {:?}", sps);
-                    }
-                    Err(err) => error!("SPS parse error: {}", err),
-                },
-                NaluType::IdrWRadl | NaluType::IdrNLp | NaluType::CraNut => {
+        for nal_unit in &nal_units {
+            match nal_unit.nal_unit_type {
+                H265NalUnitType::Vps if collecting_parameter_sets && self.vps.is_none() => {
+                    self.vps = Some(nal_unit.data.to_vec());
+                    debug!("VPS NALU found");
+                }
+                H265NalUnitType::Pps if collecting_parameter_sets && self.pps.is_none() => {
+                    self.pps = Some(nal_unit.data.to_vec());
+                    debug!("PPS NALU found");
+                }
+                H265NalUnitType::Sps if collecting_parameter_sets && self.sps.is_none() => {
+                    self.sps = Some(nal_unit.data.to_vec());
+                    debug!("SPS NALU found");
+                }
+                H265NalUnitType::Other(nal_unit_type)
+                    if H265_RANDOM_ACCESS_NAL_UNIT_TYPES.contains(&nal_unit_type) =>
+                {
                     keyframe = true;
                 }
                 _ => {}
             }
 
-            nalus.push(nalu);
+            // Annex B の開始コードを 4 バイトの長さプレフィックスに置き換える
+            bytes.put_u32(nal_unit.data.len() as u32);
+            bytes.put(nal_unit.data);
         }
 
-        if self.metadata.is_none()
-            && let (Some(vps), Some(pps), Some(sps)) = (&self.vps, &self.pps, &self.sps)
+        if self.metadata.is_none() && self.vps.is_some() && self.sps.is_some() && self.pps.is_some()
         {
-            sample_entry = Some(build_hev1_sample_entry(vps, pps, sps));
-
-            self.metadata = Some(TrackMetadata {
-                sample_duration: sps.1.vui_parameters.num_units_in_tick * VIDEO_TIMESCALE
-                    / sps.1.vui_parameters.time_scale,
-                timescale: VIDEO_TIMESCALE,
-            });
+            let (entry, metadata) = self.build_sample_entry()?;
+            sample_entry = Some(entry);
+            self.metadata = Some(metadata);
 
             debug!("H265 track is ready: {:?}", &self.metadata);
         }
@@ -285,13 +350,6 @@ impl Track for H265Track {
             // Stream is not ready yet.
             return Ok(vec![]);
         };
-
-        let mut bytes = BytesMut::new();
-        for nalu in nalus {
-            let data = nalu.as_ref();
-            bytes.put_u32(data.len() as u32);
-            bytes.put(data);
-        }
 
         let sample = Sample {
             track_kind: TrackKind::Video,
@@ -631,11 +689,6 @@ pub struct FragmentedMp4Muxer<W> {
     init_segment_written: bool,
 }
 
-// FragmentedMp4Muxer is moved into a single remuxer thread and is not shared
-// between threads. H265Track contains cros-codecs parser state with Rc internals,
-// which prevents auto Send even though this usage does not cross-share it.
-unsafe impl<W: Send> Send for FragmentedMp4Muxer<W> {}
-
 impl<W: WriteMp4Fragment> FragmentedMp4Muxer<W> {
     pub fn new(writer: W) -> Self {
         Self {
@@ -894,123 +947,43 @@ fn compressor_name() -> [u8; 32] {
     value
 }
 
-fn build_hev1_sample_entry(
-    vps: &(Bytes, Vps),
-    pps: &(Bytes, Pps),
-    sps: &(Bytes, Sps),
-) -> SampleEntry {
-    let (vps_raw, vps) = vps;
-    let (pps_raw, pps) = pps;
-    let (sps_raw, sps) = sps;
-
-    let hvcc_box = HvccBox {
-        general_profile_space: Uint::new(sps.profile_tier_level.general_profile_space),
-        general_tier_flag: Uint::new(sps.profile_tier_level.general_tier_flag as u8),
-        general_profile_idc: Uint::new(sps.profile_tier_level.general_profile_idc),
-        general_profile_compatibility_flags: convert_general_profile_compatibility_flags(
-            sps.profile_tier_level.general_profile_compatibility_flag,
-        ),
-        general_constraint_indicator_flags: convert_general_constraint_indicator_flags(
-            &sps.profile_tier_level,
-        ),
-        general_level_idc: sps.profile_tier_level.general_level_idc as u8,
-        min_spatial_segmentation_idc: Uint::new(
-            sps.vui_parameters.min_spatial_segmentation_idc as u16,
-        ),
-        parallelism_type: Uint::new(
-            match (pps.entropy_coding_sync_enabled_flag, pps.tiles_enabled_flag) {
-                (true, true) => 0,
-                (false, false) => 1,
-                (false, true) => 2,
-                (true, false) => 3,
-            },
-        ),
-        chroma_format_idc: Uint::new(sps.chroma_format_idc),
-        bit_depth_luma_minus8: Uint::new(sps.bit_depth_luma_minus8),
-        bit_depth_chroma_minus8: Uint::new(sps.bit_depth_chroma_minus8),
-        avg_frame_rate: 0,
-        constant_frame_rate: Uint::new(0),
-        num_temporal_layers: Uint::new(vps.max_sub_layers_minus1 + 1),
-        temporal_id_nested: Uint::new(vps.temporal_id_nesting_flag as u8),
-        length_size_minus_one: Uint::new(3), // NAL length size
-        nalu_arrays: vec![
-            HvccNalUintArray {
-                array_completeness: Uint::new(0),
-                nal_unit_type: Uint::new(NaluType::VpsNut as u8),
-                nalus: vec![vps_raw.to_vec()],
-            },
-            HvccNalUintArray {
-                array_completeness: Uint::new(0),
-                nal_unit_type: Uint::new(NaluType::SpsNut as u8),
-                nalus: vec![sps_raw.to_vec()],
-            },
-            HvccNalUintArray {
-                array_completeness: Uint::new(0),
-                nal_unit_type: Uint::new(NaluType::PpsNut as u8),
-                nalus: vec![pps_raw.to_vec()],
-            },
-        ],
-    };
-
-    let visual = VisualSampleEntryFields {
-        data_reference_index: VisualSampleEntryFields::DEFAULT_DATA_REFERENCE_INDEX,
-        width: sps.width(),
-        height: sps.height(),
-        horizresolution: VisualSampleEntryFields::DEFAULT_HORIZRESOLUTION,
-        vertresolution: VisualSampleEntryFields::DEFAULT_VERTRESOLUTION,
-        frame_count: VisualSampleEntryFields::DEFAULT_FRAME_COUNT,
-        compressorname: compressor_name(),
-        depth: VisualSampleEntryFields::DEFAULT_DEPTH,
-    };
-
-    SampleEntry::Hev1(Hev1Box {
-        visual,
-        hvcc_box,
-        unknown_boxes: vec![],
-    })
-}
-
-fn convert_general_profile_compatibility_flags(value: [bool; 32]) -> u32 {
-    let mut result = 0u32;
-    for (i, &flag) in value.iter().enumerate() {
-        if flag {
-            result |= 1 << (31 - i);
-        }
-    }
-    result
-}
-
-fn convert_general_constraint_indicator_flags(ptl: &ProfileTierLevel) -> Uint<u64, 48> {
-    let mut value: [u8; 8] = [0; 8];
-
-    value[0] |= (ptl.general_progressive_source_flag as u8) << 7;
-    value[0] |= (ptl.general_interlaced_source_flag as u8) << 6;
-    value[0] |= (ptl.general_non_packed_constraint_flag as u8) << 5;
-    value[0] |= (ptl.general_frame_only_constraint_flag as u8) << 4;
-    value[0] |= (ptl.general_max_12bit_constraint_flag as u8) << 3;
-    value[0] |= (ptl.general_max_10bit_constraint_flag as u8) << 2;
-    value[0] |= (ptl.general_max_8bit_constraint_flag as u8) << 1;
-    value[0] |= ptl.general_max_422chroma_constraint_flag as u8;
-
-    value[1] |= (ptl.general_max_420chroma_constraint_flag as u8) << 7;
-    value[1] |= (ptl.general_max_monochrome_constraint_flag as u8) << 6;
-    value[1] |= (ptl.general_intra_constraint_flag as u8) << 5;
-    value[1] |= (ptl.general_one_picture_only_constraint_flag as u8) << 4;
-    value[1] |= (ptl.general_lower_bit_rate_constraint_flag as u8) << 3;
-    value[1] |= (ptl.general_max_14bit_constraint_flag as u8) << 2;
-
-    // 33 bits reserved
-
-    value[5] |= ptl.general_inbld_flag as u8;
-
-    // 16 bits reserved
-
-    Uint::new(u64::from_be_bytes(value))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hand-assembled HEVC VPS NAL unit (type 32).
+    ///
+    /// Only the two-byte NAL header is inspected, so the payload is arbitrary.
+    const H265_VPS: &[u8] = &[0x40, 0x01, 0x0C, 0x01, 0xFF, 0xFF];
+
+    /// A hand-assembled HEVC PPS NAL unit (type 34).
+    ///
+    /// Only the two-byte NAL header is inspected, so the payload is arbitrary.
+    const H265_PPS: &[u8] = &[0x44, 0x01, 0xC1, 0x72, 0xB4, 0x62, 0x40];
+
+    /// A hand-assembled HEVC SPS NAL unit (type 33).
+    ///
+    /// Main profile / level 3.0 / 320x240 / 4:2:0 / 8 bit, with a VUI carrying
+    /// `vui_num_units_in_tick = 1` and `vui_time_scale = 30`, i.e. 30 fps. The
+    /// bytes are the EBSP, so they include emulation prevention bytes.
+    const H265_SPS: &[u8] = &[
+        0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00,
+        0x03, 0x00, 0x5A, 0xA0, 0x0A, 0x08, 0x0F, 0x16, 0x52, 0xE4, 0x93, 0x2A, 0x87, 0x40, 0x00,
+        0x00, 0x03, 0x00, 0x40, 0x00, 0x00, 0x03, 0x07, 0x84,
+    ];
+
+    /// An IDR_W_RADL slice NAL unit (type 19), which starts a random access point.
+    const H265_IDR: &[u8] = &[0x26, 0x01, 0xAF, 0x06, 0x30];
+
+    /// Concatenates NAL units into an Annex B access unit.
+    fn h265_access_unit(nal_units: &[&[u8]]) -> Bytes {
+        let mut data = Vec::new();
+        for nal_unit in nal_units {
+            data.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);
+            data.extend_from_slice(nal_unit);
+        }
+        Bytes::from(data)
+    }
 
     fn mpeg2_picture(coding_type: u8) -> Vec<u8> {
         vec![
@@ -1153,5 +1126,75 @@ mod tests {
         assert!(mux.writer.windows(4).any(|bytes| bytes == b"mp4v"));
         assert!(mux.writer.windows(4).any(|bytes| bytes == b"mp4a"));
         assert!(mux.writer.windows(4).any(|bytes| bytes == b"moof"));
+    }
+    #[test]
+    fn builds_an_h265_sample_entry_from_the_parameter_sets() {
+        let mut track = H265Track::new();
+
+        let samples = track
+            .write_sample(
+                h265_access_unit(&[H265_VPS, H265_SPS, H265_PPS, H265_IDR]),
+                None,
+                None,
+            )
+            .unwrap();
+
+        assert_eq!(samples.len(), 1);
+        let sample = &samples[0].sample;
+        assert!(sample.keyframe);
+        assert_eq!(sample.timescale.get(), VIDEO_TIMESCALE);
+        // 90000 / 30 fps
+        assert_eq!(sample.duration, 3000);
+
+        let Some(SampleEntry::Hev1(hev1)) = &sample.sample_entry else {
+            panic!("the first sample must carry an hev1 sample entry");
+        };
+        assert_eq!(hev1.visual.width, 320);
+        assert_eq!(hev1.visual.height, 240);
+        assert_eq!(hev1.visual.compressorname, compressor_name());
+        // 256 seconds worth of frames at 30 fps
+        assert_eq!(hev1.hvcc_box.avg_frame_rate, 7680);
+        assert_eq!(hev1.hvcc_box.length_size_minus_one.get(), 3);
+        assert_eq!(hev1.hvcc_box.nalu_arrays[0].nalus, vec![H265_VPS.to_vec()]);
+        assert_eq!(hev1.hvcc_box.nalu_arrays[1].nalus, vec![H265_SPS.to_vec()]);
+        assert_eq!(hev1.hvcc_box.nalu_arrays[2].nalus, vec![H265_PPS.to_vec()]);
+
+        // The Annex B start codes are replaced with 4-byte length prefixes.
+        let data = &samples[0].data;
+        assert_eq!(&data[..4], &(H265_VPS.len() as u32).to_be_bytes());
+        assert_eq!(&data[4..4 + H265_VPS.len()], H265_VPS);
+    }
+
+    #[test]
+    fn emits_no_h265_sample_until_every_parameter_set_arrives() {
+        let mut track = H265Track::new();
+
+        // VPS と SPS だけではサンプルエントリーを組めない
+        let samples = track
+            .write_sample(
+                h265_access_unit(&[H265_VPS, H265_SPS, H265_IDR]),
+                None,
+                None,
+            )
+            .unwrap();
+        assert!(samples.is_empty());
+
+        let samples = track
+            .write_sample(h265_access_unit(&[H265_PPS, H265_IDR]), None, None)
+            .unwrap();
+        assert_eq!(samples.len(), 1);
+        assert!(samples[0].sample.sample_entry.is_some());
+    }
+
+    #[test]
+    fn drops_a_malformed_h265_access_unit() {
+        let mut track = H265Track::new();
+
+        // 開始コードの無い入力は解析できないが、エラーにはしない
+        let samples = track
+            .write_sample(Bytes::from_static(&[0x01, 0x02, 0x03]), None, None)
+            .unwrap();
+
+        assert!(samples.is_empty());
     }
 }

@@ -19,7 +19,6 @@ bytes = "1.12.0"
 chrono = "0.4.45"
 clap = { version = "4.6.1", features = ["derive"] }
 connectrpc = { version = "0.9.0", features = ["axum"] }
-cros-codecs = "0.0.6"
 hex = "0.4.3"
 mpeg2ts = "0.6.0"
 papaya = "0.2.4"
