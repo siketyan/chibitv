@@ -63,9 +63,12 @@ The shared data flow is a pipeline:
 
 `serve` (`server.rs`, `rpc.rs`) runs an axum server exposing the ConnectRPC `ChibitvService` plus the live stream;
 `registry.rs`/`stream.rs`/`event_crawler.rs` manage shared tuner/channel state and EPG events.
-`task.rs` runs the work that outlives the call asking for it — refreshing the programme guide today, recording
-later — as background tasks with progress and cooperative cancellation, reported over `ListTasks`/`WatchTasks`
-and stopped with `CancelTask`.
+`task.rs` runs the work that outlives the call asking for it — refreshing the programme guide, recording a
+programme — as background tasks with progress and cooperative cancellation, reported over
+`ListTasks`/`WatchTasks` and stopped with `CancelTask`; `scheduler.rs` starts such a task at a given time, which
+is what a recording booked from the guide (`recorder.rs`) waits in until the programme begins.
+`storage.rs` is where a recording is written: one object per recording, streamed and finished at the end, so
+that a remote store can be added beside the local directory the `[storage]` config section names.
 `store.rs` is the persistence layer: `Store` is one database, made of one trait per kind of thing kept in it
 (`store/event.rs` holds `EventStore` and the writer the demultiplexers queue EIT sections on — the EPG is all that
 is kept so far). The SQLite backend (sqlx, bundled SQLite) is in `store/sqlite.rs`, with its schema in

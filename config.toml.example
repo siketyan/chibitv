@@ -44,3 +44,9 @@ channel = 1
 # Defaults to a SQLite database in the working directory. The scheme picks the
 # backend.
 url = "sqlite://chibitv.db"
+
+[storage]
+# Where recordings are kept. Defaults to `./recordings` in the working
+# directory.
+type = "local"
+directory = "./recordings"

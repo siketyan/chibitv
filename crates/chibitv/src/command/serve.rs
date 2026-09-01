@@ -10,7 +10,9 @@ use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
 use crate::config::{ChannelConfig, Config};
 use crate::event_crawler::EventCrawler;
+use crate::recorder::Recorder;
 use crate::registry::Registry;
+use crate::storage;
 use crate::store::{self, EventWriter};
 use crate::stream::Streams;
 use crate::tuner::Tuners;
@@ -94,9 +96,21 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     );
 
     let address = config.server.address;
-    let event_crawler = EventCrawler::new(tuners, cas, config.cas.master_key.into());
+    let event_crawler = EventCrawler::new(
+        Arc::clone(&tuners),
+        cas.clone(),
+        config.cas.master_key.into(),
+    );
+    let recorder = Recorder::new(
+        tuners,
+        cas,
+        config.cas.master_key.into(),
+        storage::open(&config.storage)?.into(),
+    );
     let state = Arc::new(
-        Workspace::new(registry, channels, Some(streams)).with_event_crawler(event_crawler),
+        Workspace::new(registry, channels, Some(streams))
+            .with_event_crawler(event_crawler)
+            .with_recorder(recorder),
     );
 
     crate::server::serve(address, state).await

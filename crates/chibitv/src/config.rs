@@ -60,6 +60,31 @@ impl Default for DatabaseConfig {
     }
 }
 
+/// Where recordings are kept.
+///
+/// Only local files are stored for now; the tag is what a remote store, such
+/// as an S3 bucket, would be picked with.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum StorageConfig {
+    Local {
+        #[serde(default = "default_storage_directory")]
+        directory: std::path::PathBuf,
+    },
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self::Local {
+            directory: default_storage_directory(),
+        }
+    }
+}
+
+fn default_storage_directory() -> std::path::PathBuf {
+    std::path::PathBuf::from("./recordings")
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum TunerConfig {
@@ -148,6 +173,9 @@ pub struct Config {
     pub database: DatabaseConfig,
 
     #[serde(default)]
+    pub storage: StorageConfig,
+
+    #[serde(default)]
     pub tuners: Vec<TunerConfig>,
 
     #[serde(default)]
@@ -198,6 +226,29 @@ mod tests {
         assert_eq!(channel.services.len(), 1);
         assert_eq!(channel.services[0].id, 23608);
         assert_eq!(channel.services[0].name, "TOKYO MX1");
+    }
+
+    #[test]
+    fn stores_recordings_in_the_configured_directory() {
+        #[derive(Deserialize)]
+        struct Storage {
+            #[serde(default)]
+            storage: StorageConfig,
+        }
+
+        let configured = toml::from_str::<Storage>(
+            r#"
+                [storage]
+                type = "local"
+                directory = "/srv/recordings"
+            "#,
+        )
+        .unwrap();
+        let StorageConfig::Local { directory } = configured.storage;
+        assert_eq!(directory, std::path::Path::new("/srv/recordings"));
+
+        let StorageConfig::Local { directory } = toml::from_str::<Storage>("").unwrap().storage;
+        assert_eq!(directory, std::path::Path::new("./recordings"));
     }
 
     #[test]
