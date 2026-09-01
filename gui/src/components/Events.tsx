@@ -1,11 +1,18 @@
-import { ArrowPathIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
+import {
+  ArrowPathIcon,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  XMarkIcon,
+} from "@heroicons/react/24/outline";
 import { Button, Spinner } from "@heroui/react";
 import { useQuery } from "@tanstack/react-query";
-import { type CSSProperties, type JSX, useEffect, useMemo, useRef, useState } from "react";
+import { type CSSProperties, type JSX, useMemo, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
 import { useServices } from "../api/services";
-import type { DateTime, Event } from "../gen/chibitv/v1/chibitv_pb";
+import { isTaskRunning, useCancelTask, useRefreshEvents, useTasks } from "../api/tasks";
+import { type DateTime, type Event, TaskKind, TaskState } from "../gen/chibitv/v1/chibitv_pb";
 
 const MINUTES_PER_DAY = 24 * 60;
 const PIXELS_PER_MINUTE = 1.5;
@@ -72,60 +79,28 @@ function fromDateKey(dateKey: string): Date {
 export function Events(): JSX.Element {
   const now = new Date();
   const todayKey = toDateKey(now);
-  const [refreshedEvents, setRefreshedEvents] = useState<Map<string, Event>>(new Map());
   const [requestedDateKey, setRequestedDateKey] = useState<string>();
   const [expandedChannelIds, setExpandedChannelIds] = useState<Set<number>>(new Set());
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [refreshError, setRefreshError] = useState<string>();
-  const refreshAbortController = useRef<AbortController>(null);
   const { data: channels = [] } = useQuery({
     queryKey: queryKeys.channels,
     queryFn: async () => (await chibitvClient.listChannels({})).channels,
   });
   const { data: services = [] } = useServices();
-  const { data: initialEvents = [] } = useQuery({
+  const { data: events = [] } = useQuery({
     queryKey: queryKeys.events(),
     queryFn: async () => (await chibitvClient.listEvents({})).events,
   });
 
-  useEffect(() => {
-    return () => refreshAbortController.current?.abort();
-  }, []);
+  // The refresh runs on the server as a background task, which keeps going
+  // when this panel is closed, and stores what it collects as it goes.
+  const refreshTask = useTasks().findLast((task) => task.kind === TaskKind.REFRESH_EVENTS);
+  const refreshEvents = useRefreshEvents();
+  const cancelTask = useCancelTask();
+  const isRefreshing = refreshTask !== undefined && isTaskRunning(refreshTask);
+  const refreshError =
+    refreshEvents.error?.message ?? (refreshTask?.state === TaskState.FAILED ? refreshTask.error : undefined);
 
-  const refresh = async () => {
-    refreshAbortController.current?.abort();
-    const abortController = new AbortController();
-    refreshAbortController.current = abortController;
-    setRefreshError(undefined);
-    setIsRefreshing(true);
-
-    try {
-      for await (const event of chibitvClient.refreshEvents({}, { signal: abortController.signal })) {
-        setRefreshedEvents((current) => {
-          const next = new Map(current);
-          next.set(`${event.serviceId}:${event.id}`, event);
-          return next;
-        });
-      }
-    } catch (error) {
-      if (!abortController.signal.aborted) {
-        setRefreshError(error instanceof Error ? error.message : String(error));
-      }
-    } finally {
-      if (refreshAbortController.current === abortController) {
-        refreshAbortController.current = null;
-        setIsRefreshing(false);
-      }
-    }
-  };
-
-  const allEvents = useMemo(() => {
-    const events = new Map(initialEvents.map((event) => [`${event.serviceId}:${event.id}`, event]));
-    for (const [key, event] of refreshedEvents) {
-      events.set(key, event);
-    }
-    return toGuideEvents([...events.values()]);
-  }, [initialEvents, refreshedEvents]);
+  const allEvents = useMemo(() => toGuideEvents(events), [events]);
   const eventsByServiceId = useMemo(() => {
     const grouped = new Map<number, GuideEvent[]>();
     for (const event of allEvents) {
@@ -176,17 +151,29 @@ export function Events(): JSX.Element {
         {isRefreshing && (
           <div className="flex items-center gap-2 text-xs text-muted">
             <Spinner size="sm" />
-            Refreshing events
+            <span className="max-w-40 truncate">{refreshTask.message || "Refreshing events"}</span>
+            {refreshTask.cancellable && (
+              <Button
+                aria-label="Stop refreshing events"
+                isDisabled={cancelTask.isPending}
+                isIconOnly
+                size="sm"
+                variant="ghost"
+                onPress={() => cancelTask.mutate(refreshTask)}
+              >
+                <XMarkIcon />
+              </Button>
+            )}
           </div>
         )}
         {refreshError && <p className="max-w-80 truncate text-xs text-danger">{refreshError}</p>}
         <Button
           aria-label="Refresh events"
-          isDisabled={isRefreshing}
+          isDisabled={isRefreshing || refreshEvents.isPending}
           isIconOnly
           size="sm"
           variant="ghost"
-          onPress={() => void refresh()}
+          onPress={() => refreshEvents.mutate()}
         >
           <ArrowPathIcon />
         </Button>
