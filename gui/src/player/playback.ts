@@ -76,13 +76,22 @@ class MediaSourcePlayback {
   private playbackStarted = false;
   private streaming = true;
   private readonly catchUp = () => this.catchUpToLive();
+  private readonly reportMediaError = () => this.onMediaError();
 
-  constructor(private readonly video: HTMLVideoElement) {
+  constructor(
+    private readonly video: HTMLVideoElement,
+    /**
+     * Called when the element itself gives up on the media, which nothing
+     * appending to the buffer would otherwise hear about.
+     */
+    private readonly onFatalError: (error: Error) => void,
+  ) {
     // Nothing in the GUI seeks, but the platform controls, a stray key or a
     // pause taken over the picture all leave playback behind what is on air.
     for (const event of LIVE_DRIFT_EVENTS) {
       video.addEventListener(event, this.catchUp);
     }
+    video.addEventListener("error", this.reportMediaError);
 
     this.sourceOpen = new Promise((resolve, reject) => {
       this.mediaSource.addEventListener("sourceopen", () => resolve(), { once: true });
@@ -158,6 +167,9 @@ class MediaSourcePlayback {
     for (const event of LIVE_DRIFT_EVENTS) {
       this.video.removeEventListener(event, this.catchUp);
     }
+    // Detaching the media source below fires an error of its own, which is
+    // this playback ending rather than one to report.
+    this.video.removeEventListener("error", this.reportMediaError);
     try {
       this.sourceBuffer?.abort();
     } catch {
@@ -170,6 +182,18 @@ class MediaSourcePlayback {
       this.video.srcObject = null;
     }
     this.video.load();
+  }
+
+  /**
+   * A decode error is how a break in the stream usually surfaces: the element
+   * stops on the frame it failed on and never picks the media up again by
+   * itself, so the whole pipeline has to be built again from an init segment.
+   */
+  private onMediaError(): void {
+    if (this.stopped) return;
+
+    const error = this.video.error;
+    this.onFatalError(new Error(error?.message || `The media element failed (code ${error?.code ?? "unknown"})`));
   }
 
   private getBufferedEnd(): number {
@@ -250,7 +274,7 @@ export function startPlayback(
   options: PlaybackOptions = {},
 ): () => void {
   const worker = new Worker(new URL("./transcoder.worker.ts", import.meta.url), { type: "module" });
-  const playback = new MediaSourcePlayback(video);
+  const playback = new MediaSourcePlayback(video, (error) => fail(error));
   let stopped = false;
   let messageChain = Promise.resolve();
 
