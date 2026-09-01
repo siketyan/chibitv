@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  mediabunny@1.55.1: 10d8e4849e8e4d4523ba1add09cb8f07c22df8c4f97d47322decabddcbd289fc
+  mediabunny@1.55.5: bab758068b72bb4a33ad67576c1a7e419e7805febb4ce2a6b5f3ce05172e670c
 
 importers:
 
@@ -35,8 +35,8 @@ importers:
         specifier: 2.1.1
         version: 2.1.1
       mediabunny:
-        specifier: 1.55.1
-        version: 1.55.1(patch_hash=10d8e4849e8e4d4523ba1add09cb8f07c22df8c4f97d47322decabddcbd289fc)
+        specifier: 1.55.5
+        version: 1.55.5(patch_hash=bab758068b72bb4a33ad67576c1a7e419e7805febb4ce2a6b5f3ce05172e670c)
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.11
@@ -87,8 +87,8 @@ importers:
         specifier: 24.13.3
         version: 24.13.3
       mediabunny:
-        specifier: 1.55.1
-        version: 1.55.1(patch_hash=10d8e4849e8e4d4523ba1add09cb8f07c22df8c4f97d47322decabddcbd289fc)
+        specifier: 1.55.5
+        version: 1.55.5(patch_hash=bab758068b72bb4a33ad67576c1a7e419e7805febb4ce2a6b5f3ce05172e670c)
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -1022,8 +1022,8 @@ packages:
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
-  mediabunny@1.55.1:
-    resolution: {integrity: sha512-JDdTEUOw9g6Ey8eWc2Ei63GmRGtGTJoE56SE7CHikwzS8i9xpsWcve4bEiUw47d4j49L3r7MXDFsH/5oZIhjBw==}
+  mediabunny@1.55.5:
+    resolution: {integrity: sha512-m0v6y8FGXiK+HKOc3AZqU+kJPLYsSKaLitmQNQIIHZKIGlTwQ34OF+X6Ul0K8iV4b03oPse10apwuoqbvmKeAA==}
 
   ms@2.1.3:
     resolution: {integrity: sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==}
@@ -1941,7 +1941,7 @@ snapshots:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  mediabunny@1.55.1(patch_hash=10d8e4849e8e4d4523ba1add09cb8f07c22df8c4f97d47322decabddcbd289fc):
+  mediabunny@1.55.5(patch_hash=bab758068b72bb4a33ad67576c1a7e419e7805febb4ce2a6b5f3ce05172e670c):
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13

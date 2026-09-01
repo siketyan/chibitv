@@ -12,10 +12,10 @@ index f0667c1..8fb1d91 100644
  /**
   * The list of {@link VideoSample} pixel formats.
 diff --git a/dist/modules/src/codec-data.js b/dist/modules/src/codec-data.js
-index c7467cb..9569df4 100644
+index da3512f..d33d79d 100644
 --- a/dist/modules/src/codec-data.js
 +++ b/dist/modules/src/codec-data.js
-@@ -1992,6 +1992,28 @@ export const determineVideoPacketType = (codec, decoderConfig, packetData) => {
+@@ -2041,6 +2041,28 @@ export const determineVideoPacketType = (codec, decoderConfig, packetData) => {
                  return null;
              }
              ;
@@ -45,7 +45,7 @@ index c7467cb..9569df4 100644
              {
                  return 'key';
 diff --git a/dist/modules/src/codec.d.ts b/dist/modules/src/codec.d.ts
-index 771e10e..be53bff 100644
+index 97dfdf3..c7a63bc 100644
 --- a/dist/modules/src/codec.d.ts
 +++ b/dist/modules/src/codec.d.ts
 @@ -12,7 +12,7 @@ import { SubtitleMetadata } from './subtitles.js';
@@ -58,10 +58,10 @@ index 771e10e..be53bff 100644
   * List of known PCM (uncompressed) audio codecs, ordered by encoding preference.
   * @group Codecs
 diff --git a/dist/modules/src/codec.js b/dist/modules/src/codec.js
-index 81f2532..e1a0919 100644
+index f21174c..6b85059 100644
 --- a/dist/modules/src/codec.js
 +++ b/dist/modules/src/codec.js
-@@ -19,6 +19,7 @@ export const VIDEO_CODECS = [
+@@ -20,6 +20,7 @@ export const VIDEO_CODECS = [
      'av1',
      'vp8',
      'prores',
@@ -69,7 +69,7 @@ index 81f2532..e1a0919 100644
  ];
  /**
   * List of known PCM (uncompressed) audio codecs, ordered by encoding preference.
-@@ -434,6 +435,9 @@ export const extractVideoCodecString = (trackInfo) => {
+@@ -435,6 +436,9 @@ export const extractVideoCodecString = (trackInfo) => {
      else if (codec === 'prores') {
          return proresFormat ?? 'apch';
      }
@@ -79,7 +79,7 @@ index 81f2532..e1a0919 100644
      else if (codec !== null) {
          assertNever(codec);
      }
-@@ -604,6 +608,9 @@ export const inferCodecFromCodecString = (codecString) => {
+@@ -702,6 +706,9 @@ export const inferCodecFromCodecString = (codecString) => {
      else if (PRORES_FOURCCS.includes(codecString)) {
          return 'prores';
      }
@@ -90,10 +90,10 @@ index 81f2532..e1a0919 100644
      if (codecString === 'mp3'
          || codecString === 'mp4a.69'
 diff --git a/dist/modules/src/isobmff/isobmff-demuxer.js b/dist/modules/src/isobmff/isobmff-demuxer.js
-index 9f05906..e464b03 100644
+index 9ea01e2..2f03bc2 100644
 --- a/dist/modules/src/isobmff/isobmff-demuxer.js
 +++ b/dist/modules/src/isobmff/isobmff-demuxer.js
-@@ -724,6 +724,12 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -725,6 +725,12 @@ export class IsobmffDemuxer extends Demuxer {
                                  track.info.codec = 'prores';
                                  track.info.proresFormat = lowercaseBoxName;
                              }
@@ -106,7 +106,7 @@ index 9f05906..e464b03 100644
                              else if (codecName === null) {
                                  Logging._warn(`Unknown encrypted video codec due to missing frma box.`);
                              }
-@@ -1155,7 +1161,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1172,7 +1178,7 @@ export class IsobmffDemuxer extends Demuxer {
                      if (!track) {
                          break;
                      }
@@ -115,7 +115,7 @@ index 9f05906..e464b03 100644
                      slice.skip(4); // Version + flags
                      const tag = readU8(slice);
                      assert(tag === 0x03); // ES Descriptor
-@@ -1180,6 +1186,15 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1197,6 +1203,15 @@ export class IsobmffDemuxer extends Demuxer {
                      const decoderConfigDescriptorLength = readIsomVariableInteger(slice); // Length
                      const payloadStart = slice.filePos;
                      const objectTypeIndication = readU8(slice);
@@ -131,7 +131,7 @@ index 9f05906..e464b03 100644
                      if (objectTypeIndication === 0x40 || objectTypeIndication === 0x67) {
                          track.info.codec = 'aac';
                          track.info.aacCodecInfo = {
-@@ -2626,7 +2641,7 @@ class IsobmffTrackBacking {
+@@ -2649,7 +2664,7 @@ class IsobmffTrackBacking {
          const timestamp = (sampleInfo.presentationTimestamp - this.internalTrack.editListOffset)
              / this.internalTrack.timescale;
          const duration = sampleInfo.duration / this.internalTrack.timescale;
@@ -140,7 +140,7 @@ index 9f05906..e464b03 100644
          this.packetToSampleIndex.set(packet, sampleIndex);
          return packet;
      }
-@@ -2656,7 +2671,7 @@ class IsobmffTrackBacking {
+@@ -2683,7 +2698,7 @@ class IsobmffTrackBacking {
          const timestamp = (fragmentSample.presentationTimestamp - this.internalTrack.editListOffset)
              / this.internalTrack.timescale;
          const duration = fragmentSample.duration / this.internalTrack.timescale;
@@ -150,7 +150,7 @@ index 9f05906..e464b03 100644
          return packet;
      }
 diff --git a/dist/modules/src/media-source.js b/dist/modules/src/media-source.js
-index 2b00b92..69c136d 100644
+index e6c3b19..e5e01ea 100644
 --- a/dist/modules/src/media-source.js
 +++ b/dist/modules/src/media-source.js
 @@ -680,6 +680,15 @@ class VideoEncoderWrapper {

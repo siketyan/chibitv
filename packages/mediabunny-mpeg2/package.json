@@ -26,11 +26,11 @@
     }
   },
   "peerDependencies": {
-    "mediabunny": "1.55.1"
+    "mediabunny": "1.55.5"
   },
   "devDependencies": {
     "@types/node": "24.13.3",
-    "mediabunny": "1.55.1",
+    "mediabunny": "1.55.5",
     "typescript": "7.0.2"
   },
   "scripts": {
