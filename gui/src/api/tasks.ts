@@ -15,9 +15,14 @@ const RECONNECT_DELAY = 1000;
  */
 const START_TASK_MUTATION_KEY = ["start-task"] as const;
 
-/** Whether the task is still to do its work, or is doing it right now. */
+/** Whether the task is doing its work right now. */
 export function isTaskRunning(task: Task): boolean {
   return task.state === TaskState.PENDING || task.state === TaskState.RUNNING;
+}
+
+/** Whether the task is over, however it ended. */
+export function isTaskFinished(task: Task): boolean {
+  return task.state === TaskState.SUCCEEDED || task.state === TaskState.FAILED || task.state === TaskState.CANCELLED;
 }
 
 /** Every background task of the server, oldest first. */
@@ -100,6 +105,23 @@ export function useRefreshEvents(): UseMutationResult<Task | undefined, Error, v
     // that the task shows up even while the stream is being opened again.
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
   });
+}
+
+/** Books a recording of the event, as a task starting when the event does. */
+export function useScheduleRecording(): UseMutationResult<Task | undefined, Error, RecordingRequest> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationKey: START_TASK_MUTATION_KEY,
+    mutationFn: async ({ serviceId, eventId }: RecordingRequest) =>
+      (await chibitvClient.scheduleRecording({ serviceId, eventId })).task,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
+  });
+}
+
+interface RecordingRequest {
+  serviceId: number;
+  eventId: number;
 }
 
 /** Why the last task that could not be started failed to start. */

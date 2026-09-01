@@ -19,12 +19,20 @@ use crate::mmt::MmtDemuxer;
 use crate::remux::{Mux, Remuxer};
 use crate::storage::{Storage, StorageObject};
 use crate::task::TaskHandle;
-use crate::tuner::Tuners;
+use crate::tuner::{AcquireError, TunerLease, Tuners};
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
 
 /// How often the task is told how far the recording has got.
 const REPORT_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How long a recording waits for a tuner before it gives up.
+///
+/// A viewer watching something else holds a tuner until they stop, and a
+/// recording starts a little before the programme does, so waiting a moment
+/// is worth more than failing the recording outright.
+const ACQUIRE_TIMEOUT: Duration = Duration::from_secs(60);
+const ACQUIRE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 
 /// How long a name taken from a programme title may be, in characters, so
 /// that a long title still leaves a name a file system accepts.
@@ -65,13 +73,41 @@ impl Recorder {
         }
     }
 
+    /// Takes a tuner for the recording, waiting for one to be given back
+    /// while every tuner is in use.
+    fn acquire_tuner(
+        &self,
+        recording: &Recording,
+        task: &TaskHandle,
+    ) -> anyhow::Result<TunerLease> {
+        let deadline = Instant::now() + ACQUIRE_TIMEOUT;
+
+        loop {
+            match self.tuners.try_acquire() {
+                Ok(tuner) => return Ok(tuner),
+                Err(error @ AcquireError::NotConfigured) => return Err(error.into()),
+                Err(error @ AcquireError::Busy) => {
+                    if Instant::now() >= deadline
+                        || task.is_cancelled()
+                        || Local::now() >= recording.ends_at
+                    {
+                        return Err(error.into());
+                    }
+
+                    task.report(None, "Waiting for a tuner");
+                    std::thread::sleep(ACQUIRE_RETRY_INTERVAL);
+                }
+            }
+        }
+    }
+
     /// Records the programme, stopping at its end or when the task is asked to.
     ///
     /// What has been recorded is kept either way: a recording cut short is
     /// finished in the storage just like one that ran to its end.
     pub fn record(&self, recording: &Recording, task: &TaskHandle) -> anyhow::Result<()> {
         let name = object_name(recording);
-        let tuner = self.tuners.try_acquire()?;
+        let tuner = self.acquire_tuner(recording, task)?;
         info!(
             tuner_id = tuner.id(),
             service_id = recording.service_id,
