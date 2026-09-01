@@ -305,15 +305,22 @@ impl Tasks {
             // Work that gave up because it was asked to may well report an
             // error on the way out, so cancellation is what it is reported as.
             (_, true) => TaskState::Cancelled,
-            (Err(error), _) => {
+            (Err(error), false) => {
                 error!(task_id = id, %error, "Task failed");
                 TaskState::Failed
             }
         };
 
+        // The error explains a failure, so work that gave up on being asked to
+        // stop is reported as cancelled and nothing else.
+        let error = match state {
+            TaskState::Failed => result.err().map(|error| format!("{error:#}")),
+            _ => None,
+        };
+
         self.update(id, |task| {
             task.state = state;
-            task.error = result.err().map(|error| format!("{error:#}"));
+            task.error = error;
             task.progress = match state {
                 TaskState::Succeeded => Some(1.0),
                 _ => task.progress,
@@ -335,8 +342,8 @@ impl Tasks {
         Some(task)
     }
 
-    /// Forgets the tasks that finished longest ago, so that a server left
-    /// running does not keep every task it has ever run.
+    /// Forgets the oldest of the finished tasks, so that a server left running
+    /// does not keep every task it has ever run.
     fn prune(&self) {
         let mut state = self.state.lock().unwrap();
         let finished = state
@@ -504,7 +511,7 @@ mod tests {
     }
 
     #[test]
-    fn forgets_the_tasks_that_finished_longest_ago() {
+    fn forgets_the_oldest_finished_tasks() {
         let tasks = Arc::new(Tasks::default());
 
         for _ in 0..FINISHED_HISTORY + 8 {

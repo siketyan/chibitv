@@ -83,14 +83,22 @@ export function TaskWatcher(): null {
 
 /** Starts collecting the programme guide in the background. */
 export function useRefreshEvents(): UseMutationResult<Task | undefined, Error, void> {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: async () => (await chibitvClient.refreshEvents({})).task,
+    // The task is reported by the stream as well, but the list is read again so
+    // that the task shows up even while the stream is being opened again.
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
   });
 }
 
 /** Asks a task to stop, which it may take a moment to act on. */
 export function useCancelTask(): UseMutationResult<Task | undefined, Error, Task> {
+  const queryClient = useQueryClient();
+
   return useMutation({
     mutationFn: async (task: Task) => (await chibitvClient.cancelTask({ taskId: task.id })).task,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
   });
 }
