@@ -206,6 +206,43 @@ mod tests {
         assert!(body.contains(r#""serviceId":201"#));
     }
 
+    #[tokio::test]
+    async fn lists_the_background_tasks() {
+        let response = app(empty_workspace())
+            .oneshot(
+                Request::post("/api/chibitv.v1.ChibitvService/ListTasks")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("connect-protocol-version", "1")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        assert_eq!(body.as_ref(), b"{}");
+    }
+
+    #[tokio::test]
+    async fn refuses_to_refresh_events_without_a_crawler() {
+        let response = app(empty_workspace())
+            .oneshot(
+                Request::post("/api/chibitv.v1.ChibitvService/RefreshEvents")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("connect-protocol-version", "1")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains("failed_precondition"));
+    }
+
     #[cfg(feature = "gui")]
     #[tokio::test]
     async fn serves_the_embedded_gui() {

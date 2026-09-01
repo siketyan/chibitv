@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::Bytes;
 use tokio_stream::wrappers::BroadcastStream;
@@ -8,12 +9,19 @@ use crate::event_crawler::EventCrawler;
 use crate::registry::Registry;
 use crate::service_information::Signal;
 use crate::stream::{Stream, Streams, SubscribeError};
+use crate::task::{CancelError, SpawnError, Task, TaskId, TaskKind, Tasks};
 
 pub enum WorkspaceError {
     ChannelNotFound,
     ServiceNotFound,
     TunerBusy,
     StreamingUnavailable,
+    /// No event crawler is configured, so the guide cannot be refreshed.
+    EventCrawlerUnavailable,
+    TaskNotFound,
+    TaskNotCancellable,
+    /// A task doing the same work is already running.
+    TaskAlreadyRunning,
     Internal(anyhow::Error),
 }
 
@@ -29,6 +37,7 @@ pub struct Workspace {
     channels: Vec<Channel>,
     streams: Option<Streams>,
     event_crawler: Option<Arc<EventCrawler>>,
+    tasks: Arc<Tasks>,
 }
 
 impl Workspace {
@@ -38,6 +47,7 @@ impl Workspace {
             channels,
             streams,
             event_crawler: None,
+            tasks: Arc::default(),
         }
     }
 
@@ -54,12 +64,36 @@ impl Workspace {
         &self.registry
     }
 
-    pub fn registry_arc(&self) -> Arc<Registry> {
-        Arc::clone(&self.registry)
+    pub fn tasks(&self) -> &Arc<Tasks> {
+        &self.tasks
     }
 
-    pub fn event_crawler(&self) -> Option<Arc<EventCrawler>> {
-        self.event_crawler.clone()
+    /// Starts collecting the programme guide in the background, spending
+    /// `dwell_time` on each configured channel.
+    pub fn refresh_events(&self, dwell_time: Duration) -> Result<Task, WorkspaceError> {
+        let crawler = self
+            .event_crawler
+            .clone()
+            .ok_or(WorkspaceError::EventCrawlerUnavailable)?;
+        let channels = self.channels.clone();
+        let registry = Arc::clone(&self.registry);
+
+        self.tasks
+            .spawn_blocking(
+                TaskKind::RefreshEvents,
+                "Refreshing the programme guide",
+                move |task| crawler.crawl(&channels, registry, dwell_time, task),
+            )
+            .map_err(|error| match error {
+                SpawnError::AlreadyRunning => WorkspaceError::TaskAlreadyRunning,
+            })
+    }
+
+    pub fn cancel_task(&self, id: TaskId) -> Result<Task, WorkspaceError> {
+        self.tasks.cancel(id).map_err(|error| match error {
+            CancelError::NotFound => WorkspaceError::TaskNotFound,
+            CancelError::NotCancellable => WorkspaceError::TaskNotCancellable,
+        })
     }
 
     /// Attaches to the shared stream of the service, tuning to it first when
@@ -133,6 +167,18 @@ mod tests {
         let result = workspace.subscribe_stream(0x5678).await;
 
         assert!(matches!(result, Err(WorkspaceError::ServiceNotFound)));
+    }
+
+    #[tokio::test]
+    async fn refreshing_events_without_a_crawler_fails() {
+        let workspace = Workspace::new(Arc::new(Registry::default()), vec![channel()], None);
+
+        let result = workspace.refresh_events(Duration::from_secs(1));
+
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::EventCrawlerUnavailable)
+        ));
     }
 
     #[tokio::test]

@@ -4,29 +4,20 @@ use std::time::{Duration, Instant};
 
 use tracing::{info, warn};
 
-use chibitv_b10::table::Table as B10Table;
 use chibitv_b25::B25Descrambler;
-use chibitv_b60::message::Message;
-use chibitv_b60::table::Table as B60Table;
 use chibitv_b61::Descrambler;
 
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
-use crate::demux::{Demux, Packet, SignalingEvent};
+use crate::demux::{Demux, Packet};
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
-use crate::registry::{Event, Registry};
+use crate::registry::Registry;
 use crate::service_information::ServiceInformationProcessor;
+use crate::task::TaskHandle;
 use crate::tuner::Tuners;
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
-const EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID: u8 = 0x4E;
-const EIT_ACTUAL_SCHEDULE_TABLE_IDS: std::ops::RangeInclusive<u8> = 0x50..=0x5F;
-
-pub struct CrawledEvent {
-    pub service_id: u16,
-    pub event: Event,
-}
 
 pub struct EventCrawler {
     tuners: Arc<Tuners>,
@@ -43,18 +34,32 @@ impl EventCrawler {
         }
     }
 
+    /// Tunes every channel in turn and collects the events it announces into
+    /// the registry, which stores them.
+    ///
+    /// The task is asked to stop between packets, so cancelling it keeps the
+    /// events collected so far and gives the tuner back at once.
     pub fn crawl(
         &self,
         channels: &[Channel],
         registry: Arc<Registry>,
         dwell_time: Duration,
-        mut emit: impl FnMut(CrawledEvent) -> bool,
+        task: &TaskHandle,
     ) -> anyhow::Result<()> {
         let tuner = self.tuners.try_acquire()?;
         info!(tuner_id = tuner.id(), "Acquired tuner for event crawling");
 
-        for channel in channels {
+        for (index, channel) in channels.iter().enumerate() {
+            if task.is_cancelled() {
+                break;
+            }
+
             info!(channel_id = channel.id, channel = %channel.name, "Crawling events");
+            task.report(
+                Some(index as f32 / channels.len() as f32),
+                format!("Crawling {}", channel.name),
+            );
+
             if let Err(error) = tuner.tune(channel.clone()) {
                 warn!(channel_id = channel.id, %error, "Could not tune while crawling events");
                 continue;
@@ -68,11 +73,11 @@ impl EventCrawler {
                 }
             };
             let deadline = Instant::now() + dwell_time;
-            let keep_crawling = match channel.inner {
+            match channel.inner {
                 ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => {
                     let descrambler = B25Descrambler::init(self.cas.clone())?;
                     let mut demux = M2tsDemuxer::new(reader, descrambler);
-                    crawl_channel(&mut demux, channel, &registry, deadline, &mut emit)?
+                    crawl_channel(&mut demux, channel, &registry, deadline, task)?;
                 }
                 ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => {
                     let descrambler =
@@ -81,12 +86,8 @@ impl EventCrawler {
                         BufReader::with_capacity(READ_BUFFER_SIZE, reader),
                         descrambler,
                     );
-                    crawl_channel(&mut demux, channel, &registry, deadline, &mut emit)?
+                    crawl_channel(&mut demux, channel, &registry, deadline, task)?;
                 }
-            };
-
-            if !keep_crawling {
-                break;
             }
         }
 
@@ -99,12 +100,16 @@ fn crawl_channel<D: Demux>(
     channel: &Channel,
     registry: &Arc<Registry>,
     deadline: Instant,
-    emit: &mut impl FnMut(CrawledEvent) -> bool,
-) -> anyhow::Result<bool> {
+    task: &TaskHandle,
+) -> anyhow::Result<()> {
     let mut processor =
         ServiceInformationProcessor::new(channel.id, Some(Arc::clone(registry)), None);
 
     while Instant::now() < deadline {
+        if task.is_cancelled() {
+            break;
+        }
+
         let packet = match demux.next_packet() {
             Ok(Some(packet)) => packet,
             Ok(None) => break,
@@ -117,52 +122,8 @@ fn crawl_channel<D: Demux>(
             continue;
         };
 
-        let event_ids = signaling_event_ids(&signaling);
         processor.process(signaling)?;
-
-        let Some((service_id, event_ids)) = event_ids else {
-            continue;
-        };
-        let Some(service) = registry.get_service_by_id(service_id) else {
-            continue;
-        };
-        if service.channel_id != channel.id {
-            continue;
-        }
-
-        for event_id in event_ids {
-            let Some(event) = registry.get_event_by_id(service_id, event_id) else {
-                continue;
-            };
-            if !emit(CrawledEvent { service_id, event }) {
-                return Ok(false);
-            }
-        }
     }
 
-    Ok(true)
-}
-
-fn signaling_event_ids(signaling: &SignalingEvent) -> Option<(u16, Vec<u16>)> {
-    match signaling {
-        SignalingEvent::B10Table {
-            table_id,
-            table: B10Table::Eit(table),
-        } if *table_id == EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID
-            || EIT_ACTUAL_SCHEDULE_TABLE_IDS.contains(table_id) =>
-        {
-            Some((
-                table.service_id,
-                table.events.iter().map(|event| event.event_id).collect(),
-            ))
-        }
-        SignalingEvent::B60Message(Message::M2Section(message)) => match &message.table {
-            B60Table::MhEit(table) => Some((
-                table.service_id,
-                table.events.iter().map(|event| event.event_id).collect(),
-            )),
-            _ => None,
-        },
-        _ => None,
-    }
+    Ok(())
 }
