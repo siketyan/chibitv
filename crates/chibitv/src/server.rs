@@ -244,6 +244,25 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refuses_to_delete_a_task_it_does_not_know() {
+        let response = app(empty_workspace())
+            .oneshot(
+                Request::post("/api/chibitv.v1.ChibitvService/DeleteTask")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header("connect-protocol-version", "1")
+                    .body(Body::from(r#"{"taskId":"42"}"#))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let body = std::str::from_utf8(&body).unwrap();
+        assert!(body.contains("task not found"));
+    }
+
+    #[tokio::test]
     async fn refuses_to_record_without_a_configured_storage() {
         let response = app(empty_workspace())
             .oneshot(

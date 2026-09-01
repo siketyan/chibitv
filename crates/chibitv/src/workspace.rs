@@ -12,7 +12,7 @@ use crate::registry::{Registry, Service};
 use crate::scheduler::Scheduler;
 use crate::service_information::Signal;
 use crate::stream::{Stream, Streams, SubscribeError};
-use crate::task::{CancelError, SpawnError, Task, TaskId, TaskKind, Tasks};
+use crate::task::{CancelError, DeleteError, SpawnError, Task, TaskId, TaskKind, Tasks};
 
 /// How long before a programme starts its recording does, so that a broadcast
 /// running early is still recorded from its beginning.
@@ -38,6 +38,8 @@ pub enum WorkspaceError {
     EventPassed,
     TaskNotFound,
     TaskNotCancellable,
+    /// The task is still to run, or running, so it cannot be forgotten yet.
+    TaskNotFinished,
     /// A task doing the same work is already running.
     TaskAlreadyRunning,
     Internal(anyhow::Error),
@@ -178,6 +180,14 @@ impl Workspace {
         self.tasks.cancel(id).map_err(|error| match error {
             CancelError::NotFound => WorkspaceError::TaskNotFound,
             CancelError::NotCancellable => WorkspaceError::TaskNotCancellable,
+        })
+    }
+
+    /// Forgets a task that is over, so that it stops being listed.
+    pub fn delete_task(&self, id: TaskId) -> Result<(), WorkspaceError> {
+        self.tasks.delete(id).map_err(|error| match error {
+            DeleteError::NotFound => WorkspaceError::TaskNotFound,
+            DeleteError::NotFinished => WorkspaceError::TaskNotFinished,
         })
     }
 

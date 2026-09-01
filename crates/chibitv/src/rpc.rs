@@ -158,18 +158,18 @@ impl ChibitvService for ChibitvServiceImpl {
         &self,
         _ctx: RequestContext,
         _request: ServiceRequest<'_, WatchTasksRequest>,
-    ) -> ServiceResult<ServiceStream<Task>> {
+    ) -> ServiceResult<ServiceStream<TaskEvent>> {
         let tasks = self.workspace.tasks();
         // The updates are subscribed to before the tasks are listed, so that a
         // task changing in between is reported rather than missed. A client
         // keeps the tasks by their identifier, so seeing one twice is harmless.
         let updates = BroadcastStream::new(tasks.subscribe());
-        let current = tokio_stream::iter(tasks.list());
+        let current = tokio_stream::iter(tasks.list().into_iter().map(task::TaskUpdate::Changed));
 
         Response::stream_ok(
             current
                 .chain(updates.filter_map(|update| update.ok()))
-                .map(|task| Ok(task_message(&task))),
+                .map(|update| Ok(task_event(update))),
         )
     }
 
@@ -187,6 +187,18 @@ impl ChibitvService for ChibitvServiceImpl {
             task: Some(task_message(&task)).into(),
             ..Default::default()
         })
+    }
+
+    async fn delete_task(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, DeleteTaskRequest>,
+    ) -> ServiceResult<DeleteTaskResponse> {
+        self.workspace
+            .delete_task(request.task_id)
+            .map_err(workspace_error)?;
+
+        Response::ok(DeleteTaskResponse::default())
     }
 
     async fn schedule_recording(
@@ -252,6 +264,18 @@ impl ChibitvService for ChibitvServiceImpl {
                     Ok(response)
                 }),
         )
+    }
+}
+
+fn task_event(value: task::TaskUpdate) -> TaskEvent {
+    TaskEvent {
+        payload: Some(match value {
+            task::TaskUpdate::Changed(task) => {
+                task_event::Payload::Changed(Box::new(task_message(&task)))
+            }
+            task::TaskUpdate::Deleted(id) => task_event::Payload::Deleted(id),
+        }),
+        ..Default::default()
     }
 }
 
@@ -354,6 +378,9 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
         WorkspaceError::TaskNotFound => ConnectError::not_found("task not found"),
         WorkspaceError::TaskNotCancellable => {
             ConnectError::failed_precondition("this task cannot be cancelled")
+        }
+        WorkspaceError::TaskNotFinished => {
+            ConnectError::failed_precondition("this task has not finished yet")
         }
         WorkspaceError::TaskAlreadyRunning => {
             ConnectError::already_exists("the same task is already running")

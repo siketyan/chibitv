@@ -1,8 +1,8 @@
-import { XMarkIcon } from "@heroicons/react/24/outline";
+import { TrashIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { Button, ProgressBar } from "@heroui/react";
 import type { JSX } from "react";
 
-import { isTaskFinished, isTaskRunning, useCancelTask, useStartTaskError, useTasks } from "../api/tasks";
+import { isTaskFinished, isTaskRunning, useCancelTask, useDeleteTask, useStartTaskError, useTasks } from "../api/tasks";
 import { toDate } from "../api/time";
 import { type Task, TaskState } from "../gen/chibitv/v1/chibitv_pb";
 
@@ -49,6 +49,7 @@ export function Tasks(): JSX.Element {
 
 function TaskItem({ task }: { task: Task }): JSX.Element {
   const cancelTask = useCancelTask();
+  const deleteTask = useDeleteTask();
   const isRunning = isTaskRunning(task);
   const percentage = task.progress === undefined ? undefined : Math.round(task.progress * 100);
   const startsAt = task.state === TaskState.SCHEDULED ? toDate(task.scheduledAt) : undefined;
@@ -62,18 +63,34 @@ function TaskItem({ task }: { task: Task }): JSX.Element {
             ? `${STATE_LABELS[task.state]} · ${percentage}%`
             : STATE_LABELS[task.state]}
         </span>
-        {!isTaskFinished(task) && task.cancellable && (
+        {/* A task that is over is only worth forgetting, and one still to
+            finish is stopped rather than dropped with its work left running. */}
+        {isTaskFinished(task) ? (
           <Button
-            aria-label={`Cancel ${task.title}`}
+            aria-label={`Delete ${task.title}`}
             className="h-6 min-h-6 w-6 min-w-6 shrink-0"
-            isDisabled={cancelTask.isPending}
+            isDisabled={deleteTask.isPending}
             isIconOnly
             size="sm"
             variant="ghost"
-            onPress={() => cancelTask.mutate(task)}
+            onPress={() => deleteTask.mutate(task)}
           >
-            <XMarkIcon />
+            <TrashIcon />
           </Button>
+        ) : (
+          task.cancellable && (
+            <Button
+              aria-label={`Cancel ${task.title}`}
+              className="h-6 min-h-6 w-6 min-w-6 shrink-0"
+              isDisabled={cancelTask.isPending}
+              isIconOnly
+              size="sm"
+              variant="ghost"
+              onPress={() => cancelTask.mutate(task)}
+            >
+              <XMarkIcon />
+            </Button>
+          )
         )}
       </div>
       {isRunning && (
@@ -87,6 +104,7 @@ function TaskItem({ task }: { task: Task }): JSX.Element {
       {task.message && <p className="truncate text-xs text-muted">{task.message}</p>}
       {task.error && <p className="text-xs text-danger">{task.error}</p>}
       {cancelTask.error && <p className="text-xs text-danger">{cancelTask.error.message}</p>}
+      {deleteTask.error && <p className="text-xs text-danger">{deleteTask.error.message}</p>}
     </div>
   );
 }
