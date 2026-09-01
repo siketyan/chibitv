@@ -346,7 +346,6 @@ dependencies = [
  "clap",
  "connectrpc",
  "connectrpc-build",
- "cros-codecs",
  "dvbv5-sys",
  "hex",
  "libc",
@@ -622,14 +621,6 @@ name = "crc-catalog"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "217698eaf96b4a3f0bc4f3662aaa55bdf913cd54d7204591faa790070c6d0853"
-
-[[package]]
-name = "cros-codecs"
-version = "0.0.6"
-source = "git+https://github.com/siketyan/cros-codecs.git?rev=e6e1281#e6e12810ffc7da1c81908f254272053ed4f55210"
-dependencies = [
- "log",
-]
 
 [[package]]
 name = "crossbeam-queue"
@@ -1941,7 +1932,7 @@ dependencies = [
 [[package]]
 name = "shiguredo_mp4"
 version = "2026.5.0"
-source = "git+https://github.com/siketyan/mp4-rs.git?rev=30e7742#30e7742d9840b14233fff8861dc3ada3379c1c42"
+source = "git+https://github.com/siketyan/mp4-rs.git?rev=74b96a6#74b96a611be2fbc0e1d4d275694106c72d194f95"
 
 [[package]]
 name = "shlex"
