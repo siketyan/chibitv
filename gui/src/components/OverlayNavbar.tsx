@@ -1,27 +1,40 @@
-import { CalendarDaysIcon, InformationCircleIcon, QueueListIcon, XMarkIcon } from "@heroicons/react/24/outline";
-import { Button, Modal } from "@heroui/react";
+import {
+  ArrowPathIcon,
+  CalendarDaysIcon,
+  InformationCircleIcon,
+  QueueListIcon,
+  XMarkIcon,
+} from "@heroicons/react/24/outline";
+import { Button, Modal, Spinner } from "@heroui/react";
 import clsx from "clsx";
 import { type JSX, useState } from "react";
 
 import { useStream } from "../api/stream";
+import { isTaskRunning, useTasks } from "../api/tasks";
 import { chromeTransition, useChromeHold, usePlayerChrome } from "../player/chrome";
 
 interface OverlayNavbarProps {
+  areTasksOpen: boolean;
   isChannelsOpen: boolean;
   isScheduleOpen: boolean;
   onChangeChannelsOpen: (open: boolean) => void;
   onChangeScheduleOpen: (open: boolean) => void;
+  onChangeTasksOpen: (open: boolean) => void;
 }
 
 export function OverlayNavbar({
+  areTasksOpen,
   isChannelsOpen,
   isScheduleOpen,
   onChangeChannelsOpen,
   onChangeScheduleOpen,
+  onChangeTasksOpen,
 }: OverlayNavbarProps): JSX.Element {
   const { isVisible } = usePlayerChrome();
   const { state } = useStream();
   const [areDetailsOpen, setAreDetailsOpen] = useState(false);
+  const tasks = useTasks();
+  const runningTasks = tasks.filter(isTaskRunning);
   const event = state?.event;
   const description = event?.description.filter(({ content }) => content.length > 0) ?? [];
   // The programme on air is known only once its SI has been received, so until
@@ -93,16 +106,32 @@ export function OverlayNavbar({
           </Modal>
         )}
       </div>
-      <Button
-        aria-label={isScheduleOpen ? "Close schedule" : "Open schedule"}
-        aria-pressed={isScheduleOpen}
-        className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
-        isIconOnly
-        variant="ghost"
-        onPress={() => onChangeScheduleOpen(!isScheduleOpen)}
-      >
-        {isScheduleOpen ? <XMarkIcon /> : <CalendarDaysIcon />}
-      </Button>
+      <div className="flex shrink-0 items-center gap-2">
+        {/* The server starts no task of its own accord, so the button appears
+            once there is one to look at and stays for as long as it is kept. */}
+        {tasks.length > 0 && (
+          <Button
+            aria-label={areTasksOpen ? "Close background tasks" : "Open background tasks"}
+            aria-pressed={areTasksOpen}
+            className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
+            isIconOnly
+            variant="ghost"
+            onPress={() => onChangeTasksOpen(!areTasksOpen)}
+          >
+            {runningTasks.length > 0 ? <Spinner size="sm" /> : <ArrowPathIcon />}
+          </Button>
+        )}
+        <Button
+          aria-label={isScheduleOpen ? "Close schedule" : "Open schedule"}
+          aria-pressed={isScheduleOpen}
+          className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
+          isIconOnly
+          variant="ghost"
+          onPress={() => onChangeScheduleOpen(!isScheduleOpen)}
+        >
+          {isScheduleOpen ? <XMarkIcon /> : <CalendarDaysIcon />}
+        </Button>
+      </div>
     </nav>
   );
 }

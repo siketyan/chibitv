@@ -12,5 +12,8 @@ export const chibitvClient = createClient(ChibitvService, transport);
 export const queryKeys = {
   channels: ["channels"] as const,
   services: ["services"] as const,
-  events: (serviceId?: number) => ["events", serviceId ?? "all"] as const,
+  // The key of every event is the key of the events of one service without the
+  // service, so invalidating the former invalidates the latter as well.
+  events: (serviceId?: number) => (serviceId === undefined ? (["events"] as const) : (["events", serviceId] as const)),
+  tasks: ["tasks"] as const,
 };

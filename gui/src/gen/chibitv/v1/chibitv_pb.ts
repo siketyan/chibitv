@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file chibitv/v1/chibitv.proto.
  */
 export const file_chibitv_v1_chibitv: GenFile = /*@__PURE__*/
-  fileDesc("ChhjaGliaXR2L3YxL2NoaWJpdHYucHJvdG8SCmNoaWJpdHYudjEiFQoTTGlzdENoYW5uZWxzUmVxdWVzdCI9ChRMaXN0Q2hhbm5lbHNSZXNwb25zZRIlCghjaGFubmVscxgBIAMoCzITLmNoaWJpdHYudjEuQ2hhbm5lbCJYCgdDaGFubmVsEgoKAmlkGAEgASgNEgwKBG5hbWUYAiABKAkSMwoPZGVsaXZlcnlfc3lzdGVtGAMgASgOMhouY2hpYml0di52MS5EZWxpdmVyeVN5c3RlbSIVChNMaXN0U2VydmljZXNSZXF1ZXN0Ij0KFExpc3RTZXJ2aWNlc1Jlc3BvbnNlEiUKCHNlcnZpY2VzGAEgAygLMhMuY2hpYml0di52MS5TZXJ2aWNlIk4KB1NlcnZpY2USCgoCaWQYASABKA0SDAoEbmFtZRgCIAEoCRIVCg1wcm92aWRlcl9uYW1lGAMgASgJEhIKCmNoYW5uZWxfaWQYBCABKA0iOwoRTGlzdEV2ZW50c1JlcXVlc3QSFwoKc2VydmljZV9pZBgBIAEoDUgAiAEBQg0KC19zZXJ2aWNlX2lkIjcKEkxpc3RFdmVudHNSZXNwb25zZRIhCgZldmVudHMYASADKAsyES5jaGliaXR2LnYxLkV2ZW50IjIKFFJlZnJlc2hFdmVudHNSZXF1ZXN0EhoKEmR3ZWxsX3RpbWVfc2Vjb25kcxgBIAEoDSIxChBFdmVudERlc2NyaXB0aW9uEgwKBG5hbWUYASABKAkSDwoHY29udGVudBgCIAEoCSIqCghEYXRlVGltZRIPCgdzZWNvbmRzGAEgASgDEg0KBW5hbm9zGAIgASgNIuEBCgVFdmVudBIKCgJpZBgBIAEoDRINCgV0aXRsZRgCIAEoCRIxCgtkZXNjcmlwdGlvbhgDIAMoCzIcLmNoaWJpdHYudjEuRXZlbnREZXNjcmlwdGlvbhItCgpzdGFydF90aW1lGAQgASgLMhQuY2hpYml0di52MS5EYXRlVGltZUgAiAEBEisKCGVuZF90aW1lGAUgASgLMhQuY2hpYml0di52MS5EYXRlVGltZUgBiAEBEhIKCnNlcnZpY2VfaWQYBiABKA1CDQoLX3N0YXJ0X3RpbWVCCwoJX2VuZF90aW1lIiMKDVN0cmVhbVJlcXVlc3QSEgoKc2VydmljZV9pZBgBIAEoDSJ1CgtTdHJlYW1TdGF0ZRIpCgdzZXJ2aWNlGAEgASgLMhMuY2hpYml0di52MS5TZXJ2aWNlSACIAQESJQoFZXZlbnQYAiABKAsyES5jaGliaXR2LnYxLkV2ZW50SAGIAQFCCgoIX3NlcnZpY2VCCAoGX2V2ZW50IlUKDlN0cmVhbVJlc3BvbnNlEigKBXN0YXRlGAEgASgLMhcuY2hpYml0di52MS5TdHJlYW1TdGF0ZUgAEg4KBGZtcDQYAiABKAxIAEIJCgdwYXlsb2FkKmkKDkRlbGl2ZXJ5U3lzdGVtEh8KG0RFTElWRVJZX1NZU1RFTV9VTlNQRUNJRklFRBAAEhoKFkRFTElWRVJZX1NZU1RFTV9JU0RCX1QQARIaChZERUxJVkVSWV9TWVNURU1fSVNEQl9TEAIyjgMKDkNoaWJpdHZTZXJ2aWNlElEKDExpc3RDaGFubmVscxIfLmNoaWJpdHYudjEuTGlzdENoYW5uZWxzUmVxdWVzdBogLmNoaWJpdHYudjEuTGlzdENoYW5uZWxzUmVzcG9uc2USUQoMTGlzdFNlcnZpY2VzEh8uY2hpYml0di52MS5MaXN0U2VydmljZXNSZXF1ZXN0GiAuY2hpYml0di52MS5MaXN0U2VydmljZXNSZXNwb25zZRJLCgpMaXN0RXZlbnRzEh0uY2hpYml0di52MS5MaXN0RXZlbnRzUmVxdWVzdBoeLmNoaWJpdHYudjEuTGlzdEV2ZW50c1Jlc3BvbnNlEkYKDVJlZnJlc2hFdmVudHMSIC5jaGliaXR2LnYxLlJlZnJlc2hFdmVudHNSZXF1ZXN0GhEuY2hpYml0di52MS5FdmVudDABEkEKBlN0cmVhbRIZLmNoaWJpdHYudjEuU3RyZWFtUmVxdWVzdBoaLmNoaWJpdHYudjEuU3RyZWFtUmVzcG9uc2UwAWIGcHJvdG8z");
+  fileDesc("ChhjaGliaXR2L3YxL2NoaWJpdHYucHJvdG8SCmNoaWJpdHYudjEiFQoTTGlzdENoYW5uZWxzUmVxdWVzdCI9ChRMaXN0Q2hhbm5lbHNSZXNwb25zZRIlCghjaGFubmVscxgBIAMoCzITLmNoaWJpdHYudjEuQ2hhbm5lbCJYCgdDaGFubmVsEgoKAmlkGAEgASgNEgwKBG5hbWUYAiABKAkSMwoPZGVsaXZlcnlfc3lzdGVtGAMgASgOMhouY2hpYml0di52MS5EZWxpdmVyeVN5c3RlbSIVChNMaXN0U2VydmljZXNSZXF1ZXN0Ij0KFExpc3RTZXJ2aWNlc1Jlc3BvbnNlEiUKCHNlcnZpY2VzGAEgAygLMhMuY2hpYml0di52MS5TZXJ2aWNlIk4KB1NlcnZpY2USCgoCaWQYASABKA0SDAoEbmFtZRgCIAEoCRIVCg1wcm92aWRlcl9uYW1lGAMgASgJEhIKCmNoYW5uZWxfaWQYBCABKA0iOwoRTGlzdEV2ZW50c1JlcXVlc3QSFwoKc2VydmljZV9pZBgBIAEoDUgAiAEBQg0KC19zZXJ2aWNlX2lkIjcKEkxpc3RFdmVudHNSZXNwb25zZRIhCgZldmVudHMYASADKAsyES5jaGliaXR2LnYxLkV2ZW50IjIKFFJlZnJlc2hFdmVudHNSZXF1ZXN0EhoKEmR3ZWxsX3RpbWVfc2Vjb25kcxgBIAEoDSI3ChVSZWZyZXNoRXZlbnRzUmVzcG9uc2USHgoEdGFzaxgBIAEoCzIQLmNoaWJpdHYudjEuVGFzayISChBMaXN0VGFza3NSZXF1ZXN0IjQKEUxpc3RUYXNrc1Jlc3BvbnNlEh8KBXRhc2tzGAEgAygLMhAuY2hpYml0di52MS5UYXNrIhMKEVdhdGNoVGFza3NSZXF1ZXN0IiQKEUNhbmNlbFRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAQiNAoSQ2FuY2VsVGFza1Jlc3BvbnNlEh4KBHRhc2sYASABKAsyEC5jaGliaXR2LnYxLlRhc2sigAMKBFRhc2sSCgoCaWQYASABKAQSIgoEa2luZBgCIAEoDjIULmNoaWJpdHYudjEuVGFza0tpbmQSJAoFc3RhdGUYAyABKA4yFS5jaGliaXR2LnYxLlRhc2tTdGF0ZRINCgV0aXRsZRgEIAEoCRIPCgdtZXNzYWdlGAUgASgJEhUKCHByb2dyZXNzGAYgASgCSACIAQESEwoLY2FuY2VsbGFibGUYByABKAgSDQoFZXJyb3IYCCABKAkSLQoKY3JlYXRlZF9hdBgJIAEoCzIULmNoaWJpdHYudjEuRGF0ZVRpbWVIAYgBARItCgpzdGFydGVkX2F0GAogASgLMhQuY2hpYml0di52MS5EYXRlVGltZUgCiAEBEi4KC2ZpbmlzaGVkX2F0GAsgASgLMhQuY2hpYml0di52MS5EYXRlVGltZUgDiAEBQgsKCV9wcm9ncmVzc0INCgtfY3JlYXRlZF9hdEINCgtfc3RhcnRlZF9hdEIOCgxfZmluaXNoZWRfYXQiMQoQRXZlbnREZXNjcmlwdGlvbhIMCgRuYW1lGAEgASgJEg8KB2NvbnRlbnQYAiABKAkiKgoIRGF0ZVRpbWUSDwoHc2Vjb25kcxgBIAEoAxINCgVuYW5vcxgCIAEoDSLhAQoFRXZlbnQSCgoCaWQYASABKA0SDQoFdGl0bGUYAiABKAkSMQoLZGVzY3JpcHRpb24YAyADKAsyHC5jaGliaXR2LnYxLkV2ZW50RGVzY3JpcHRpb24SLQoKc3RhcnRfdGltZRgEIAEoCzIULmNoaWJpdHYudjEuRGF0ZVRpbWVIAIgBARIrCghlbmRfdGltZRgFIAEoCzIULmNoaWJpdHYudjEuRGF0ZVRpbWVIAYgBARISCgpzZXJ2aWNlX2lkGAYgASgNQg0KC19zdGFydF90aW1lQgsKCV9lbmRfdGltZSIjCg1TdHJlYW1SZXF1ZXN0EhIKCnNlcnZpY2VfaWQYASABKA0idQoLU3RyZWFtU3RhdGUSKQoHc2VydmljZRgBIAEoCzITLmNoaWJpdHYudjEuU2VydmljZUgAiAEBEiUKBWV2ZW50GAIgASgLMhEuY2hpYml0di52MS5FdmVudEgBiAEBQgoKCF9zZXJ2aWNlQggKBl9ldmVudCJVCg5TdHJlYW1SZXNwb25zZRIoCgVzdGF0ZRgBIAEoCzIXLmNoaWJpdHYudjEuU3RyZWFtU3RhdGVIABIOCgRmbXA0GAIgASgMSABCCQoHcGF5bG9hZCppCg5EZWxpdmVyeVN5c3RlbRIfChtERUxJVkVSWV9TWVNURU1fVU5TUEVDSUZJRUQQABIaChZERUxJVkVSWV9TWVNURU1fSVNEQl9UEAESGgoWREVMSVZFUllfU1lTVEVNX0lTREJfUxACKkMKCFRhc2tLaW5kEhkKFVRBU0tfS0lORF9VTlNQRUNJRklFRBAAEhwKGFRBU0tfS0lORF9SRUZSRVNIX0VWRU5UUxABKqIBCglUYXNrU3RhdGUSGgoWVEFTS19TVEFURV9VTlNQRUNJRklFRBAAEhYKElRBU0tfU1RBVEVfUEVORElORxABEhYKElRBU0tfU1RBVEVfUlVOTklORxACEhgKFFRBU0tfU1RBVEVfU1VDQ0VFREVEEAMSFQoRVEFTS19TVEFURV9GQUlMRUQQBBIYChRUQVNLX1NUQVRFX0NBTkNFTExFRBAFMvQECg5DaGliaXR2U2VydmljZRJRCgxMaXN0Q2hhbm5lbHMSHy5jaGliaXR2LnYxLkxpc3RDaGFubmVsc1JlcXVlc3QaIC5jaGliaXR2LnYxLkxpc3RDaGFubmVsc1Jlc3BvbnNlElEKDExpc3RTZXJ2aWNlcxIfLmNoaWJpdHYudjEuTGlzdFNlcnZpY2VzUmVxdWVzdBogLmNoaWJpdHYudjEuTGlzdFNlcnZpY2VzUmVzcG9uc2USSwoKTGlzdEV2ZW50cxIdLmNoaWJpdHYudjEuTGlzdEV2ZW50c1JlcXVlc3QaHi5jaGliaXR2LnYxLkxpc3RFdmVudHNSZXNwb25zZRJUCg1SZWZyZXNoRXZlbnRzEiAuY2hpYml0di52MS5SZWZyZXNoRXZlbnRzUmVxdWVzdBohLmNoaWJpdHYudjEuUmVmcmVzaEV2ZW50c1Jlc3BvbnNlEkgKCUxpc3RUYXNrcxIcLmNoaWJpdHYudjEuTGlzdFRhc2tzUmVxdWVzdBodLmNoaWJpdHYudjEuTGlzdFRhc2tzUmVzcG9uc2USPwoKV2F0Y2hUYXNrcxIdLmNoaWJpdHYudjEuV2F0Y2hUYXNrc1JlcXVlc3QaEC5jaGliaXR2LnYxLlRhc2swARJLCgpDYW5jZWxUYXNrEh0uY2hpYml0di52MS5DYW5jZWxUYXNrUmVxdWVzdBoeLmNoaWJpdHYudjEuQ2FuY2VsVGFza1Jlc3BvbnNlEkEKBlN0cmVhbRIZLmNoaWJpdHYudjEuU3RyZWFtUmVxdWVzdBoaLmNoaWJpdHYudjEuU3RyZWFtUmVzcG9uc2UwAWIGcHJvdG8z");
 
 /**
  * @generated from message chibitv.v1.ListChannelsRequest
@@ -186,6 +186,183 @@ export const RefreshEventsRequestSchema: GenMessage<RefreshEventsRequest> = /*@_
   messageDesc(file_chibitv_v1_chibitv, 8);
 
 /**
+ * @generated from message chibitv.v1.RefreshEventsResponse
+ */
+export type RefreshEventsResponse = Message<"chibitv.v1.RefreshEventsResponse"> & {
+  /**
+   * The task started for this refresh.
+   *
+   * @generated from field: chibitv.v1.Task task = 1;
+   */
+  task?: Task | undefined;
+};
+
+/**
+ * Describes the message chibitv.v1.RefreshEventsResponse.
+ * Use `create(RefreshEventsResponseSchema)` to create a new message.
+ */
+export const RefreshEventsResponseSchema: GenMessage<RefreshEventsResponse> = /*@__PURE__*/
+  messageDesc(file_chibitv_v1_chibitv, 9);
+
+/**
+ * @generated from message chibitv.v1.ListTasksRequest
+ */
+export type ListTasksRequest = Message<"chibitv.v1.ListTasksRequest"> & {
+};
+
+/**
+ * Describes the message chibitv.v1.ListTasksRequest.
+ * Use `create(ListTasksRequestSchema)` to create a new message.
+ */
+export const ListTasksRequestSchema: GenMessage<ListTasksRequest> = /*@__PURE__*/
+  messageDesc(file_chibitv_v1_chibitv, 10);
+
+/**
+ * @generated from message chibitv.v1.ListTasksResponse
+ */
+export type ListTasksResponse = Message<"chibitv.v1.ListTasksResponse"> & {
+  /**
+   * @generated from field: repeated chibitv.v1.Task tasks = 1;
+   */
+  tasks: Task[];
+};
+
+/**
+ * Describes the message chibitv.v1.ListTasksResponse.
+ * Use `create(ListTasksResponseSchema)` to create a new message.
+ */
+export const ListTasksResponseSchema: GenMessage<ListTasksResponse> = /*@__PURE__*/
+  messageDesc(file_chibitv_v1_chibitv, 11);
+
+/**
+ * @generated from message chibitv.v1.WatchTasksRequest
+ */
+export type WatchTasksRequest = Message<"chibitv.v1.WatchTasksRequest"> & {
+};
+
+/**
+ * Describes the message chibitv.v1.WatchTasksRequest.
+ * Use `create(WatchTasksRequestSchema)` to create a new message.
+ */
+export const WatchTasksRequestSchema: GenMessage<WatchTasksRequest> = /*@__PURE__*/
+  messageDesc(file_chibitv_v1_chibitv, 12);
+
+/**
+ * @generated from message chibitv.v1.CancelTaskRequest
+ */
+export type CancelTaskRequest = Message<"chibitv.v1.CancelTaskRequest"> & {
+  /**
+   * @generated from field: uint64 task_id = 1;
+   */
+  taskId: bigint;
+};
+
+/**
+ * Describes the message chibitv.v1.CancelTaskRequest.
+ * Use `create(CancelTaskRequestSchema)` to create a new message.
+ */
+export const CancelTaskRequestSchema: GenMessage<CancelTaskRequest> = /*@__PURE__*/
+  messageDesc(file_chibitv_v1_chibitv, 13);
+
+/**
+ * @generated from message chibitv.v1.CancelTaskResponse
+ */
+export type CancelTaskResponse = Message<"chibitv.v1.CancelTaskResponse"> & {
+  /**
+   * The task as it stands once it has been told to stop.
+   *
+   * @generated from field: chibitv.v1.Task task = 1;
+   */
+  task?: Task | undefined;
+};
+
+/**
+ * Describes the message chibitv.v1.CancelTaskResponse.
+ * Use `create(CancelTaskResponseSchema)` to create a new message.
+ */
+export const CancelTaskResponseSchema: GenMessage<CancelTaskResponse> = /*@__PURE__*/
+  messageDesc(file_chibitv_v1_chibitv, 14);
+
+/**
+ * Task is one unit of work running in the background of the server.
+ *
+ * @generated from message chibitv.v1.Task
+ */
+export type Task = Message<"chibitv.v1.Task"> & {
+  /**
+   * @generated from field: uint64 id = 1;
+   */
+  id: bigint;
+
+  /**
+   * @generated from field: chibitv.v1.TaskKind kind = 2;
+   */
+  kind: TaskKind;
+
+  /**
+   * @generated from field: chibitv.v1.TaskState state = 3;
+   */
+  state: TaskState;
+
+  /**
+   * What the task does, as shown to the viewer.
+   *
+   * @generated from field: string title = 4;
+   */
+  title: string;
+
+  /**
+   * What the task is doing right now, when it reports it.
+   *
+   * @generated from field: string message = 5;
+   */
+  message: string;
+
+  /**
+   * How much of the work is done, between 0 and 1, when the task can tell.
+   *
+   * @generated from field: optional float progress = 6;
+   */
+  progress?: number | undefined;
+
+  /**
+   * Whether the task stops when it is asked to.
+   *
+   * @generated from field: bool cancellable = 7;
+   */
+  cancellable: boolean;
+
+  /**
+   * Why the task failed, set only in the failed state.
+   *
+   * @generated from field: string error = 8;
+   */
+  error: string;
+
+  /**
+   * @generated from field: optional chibitv.v1.DateTime created_at = 9;
+   */
+  createdAt?: DateTime | undefined;
+
+  /**
+   * @generated from field: optional chibitv.v1.DateTime started_at = 10;
+   */
+  startedAt?: DateTime | undefined;
+
+  /**
+   * @generated from field: optional chibitv.v1.DateTime finished_at = 11;
+   */
+  finishedAt?: DateTime | undefined;
+};
+
+/**
+ * Describes the message chibitv.v1.Task.
+ * Use `create(TaskSchema)` to create a new message.
+ */
+export const TaskSchema: GenMessage<Task> = /*@__PURE__*/
+  messageDesc(file_chibitv_v1_chibitv, 15);
+
+/**
  * @generated from message chibitv.v1.EventDescription
  */
 export type EventDescription = Message<"chibitv.v1.EventDescription"> & {
@@ -205,7 +382,7 @@ export type EventDescription = Message<"chibitv.v1.EventDescription"> & {
  * Use `create(EventDescriptionSchema)` to create a new message.
  */
 export const EventDescriptionSchema: GenMessage<EventDescription> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 9);
+  messageDesc(file_chibitv_v1_chibitv, 16);
 
 /**
  * @generated from message chibitv.v1.DateTime
@@ -227,7 +404,7 @@ export type DateTime = Message<"chibitv.v1.DateTime"> & {
  * Use `create(DateTimeSchema)` to create a new message.
  */
 export const DateTimeSchema: GenMessage<DateTime> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 10);
+  messageDesc(file_chibitv_v1_chibitv, 17);
 
 /**
  * @generated from message chibitv.v1.Event
@@ -269,7 +446,7 @@ export type Event = Message<"chibitv.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 11);
+  messageDesc(file_chibitv_v1_chibitv, 18);
 
 /**
  * @generated from message chibitv.v1.StreamRequest
@@ -288,7 +465,7 @@ export type StreamRequest = Message<"chibitv.v1.StreamRequest"> & {
  * Use `create(StreamRequestSchema)` to create a new message.
  */
 export const StreamRequestSchema: GenMessage<StreamRequest> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 12);
+  messageDesc(file_chibitv_v1_chibitv, 19);
 
 /**
  * @generated from message chibitv.v1.StreamState
@@ -310,7 +487,7 @@ export type StreamState = Message<"chibitv.v1.StreamState"> & {
  * Use `create(StreamStateSchema)` to create a new message.
  */
 export const StreamStateSchema: GenMessage<StreamState> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 13);
+  messageDesc(file_chibitv_v1_chibitv, 20);
 
 /**
  * @generated from message chibitv.v1.StreamResponse
@@ -339,7 +516,7 @@ export type StreamResponse = Message<"chibitv.v1.StreamResponse"> & {
  * Use `create(StreamResponseSchema)` to create a new message.
  */
 export const StreamResponseSchema: GenMessage<StreamResponse> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 14);
+  messageDesc(file_chibitv_v1_chibitv, 21);
 
 /**
  * DeliverySystem is the broadcast wave a channel is carried on.
@@ -374,6 +551,84 @@ export const DeliverySystemSchema: GenEnum<DeliverySystem> = /*@__PURE__*/
   enumDesc(file_chibitv_v1_chibitv, 0);
 
 /**
+ * TaskKind is the work a background task performs.
+ *
+ * @generated from enum chibitv.v1.TaskKind
+ */
+export enum TaskKind {
+  /**
+   * @generated from enum value: TASK_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Collecting the programme guide from every configured channel.
+   *
+   * @generated from enum value: TASK_KIND_REFRESH_EVENTS = 1;
+   */
+  REFRESH_EVENTS = 1,
+}
+
+/**
+ * Describes the enum chibitv.v1.TaskKind.
+ */
+export const TaskKindSchema: GenEnum<TaskKind> = /*@__PURE__*/
+  enumDesc(file_chibitv_v1_chibitv, 1);
+
+/**
+ * TaskState is where a background task is in its lifetime.
+ *
+ * @generated from enum chibitv.v1.TaskState
+ */
+export enum TaskState {
+  /**
+   * @generated from enum value: TASK_STATE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * Accepted, but not started yet.
+   *
+   * @generated from enum value: TASK_STATE_PENDING = 1;
+   */
+  PENDING = 1,
+
+  /**
+   * Running right now.
+   *
+   * @generated from enum value: TASK_STATE_RUNNING = 2;
+   */
+  RUNNING = 2,
+
+  /**
+   * Finished having done its work.
+   *
+   * @generated from enum value: TASK_STATE_SUCCEEDED = 3;
+   */
+  SUCCEEDED = 3,
+
+  /**
+   * Stopped by an error, described by the error field.
+   *
+   * @generated from enum value: TASK_STATE_FAILED = 4;
+   */
+  FAILED = 4,
+
+  /**
+   * Stopped because it was cancelled.
+   *
+   * @generated from enum value: TASK_STATE_CANCELLED = 5;
+   */
+  CANCELLED = 5,
+}
+
+/**
+ * Describes the enum chibitv.v1.TaskState.
+ */
+export const TaskStateSchema: GenEnum<TaskState> = /*@__PURE__*/
+  enumDesc(file_chibitv_v1_chibitv, 2);
+
+/**
  * ChibitvService exposes the backend operations used by the chibitv GUI.
  *
  * @generated from service chibitv.v1.ChibitvService
@@ -404,12 +659,49 @@ export const ChibitvService: GenService<{
     output: typeof ListEventsResponseSchema;
   },
   /**
+   * RefreshEvents starts a background task collecting the programme guide and
+   * returns it as soon as it is queued. Its progress is followed with
+   * WatchTasks, and the events it collects are read back with ListEvents.
+   *
    * @generated from rpc chibitv.v1.ChibitvService.RefreshEvents
    */
   refreshEvents: {
-    methodKind: "server_streaming";
+    methodKind: "unary";
     input: typeof RefreshEventsRequestSchema;
-    output: typeof EventSchema;
+    output: typeof RefreshEventsResponseSchema;
+  },
+  /**
+   * ListTasks returns every background task the server keeps, the running ones
+   * and the recently finished ones alike.
+   *
+   * @generated from rpc chibitv.v1.ChibitvService.ListTasks
+   */
+  listTasks: {
+    methodKind: "unary";
+    input: typeof ListTasksRequestSchema;
+    output: typeof ListTasksResponseSchema;
+  },
+  /**
+   * WatchTasks streams the current tasks, then one message per task whenever
+   * it changes, until the call is cancelled.
+   *
+   * @generated from rpc chibitv.v1.ChibitvService.WatchTasks
+   */
+  watchTasks: {
+    methodKind: "server_streaming";
+    input: typeof WatchTasksRequestSchema;
+    output: typeof TaskSchema;
+  },
+  /**
+   * CancelTask asks a cancellable task to stop. It returns once the task is
+   * told to stop, which it may take a moment to act on.
+   *
+   * @generated from rpc chibitv.v1.ChibitvService.CancelTask
+   */
+  cancelTask: {
+    methodKind: "unary";
+    input: typeof CancelTaskRequestSchema;
+    output: typeof CancelTaskResponseSchema;
   },
   /**
    * Stream tunes to the requested service and streams it while the call is

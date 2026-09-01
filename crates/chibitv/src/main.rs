@@ -20,6 +20,7 @@ mod server;
 mod service_information;
 mod store;
 mod stream;
+mod task;
 mod tuner;
 mod workspace;
 

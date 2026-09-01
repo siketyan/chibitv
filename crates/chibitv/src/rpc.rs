@@ -6,13 +6,13 @@ use connectrpc::{
     ConnectError, RequestContext, Response, Router, ServiceRequest, ServiceResult, ServiceStream,
 };
 use tokio_stream::StreamExt;
-use tokio_stream::wrappers::ReceiverStream;
+use tokio_stream::wrappers::BroadcastStream;
 
 use crate::channel::ChannelInner;
-use crate::event_crawler::CrawledEvent;
 use crate::proto::chibitv::v1::*;
 use crate::registry;
 use crate::service_information::Signal;
+use crate::task;
 use crate::workspace::{StreamSubscription, Workspace, WorkspaceError};
 
 pub struct ChibitvServiceImpl {
@@ -112,7 +112,7 @@ impl ChibitvService for ChibitvServiceImpl {
         &self,
         _ctx: RequestContext,
         request: ServiceRequest<'_, RefreshEventsRequest>,
-    ) -> ServiceResult<ServiceStream<Event>> {
+    ) -> ServiceResult<RefreshEventsResponse> {
         const DEFAULT_DWELL_TIME_SECONDS: u32 = 10;
         const MAX_DWELL_TIME_SECONDS: u32 = 60;
 
@@ -125,33 +125,68 @@ impl ChibitvService for ChibitvServiceImpl {
                 ));
             }
         };
-        let crawler = self
+
+        let task = self
             .workspace
-            .event_crawler()
-            .ok_or_else(|| ConnectError::failed_precondition("event crawler is unavailable"))?;
-        let channels = self
+            .refresh_events(Duration::from_secs(u64::from(dwell_time_seconds)))
+            .map_err(workspace_error)?;
+
+        Response::ok(RefreshEventsResponse {
+            task: Some(task_message(&task)).into(),
+            ..Default::default()
+        })
+    }
+
+    async fn list_tasks(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, ListTasksRequest>,
+    ) -> ServiceResult<ListTasksResponse> {
+        Response::ok(ListTasksResponse {
+            tasks: self
+                .workspace
+                .tasks()
+                .list()
+                .iter()
+                .map(task_message)
+                .collect(),
+            ..Default::default()
+        })
+    }
+
+    async fn watch_tasks(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, WatchTasksRequest>,
+    ) -> ServiceResult<ServiceStream<Task>> {
+        let tasks = self.workspace.tasks();
+        // The updates are subscribed to before the tasks are listed, so that a
+        // task changing in between is reported rather than missed. A client
+        // keeps the tasks by their identifier, so seeing one twice is harmless.
+        let updates = BroadcastStream::new(tasks.subscribe());
+        let current = tokio_stream::iter(tasks.list());
+
+        Response::stream_ok(
+            current
+                .chain(updates.filter_map(|update| update.ok()))
+                .map(|task| Ok(task_message(&task))),
+        )
+    }
+
+    async fn cancel_task(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, CancelTaskRequest>,
+    ) -> ServiceResult<CancelTaskResponse> {
+        let task = self
             .workspace
-            .channels()
-            .map(|(_, channel)| channel.clone())
-            .collect::<Vec<_>>();
-        let registry = self.workspace.registry_arc();
-        let (tx, rx) = tokio::sync::mpsc::channel(16);
+            .cancel_task(request.task_id)
+            .map_err(workspace_error)?;
 
-        std::thread::spawn(move || {
-            let result = crawler.crawl(
-                &channels,
-                registry,
-                Duration::from_secs(u64::from(dwell_time_seconds)),
-                |event| tx.blocking_send(Ok(crawled_event_message(event))).is_ok(),
-            );
-
-            if let Err(error) = result {
-                tracing::error!(%error, "Event refresh failed");
-                let _ = tx.blocking_send(Err(ConnectError::unavailable("event refresh failed")));
-            }
-        });
-
-        Response::stream_ok(ReceiverStream::new(rx))
+        Response::ok(CancelTaskResponse {
+            task: Some(task_message(&task)).into(),
+            ..Default::default()
+        })
     }
 
     async fn stream(
@@ -199,8 +234,37 @@ impl ChibitvService for ChibitvServiceImpl {
     }
 }
 
-fn crawled_event_message(value: CrawledEvent) -> Event {
-    event_message(value.service_id, &value.event)
+fn task_message(value: &task::Task) -> Task {
+    Task {
+        id: value.id,
+        kind: task_kind(value.kind).into(),
+        state: task_state(value.state).into(),
+        title: value.title.clone(),
+        message: value.message.clone(),
+        progress: value.progress,
+        cancellable: value.cancellable,
+        error: value.error.clone().unwrap_or_default(),
+        created_at: Some(DateTime::from(value.created_at)).into(),
+        started_at: value.started_at.map(DateTime::from).into(),
+        finished_at: value.finished_at.map(DateTime::from).into(),
+        ..Default::default()
+    }
+}
+
+fn task_kind(value: task::TaskKind) -> TaskKind {
+    match value {
+        task::TaskKind::RefreshEvents => TaskKind::RefreshEvents,
+    }
+}
+
+fn task_state(value: task::TaskState) -> TaskState {
+    match value {
+        task::TaskState::Pending => TaskState::Pending,
+        task::TaskState::Running => TaskState::Running,
+        task::TaskState::Succeeded => TaskState::Succeeded,
+        task::TaskState::Failed => TaskState::Failed,
+        task::TaskState::Cancelled => TaskState::Cancelled,
+    }
 }
 
 fn stream_state(
@@ -249,6 +313,16 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
         WorkspaceError::TunerBusy => ConnectError::resource_exhausted("all tuners are in use"),
         WorkspaceError::StreamingUnavailable => {
             ConnectError::unavailable("streaming is unavailable")
+        }
+        WorkspaceError::EventCrawlerUnavailable => {
+            ConnectError::failed_precondition("event crawler is unavailable")
+        }
+        WorkspaceError::TaskNotFound => ConnectError::not_found("task not found"),
+        WorkspaceError::TaskNotCancellable => {
+            ConnectError::failed_precondition("this task cannot be cancelled")
+        }
+        WorkspaceError::TaskAlreadyRunning => {
+            ConnectError::already_exists("the same task is already running")
         }
         WorkspaceError::Internal(error) => {
             tracing::error!(?error, "Failed to open stream");
@@ -302,6 +376,16 @@ impl From<NaiveDateTime> for DateTime {
         // The SI carries JST wall-clock time and the server runs on that zone,
         // so the local offset is the one the broadcast was scheduled against.
         timestamp_in(value, &Local)
+    }
+}
+
+impl From<chrono::DateTime<Local>> for DateTime {
+    fn from(value: chrono::DateTime<Local>) -> Self {
+        Self {
+            seconds: value.timestamp(),
+            nanos: value.timestamp_subsec_nanos(),
+            ..Default::default()
+        }
     }
 }
 

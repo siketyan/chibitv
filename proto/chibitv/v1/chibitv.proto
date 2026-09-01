@@ -7,7 +7,23 @@ service ChibitvService {
   rpc ListChannels(ListChannelsRequest) returns (ListChannelsResponse);
   rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
   rpc ListEvents(ListEventsRequest) returns (ListEventsResponse);
-  rpc RefreshEvents(RefreshEventsRequest) returns (stream Event);
+
+  // RefreshEvents starts a background task collecting the programme guide and
+  // returns it as soon as it is queued. Its progress is followed with
+  // WatchTasks, and the events it collects are read back with ListEvents.
+  rpc RefreshEvents(RefreshEventsRequest) returns (RefreshEventsResponse);
+
+  // ListTasks returns every background task the server keeps, the running ones
+  // and the recently finished ones alike.
+  rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+
+  // WatchTasks streams the current tasks, then one message per task whenever
+  // it changes, until the call is cancelled.
+  rpc WatchTasks(WatchTasksRequest) returns (stream Task);
+
+  // CancelTask asks a cancellable task to stop. It returns once the task is
+  // told to stop, which it may take a moment to act on.
+  rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
 
   // Stream tunes to the requested service and streams it while the call is
   // kept open. A tuner is occupied only while at least one client streams a
@@ -64,6 +80,82 @@ message RefreshEventsRequest {
   // Time spent collecting events from each physical channel.
   // Zero uses the server default.
   uint32 dwell_time_seconds = 1;
+}
+
+message RefreshEventsResponse {
+  // The task started for this refresh.
+  Task task = 1;
+}
+
+message ListTasksRequest {}
+
+message ListTasksResponse {
+  repeated Task tasks = 1;
+}
+
+message WatchTasksRequest {}
+
+message CancelTaskRequest {
+  uint64 task_id = 1;
+}
+
+message CancelTaskResponse {
+  // The task as it stands once it has been told to stop.
+  Task task = 1;
+}
+
+// TaskKind is the work a background task performs.
+enum TaskKind {
+  TASK_KIND_UNSPECIFIED = 0;
+
+  // Collecting the programme guide from every configured channel.
+  TASK_KIND_REFRESH_EVENTS = 1;
+}
+
+// TaskState is where a background task is in its lifetime.
+enum TaskState {
+  TASK_STATE_UNSPECIFIED = 0;
+
+  // Accepted, but not started yet.
+  TASK_STATE_PENDING = 1;
+
+  // Running right now.
+  TASK_STATE_RUNNING = 2;
+
+  // Finished having done its work.
+  TASK_STATE_SUCCEEDED = 3;
+
+  // Stopped by an error, described by the error field.
+  TASK_STATE_FAILED = 4;
+
+  // Stopped because it was cancelled.
+  TASK_STATE_CANCELLED = 5;
+}
+
+// Task is one unit of work running in the background of the server.
+message Task {
+  uint64 id = 1;
+  TaskKind kind = 2;
+  TaskState state = 3;
+
+  // What the task does, as shown to the viewer.
+  string title = 4;
+
+  // What the task is doing right now, when it reports it.
+  string message = 5;
+
+  // How much of the work is done, between 0 and 1, when the task can tell.
+  optional float progress = 6;
+
+  // Whether the task stops when it is asked to.
+  bool cancellable = 7;
+
+  // Why the task failed, set only in the failed state.
+  string error = 8;
+
+  optional DateTime created_at = 9;
+  optional DateTime started_at = 10;
+  optional DateTime finished_at = 11;
 }
 
 message EventDescription {
