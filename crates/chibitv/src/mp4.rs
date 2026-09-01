@@ -1,29 +1,42 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::io::{Cursor, Seek, SeekFrom, Write};
-use std::num::{NonZeroU16, NonZeroU32};
+use std::num::NonZeroU32;
 use std::slice;
 
 use bytes::{BufMut, Bytes, BytesMut};
+use shiguredo_mp4::bitstream::aac::{
+    AudioObjectType, AudioSpecificConfig, ChannelConfiguration, Mp4aSampleEntryConfig,
+    SamplingFrequency, build_mp4a_box, parse_adts_frame,
+};
 use shiguredo_mp4::bitstream::h265::{
     H265ConstantFrameRate, H265NalUnitType, H265SampleEntryConfig, LengthSize, build_hev1_box,
     parse_annexb_nal_units, parse_sps,
 };
-use shiguredo_mp4::boxes::{
-    AudioSampleEntryFields, EsdsBox, Mp4aBox, Mp4vBox, SampleEntry, VisualSampleEntryFields,
-};
+use shiguredo_mp4::boxes::{EsdsBox, Mp4vBox, SampleEntry, VisualSampleEntryFields};
 use shiguredo_mp4::descriptors::{
     DecoderConfigDescriptor, DecoderSpecificInfo, EsDescriptor, SlConfigDescriptor,
 };
 use shiguredo_mp4::mux::{Fmp4SegmentMuxer, Mp4FileMuxer, Sample};
-use shiguredo_mp4::{FixedPointNumber, TrackKind, Uint};
+use shiguredo_mp4::{TrackKind, Uint};
 use tracing::{debug, info, warn};
 
-use crate::aac::{AdtsHeader, AdtsParser, LoasFrame, SamplingFrequency};
+use crate::aac::{AdtsParser, LoasFrame};
 use crate::demux::TrackType;
 use crate::mp2::{Mp2Parser, PictureCodingType, SequenceHeader, picture_coding_type};
 use crate::remux::Mux;
 
 const VIDEO_TIMESCALE: u32 = 90_000;
+
+/// The number of samples in one AAC raw data block.
+///
+/// `parse_adts_frame` only accepts frames holding a single raw data block.
+const AAC_SAMPLES_PER_FRAME: u32 = 1024;
+
+/// The `audioObjectType` of AAC-LC.
+const AAC_OBJECT_TYPE_LC: u8 = 2;
+
+/// The `audioObjectType` of SBR (HE-AAC).
+const AAC_OBJECT_TYPE_SBR: u8 = 5;
 
 /// The frame rate assumed when an H.265 SPS carries no VUI timing information.
 ///
@@ -438,34 +451,36 @@ impl Track for AacAdtsTrack {
             .parser
             .push(input.take().as_deref().unwrap_or_default())
         {
-            let header = AdtsHeader::parse(&frame)?;
-            let sample_entry = self.metadata.is_none().then(|| {
-                self.metadata = Some(TrackMetadata {
-                    sample_duration: u32::from(header.sample_count()),
-                    timescale: header.sampling_frequency as u32,
-                });
+            let (header, payload) = parse_adts_frame(&frame)?;
+            let sampling_frequency = header.sampling_frequency();
+
+            let mut sample_entry = None;
+            if self.metadata.is_none() {
                 info!(
-                    audio_object_type = header.audio_object_type,
-                    sampling_frequency = header.sampling_frequency as u32,
-                    channel_configuration = header.channel_configuration,
+                    audio_object_type = ?header.audio_object_type,
+                    sampling_frequency = sampling_frequency.hz(),
+                    channel_configuration = header.channel_configuration.as_u8(),
                     "AAC-ADTS track is ready"
                 );
-                build_mp4a_sample_entry(
-                    header.audio_object_type,
-                    header.sampling_frequency_index,
-                    header.sampling_frequency,
+                sample_entry = Some(build_mp4a_sample_entry(
+                    header.audio_object_type.as_u8(),
+                    sampling_frequency,
                     header.channel_configuration,
-                )
-            });
+                )?);
+                self.metadata = Some(TrackMetadata {
+                    sample_duration: AAC_SAMPLES_PER_FRAME,
+                    timescale: sampling_frequency.hz(),
+                });
+            }
 
             let metadata = self.metadata.as_ref().expect("metadata must be set");
-            let data = Bytes::copy_from_slice(header.payload(&frame)?);
+            let data = Bytes::copy_from_slice(payload);
             let sample = Sample {
                 track_kind: TrackKind::Audio,
                 sample_entry,
                 keyframe: false,
                 timescale: NonZeroU32::new(metadata.timescale).unwrap(),
-                duration: u32::from(header.sample_count()),
+                duration: AAC_SAMPLES_PER_FRAME,
                 composition_time_offset: None,
                 data_offset: 0,
                 data_size: data.len(),
@@ -473,7 +488,7 @@ impl Track for AacAdtsTrack {
             let sample_dts = self.next_dts;
             self.next_dts = self
                 .next_dts
-                .map(|dts| dts + f64::from(header.sample_count()) / f64::from(metadata.timescale));
+                .map(|dts| dts + f64::from(AAC_SAMPLES_PER_FRAME) / f64::from(metadata.timescale));
             samples.push(TrackSample {
                 sample,
                 data,
@@ -510,28 +525,26 @@ impl Track for AacLatmTrack {
         while let Ok(sample) = LoasFrame::next(&mut cursor, previous.as_ref()) {
             previous = Some(sample.clone());
 
-            let sample_duration = 1024;
-            let timescale = sample.sampling_frequency as u32;
-            let sample_entry = self.metadata.is_none().then(|| {
-                self.metadata = Some(TrackMetadata {
-                    sample_duration,
-                    timescale,
-                });
-
+            let timescale = sample.sampling_frequency.hz();
+            let mut sample_entry = None;
+            if self.metadata.is_none() {
                 info!(
                     audio_object_type = sample.audio_object_type,
-                    sampling_frequency = sample.sampling_frequency as u32,
+                    sampling_frequency = timescale,
                     channel_configuration = sample.channel_configuration,
                     "AAC-LATM track is ready"
                 );
 
-                build_mp4a_sample_entry(
+                sample_entry = Some(build_mp4a_sample_entry(
                     sample.audio_object_type,
-                    sample.sampling_frequency_index,
                     sample.sampling_frequency,
-                    sample.channel_configuration,
-                )
-            });
+                    ChannelConfiguration::from_raw(sample.channel_configuration)?,
+                )?);
+                self.metadata = Some(TrackMetadata {
+                    sample_duration: AAC_SAMPLES_PER_FRAME,
+                    timescale,
+                });
+            }
 
             let Some(data) = sample.data else {
                 continue;
@@ -891,54 +904,86 @@ fn build_mp4v_sample_entry(sequence: &SequenceHeader) -> SampleEntry {
     })
 }
 
+/// Builds the `mp4a` sample entry for an AAC track.
+///
+/// `shiguredo_mp4` only assembles AAC-LC AudioSpecificConfigs, so HE-AAC (SBR)
+/// reuses the same box and only swaps the config payload.
 fn build_mp4a_sample_entry(
     audio_object_type: u8,
-    sampling_frequency_index: u8,
     sampling_frequency: SamplingFrequency,
-    channel_configuration: u8,
-) -> SampleEntry {
-    let audio = AudioSampleEntryFields {
-        data_reference_index: NonZeroU16::new(1).unwrap(),
-        channelcount: u16::from(channel_configuration),
-        samplesize: 16,
-        samplerate: FixedPointNumber::new(sampling_frequency as u16, 0),
-    };
-    let extension_sampling_index = sampling_frequency_index.saturating_sub(3);
-    let mut config = vec![0; 4];
-    config[0] = audio_object_type << 3 | (sampling_frequency_index & 0x0F) >> 1;
-    config[1] = (sampling_frequency_index & 0x0F) << 7 | (channel_configuration & 0x0F) << 3;
-    if audio_object_type == 5 {
-        config[1] |= (extension_sampling_index & 0x0F) >> 1;
-        config[2] = (extension_sampling_index & 0x01) << 7 | 2 << 2;
-    } else {
-        config.resize(2, 0);
-    }
-    let esds_box = EsdsBox {
-        es: EsDescriptor {
-            es_id: EsDescriptor::MIN_ES_ID,
-            stream_priority: EsDescriptor::LOWEST_STREAM_PRIORITY,
-            depends_on_es_id: None,
-            url_string: None,
-            ocr_es_id: None,
-            dec_config_descr: DecoderConfigDescriptor {
-                object_type_indication:
-                    DecoderConfigDescriptor::OBJECT_TYPE_INDICATION_AUDIO_ISO_IEC_14496_3,
-                stream_type: DecoderConfigDescriptor::STREAM_TYPE_AUDIO,
-                up_stream: DecoderConfigDescriptor::UP_STREAM_FALSE,
-                buffer_size_db: Uint::new(0),
-                max_bitrate: 0,
-                avg_bitrate: 0,
-                dec_specific_info: Some(DecoderSpecificInfo { payload: config }),
-            },
-            sl_config_descr: SlConfigDescriptor,
+    channel_configuration: ChannelConfiguration,
+) -> anyhow::Result<SampleEntry> {
+    let mut mp4a = build_mp4a_box(
+        &AudioSpecificConfig {
+            audio_object_type: AudioObjectType::AacLc,
+            sampling_frequency,
+            channel_configuration,
         },
-    };
+        &Mp4aSampleEntryConfig {
+            es_id: EsDescriptor::MIN_ES_ID,
+            buffer_size_db: 0,
+            max_bitrate: 0,
+            avg_bitrate: 0,
+        },
+    )?;
 
-    SampleEntry::Mp4a(Mp4aBox {
-        audio,
-        esds_box,
-        unknown_boxes: vec![],
-    })
+    match audio_object_type {
+        AAC_OBJECT_TYPE_LC => {}
+        AAC_OBJECT_TYPE_SBR => {
+            mp4a.esds_box.es.dec_config_descr.dec_specific_info = Some(DecoderSpecificInfo {
+                payload: encode_explicit_sbr_config(sampling_frequency, channel_configuration)?,
+            });
+        }
+        _ => anyhow::bail!("Unsupported AAC audio object type: {audio_object_type}"),
+    }
+
+    Ok(SampleEntry::Mp4a(mp4a))
+}
+
+/// Builds the AudioSpecificConfig of the explicit SBR signalling (ISO/IEC
+/// 14496-3 1.6.2.1).
+///
+/// The 22 bits are the SBR object type (5), the core sampling frequency index
+/// (4), the channel configuration (4), the extension sampling frequency index
+/// (4) and the core object type (5), written MSB first.
+fn encode_explicit_sbr_config(
+    sampling_frequency: SamplingFrequency,
+    channel_configuration: ChannelConfiguration,
+) -> anyhow::Result<Vec<u8>> {
+    let index = sampling_frequency_index(sampling_frequency)?;
+    // In the index table, three entries up is twice the frequency: 48 kHz
+    // (index 3) extends to 96 kHz (index 0).
+    let extension_index = index.saturating_sub(3);
+
+    let bits = (u32::from(AAC_OBJECT_TYPE_SBR) << 17)
+        | (u32::from(index) << 13)
+        | (u32::from(channel_configuration.as_u8()) << 9)
+        | (u32::from(extension_index) << 5)
+        | u32::from(AAC_OBJECT_TYPE_LC);
+
+    Ok(vec![
+        (bits >> 14) as u8,
+        (bits >> 6) as u8,
+        (bits << 2) as u8,
+    ])
+}
+
+/// Recovers the `samplingFrequencyIndex` of a sampling frequency.
+///
+/// `SamplingFrequency` does not expose the index, so the table is searched by
+/// the effective frequency.
+fn sampling_frequency_index(sampling_frequency: SamplingFrequency) -> anyhow::Result<u8> {
+    (0..=12u8)
+        .find(|index| {
+            SamplingFrequency::from_index(*index)
+                .is_ok_and(|frequency| frequency == sampling_frequency)
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No samplingFrequencyIndex for {} Hz",
+                sampling_frequency.hz()
+            )
+        })
 }
 
 fn compressor_name() -> [u8; 32] {
@@ -1196,5 +1241,64 @@ mod tests {
             .unwrap();
 
         assert!(samples.is_empty());
+    }
+    #[test]
+    fn builds_an_aac_lc_sample_entry() {
+        let entry = build_mp4a_sample_entry(
+            AAC_OBJECT_TYPE_LC,
+            SamplingFrequency::from_hz(48000).unwrap(),
+            ChannelConfiguration::Stereo,
+        )
+        .unwrap();
+
+        let SampleEntry::Mp4a(mp4a) = entry else {
+            panic!("an AAC track must use an mp4a sample entry");
+        };
+        assert_eq!(mp4a.audio.channelcount, 2);
+        assert_eq!(mp4a.audio.samplerate.integer, 48000);
+        // AOT 2 / sampling frequency index 3 / channel configuration 2
+        assert_eq!(
+            mp4a.esds_box
+                .es
+                .dec_config_descr
+                .dec_specific_info
+                .map(|info| info.payload),
+            Some(vec![0x11, 0x90])
+        );
+    }
+
+    #[test]
+    fn builds_an_explicit_sbr_sample_entry() {
+        let entry = build_mp4a_sample_entry(
+            AAC_OBJECT_TYPE_SBR,
+            SamplingFrequency::from_hz(48000).unwrap(),
+            ChannelConfiguration::Stereo,
+        )
+        .unwrap();
+
+        let SampleEntry::Mp4a(mp4a) = entry else {
+            panic!("an AAC track must use an mp4a sample entry");
+        };
+        // AOT 5 / core index 3 (48 kHz) / channel configuration 2 /
+        // extension index 0 (96 kHz) / core AOT 2
+        assert_eq!(
+            mp4a.esds_box
+                .es
+                .dec_config_descr
+                .dec_specific_info
+                .map(|info| info.payload),
+            Some(vec![0x29, 0x90, 0x08])
+        );
+    }
+
+    #[test]
+    fn rejects_an_unsupported_audio_object_type() {
+        let result = build_mp4a_sample_entry(
+            1,
+            SamplingFrequency::from_hz(48000).unwrap(),
+            ChannelConfiguration::Stereo,
+        );
+
+        assert!(result.is_err());
     }
 }

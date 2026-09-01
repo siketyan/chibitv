@@ -3,96 +3,38 @@ use std::io::Cursor;
 
 use bitstream_io::{BigEndian, BitRead, BitReader};
 use bytes::{Buf, BufMut, Bytes, BytesMut};
+use shiguredo_mp4::bitstream::aac::SamplingFrequency;
 use tracing::warn;
 
+/// The length of an ADTS header without the CRC (`protection_absent == 1`).
 const ADTS_HEADER_LENGTH: usize = 7;
+
+/// The length of an ADTS header with the CRC (`protection_absent == 0`).
 const ADTS_HEADER_WITH_CRC_LENGTH: usize = 9;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum MpegVersion {
-    Mpeg4,
-    Mpeg2,
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct AdtsHeader {
-    pub mpeg_version: MpegVersion,
-    pub protection_absent: bool,
-    pub audio_object_type: u8,
-    pub sampling_frequency_index: u8,
-    pub sampling_frequency: SamplingFrequency,
-    pub channel_configuration: u8,
-    pub frame_length: usize,
-    pub buffer_fullness: u16,
-    pub raw_data_blocks: u8,
-}
-
-impl AdtsHeader {
-    pub fn parse(data: &[u8]) -> anyhow::Result<Self> {
-        if data.len() < ADTS_HEADER_LENGTH {
-            anyhow::bail!("ADTS header is truncated");
-        }
-        if data[0] != 0xFF || data[1] & 0xF6 != 0xF0 {
-            anyhow::bail!("Invalid ADTS sync word or layer");
-        }
-
-        let protection_absent = data[1] & 0x01 != 0;
-        let sampling_frequency_index = data[2] >> 2 & 0x0F;
-        let sampling_frequency = SamplingFrequency::try_from(sampling_frequency_index)
-            .map_err(|index| anyhow::anyhow!("Invalid ADTS sampling frequency index: {index}"))?;
-        let channel_configuration = (data[2] & 0x01) << 2 | data[3] >> 6;
-        let frame_length = (usize::from(data[3] & 0x03) << 11)
-            | (usize::from(data[4]) << 3)
-            | usize::from(data[5] >> 5);
-        let header_length = if protection_absent {
-            ADTS_HEADER_LENGTH
-        } else {
-            ADTS_HEADER_WITH_CRC_LENGTH
-        };
-        if frame_length < header_length {
-            anyhow::bail!("Invalid ADTS frame length: {frame_length}");
-        }
-
-        Ok(Self {
-            mpeg_version: if data[1] & 0x08 == 0 {
-                MpegVersion::Mpeg4
-            } else {
-                MpegVersion::Mpeg2
-            },
-            protection_absent,
-            audio_object_type: (data[2] >> 6 & 0x03) + 1,
-            sampling_frequency_index,
-            sampling_frequency,
-            channel_configuration,
-            frame_length,
-            buffer_fullness: (u16::from(data[5] & 0x1F) << 6) | u16::from(data[6] >> 2),
-            raw_data_blocks: data[6] & 0x03,
-        })
+/// Returns the frame length of the ADTS frame starting at `data`.
+///
+/// Only the fields needed for framing are read: the payload itself is handed to
+/// `shiguredo_mp4::bitstream::aac::parse_adts_frame`, which validates the rest.
+fn adts_frame_length(data: &[u8]) -> Option<usize> {
+    if data.len() < ADTS_HEADER_LENGTH {
+        return None;
+    }
+    // syncword (0xFFF) and layer (0)
+    if data[0] != 0xFF || data[1] & 0xF6 != 0xF0 {
+        return None;
     }
 
-    pub fn header_length(&self) -> usize {
-        if self.protection_absent {
-            ADTS_HEADER_LENGTH
-        } else {
-            ADTS_HEADER_WITH_CRC_LENGTH
-        }
-    }
-
-    pub fn sample_count(&self) -> u16 {
-        1024 * (u16::from(self.raw_data_blocks) + 1)
-    }
-
-    /// Returns the raw AAC payload of a frame containing one raw data block.
-    pub fn payload<'a>(&self, frame: &'a [u8]) -> anyhow::Result<&'a [u8]> {
-        if self.raw_data_blocks != 0 {
-            anyhow::bail!("Multiple ADTS raw data blocks are not supported");
-        }
-        if frame.len() < self.frame_length {
-            anyhow::bail!("ADTS frame is truncated");
-        }
-
-        Ok(&frame[self.header_length()..self.frame_length])
-    }
+    let protection_absent = data[1] & 0x01 != 0;
+    let header_length = if protection_absent {
+        ADTS_HEADER_LENGTH
+    } else {
+        ADTS_HEADER_WITH_CRC_LENGTH
+    };
+    let frame_length = (usize::from(data[3] & 0x03) << 11)
+        | (usize::from(data[4]) << 3)
+        | usize::from(data[5] >> 5);
+    (frame_length >= header_length).then_some(frame_length)
 }
 
 /// Splits an ADTS byte stream into complete frames.
@@ -126,18 +68,16 @@ impl AdtsParser {
                 return None;
             }
 
-            let header = match AdtsHeader::parse(&self.buf) {
-                Ok(header) => header,
-                Err(_) => {
-                    self.buf.advance(1);
-                    continue;
-                }
+            let Some(frame_length) = adts_frame_length(&self.buf) else {
+                // A false sync word: resync from the next byte.
+                self.buf.advance(1);
+                continue;
             };
-            if self.buf.len() < header.frame_length {
+            if self.buf.len() < frame_length {
                 return None;
             }
 
-            return Some(self.buf.split_to(header.frame_length).freeze());
+            return Some(self.buf.split_to(frame_length).freeze());
         }
     }
 }
@@ -145,47 +85,6 @@ impl AdtsParser {
 fn find_adts_sync_word(data: &[u8]) -> Option<usize> {
     data.windows(2)
         .position(|bytes| bytes[0] == 0xFF && bytes[1] & 0xF6 == 0xF0)
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-#[repr(u32)]
-pub enum SamplingFrequency {
-    F96000 = 96_000,
-    F88200 = 88_200,
-    F64000 = 64_000,
-    F48000 = 48_000,
-    F44100 = 44_100,
-    F32000 = 32_000,
-    F24000 = 24_000,
-    F22050 = 22_050,
-    F16000 = 16_000,
-    F12000 = 12_000,
-    F11025 = 11_025,
-    F8000 = 8_000,
-    F7350 = 7350,
-}
-
-impl TryFrom<u8> for SamplingFrequency {
-    type Error = u8;
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
-        Ok(match value {
-            0 => Self::F96000,
-            1 => Self::F88200,
-            2 => Self::F64000,
-            3 => Self::F48000,
-            4 => Self::F44100,
-            5 => Self::F32000,
-            6 => Self::F24000,
-            7 => Self::F22050,
-            8 => Self::F16000,
-            9 => Self::F12000,
-            10 => Self::F11025,
-            11 => Self::F8000,
-            12 => Self::F7350,
-            _ => return Err(value),
-        })
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -295,8 +194,7 @@ impl LoasFrame {
                 Cow::Owned(Self {
                     audio_object_type,
                     sampling_frequency_index,
-                    sampling_frequency: SamplingFrequency::try_from(sampling_frequency_index)
-                        .unwrap(),
+                    sampling_frequency: SamplingFrequency::from_index(sampling_frequency_index)?,
                     channel_configuration,
                     other_data_present,
                     data: None,
@@ -395,28 +293,41 @@ mod tests {
     }
 
     #[test]
-    fn parses_an_adts_header_and_payload() {
+    fn reads_the_frame_length_of_an_adts_header() {
         let frame = adts_frame(&[0xDE, 0xAD, 0xBE, 0xEF], true, 4, 2, 0);
 
-        let header = AdtsHeader::parse(&frame).unwrap();
-
-        assert_eq!(header.mpeg_version, MpegVersion::Mpeg4);
-        assert_eq!(header.audio_object_type, 2);
-        assert_eq!(header.sampling_frequency, SamplingFrequency::F44100);
-        assert_eq!(header.channel_configuration, 2);
-        assert_eq!(header.frame_length, frame.len());
-        assert_eq!(header.buffer_fullness, 0x07FF);
-        assert_eq!(header.sample_count(), 1024);
-        assert_eq!(header.payload(&frame).unwrap(), &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(adts_frame_length(&frame), Some(frame.len()));
     }
 
     #[test]
-    fn excludes_the_crc_from_the_payload() {
+    fn counts_the_crc_in_the_frame_length() {
         let frame = adts_frame(&[0xCA, 0xFE], false, 3, 1, 0);
-        let header = AdtsHeader::parse(&frame).unwrap();
 
-        assert_eq!(header.header_length(), ADTS_HEADER_WITH_CRC_LENGTH);
-        assert_eq!(header.payload(&frame).unwrap(), &[0xCA, 0xFE]);
+        assert_eq!(adts_frame_length(&frame), Some(frame.len()));
+        assert_eq!(frame.len(), ADTS_HEADER_WITH_CRC_LENGTH + 2);
+    }
+
+    #[test]
+    fn rejects_a_truncated_or_desynced_adts_header() {
+        let frame = adts_frame(&[0xAA], true, 4, 2, 0);
+
+        // ヘッダー長に満たない
+        assert_eq!(adts_frame_length(&frame[..6]), None);
+        // sync word が合わない
+        assert_eq!(
+            adts_frame_length(&[0xFE, 0xF1, 0x50, 0x80, 0x01, 0x1F, 0xFC]),
+            None
+        );
+        // layer が 0 でない
+        assert_eq!(
+            adts_frame_length(&[0xFF, 0xF3, 0x50, 0x80, 0x01, 0x1F, 0xFC]),
+            None
+        );
+        // frame_length がヘッダー長未満
+        assert_eq!(
+            adts_frame_length(&[0xFF, 0xF1, 0x50, 0x80, 0x00, 0x1F, 0xFC]),
+            None
+        );
     }
 
     #[test]
@@ -453,11 +364,12 @@ mod tests {
     }
 
     #[test]
-    fn rejects_multiple_raw_data_blocks_as_a_single_payload() {
+    fn frames_a_header_with_multiple_raw_data_blocks() {
+        // 複数 raw data block の拒否は shiguredo_mp4 の parse_adts_frame が行う。
+        // フレーミングは frame_length だけを見るので通す
         let frame = adts_frame(&[0xAA], true, 4, 2, 1);
-        let header = AdtsHeader::parse(&frame).unwrap();
+        let mut parser = AdtsParser::default();
 
-        assert_eq!(header.sample_count(), 2048);
-        assert!(header.payload(&frame).is_err());
+        assert_eq!(&parser.push(&frame).unwrap()[..], &frame);
     }
 }

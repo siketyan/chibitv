@@ -1932,7 +1932,7 @@ dependencies = [
 [[package]]
 name = "shiguredo_mp4"
 version = "2026.5.0"
-source = "git+https://github.com/siketyan/mp4-rs.git?rev=d127a82#d127a82f77e2f39c8ac136a2052f6bf465249997"
+source = "git+https://github.com/siketyan/mp4-rs.git?rev=74b96a6#74b96a611be2fbc0e1d4d275694106c72d194f95"
 
 [[package]]
 name = "shlex"
