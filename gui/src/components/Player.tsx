@@ -14,7 +14,7 @@ export function Player(): JSX.Element {
   // render them once it is mounted.
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string>();
-  const { state, subscribeFmp4, playbackGeneration } = useStream();
+  const { state, subscribeFmp4, playbackGeneration, reconnect } = useStream();
   const serviceId = useServiceId();
   const { data: services = [] } = useServices();
   const isWaitingForMedia = useIsWaitingForMedia(video);
@@ -31,9 +31,12 @@ export function Player(): JSX.Element {
       onError(playbackError) {
         console.error("Playback failed", playbackError);
         setError(playbackError.message);
+        // The pipeline cannot be resumed where it broke: it has to be built
+        // again from an init segment, which only a new connection sends.
+        reconnect();
       },
     });
-  }, [video, subscribeFmp4, playbackGeneration]);
+  }, [video, subscribeFmp4, playbackGeneration, reconnect]);
 
   // The element outlives every playback, so the platform keeps one session for
   // as long as the player is mounted.

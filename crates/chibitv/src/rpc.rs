@@ -7,6 +7,8 @@ use connectrpc::{
 };
 use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use tracing::warn;
 
 use crate::channel::ChannelInner;
 use crate::proto::chibitv::v1::*;
@@ -243,7 +245,16 @@ impl ChibitvService for ChibitvServiceImpl {
 
         let initial_state = tokio_stream::iter([stream_state(&self.workspace, &stream, None)]);
         let init_segment = tokio_stream::iter(init_segment.into_iter().map(fmp4_response));
-        let fmp4 = fmp4.filter_map(|data| data.ok().map(fmp4_response));
+        // A client that falls behind loses whole fragments, which leaves a hole
+        // in the byte stream its decoder is reading; it recovers by starting the
+        // stream over, so all that is left to do here is say what happened.
+        let fmp4 = fmp4.filter_map(move |data| match data {
+            Ok(data) => Some(fmp4_response(data)),
+            Err(BroadcastStreamRecvError::Lagged(count)) => {
+                warn!(service_id, count, "An fMP4 stream client fell behind");
+                None
+            }
+        });
         let states = {
             let workspace = Arc::clone(&self.workspace);
             let stream = Arc::clone(&stream);
