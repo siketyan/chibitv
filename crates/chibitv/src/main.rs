@@ -13,11 +13,14 @@ mod mp4;
 mod proto {
     connectrpc::include_generated!();
 }
+mod recorder;
 mod registry;
 mod remux;
 mod rpc;
+mod scheduler;
 mod server;
 mod service_information;
+mod storage;
 mod store;
 mod stream;
 mod task;

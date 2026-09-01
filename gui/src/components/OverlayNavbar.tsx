@@ -10,7 +10,7 @@ import clsx from "clsx";
 import { type JSX, useState } from "react";
 
 import { useStream } from "../api/stream";
-import { isTaskRunning, useTasks } from "../api/tasks";
+import { isTaskRunning, useStartTaskError, useTasks } from "../api/tasks";
 import { chromeTransition, useChromeHold, usePlayerChrome } from "../player/chrome";
 
 interface OverlayNavbarProps {
@@ -35,6 +35,7 @@ export function OverlayNavbar({
   const [areDetailsOpen, setAreDetailsOpen] = useState(false);
   const tasks = useTasks();
   const runningTasks = tasks.filter(isTaskRunning);
+  const startTaskError = useStartTaskError();
   const event = state?.event;
   const description = event?.description.filter(({ content }) => content.length > 0) ?? [];
   // The programme on air is known only once its SI has been received, so until
@@ -108,8 +109,9 @@ export function OverlayNavbar({
       </div>
       <div className="flex shrink-0 items-center gap-2">
         {/* The server starts no task of its own accord, so the button appears
-            once there is one to look at and stays for as long as it is kept. */}
-        {tasks.length > 0 && (
+            once there is something to look at — a task, or a task that could
+            not be started — and stays for as long as it is kept. */}
+        {(tasks.length > 0 || startTaskError !== undefined) && (
           <Button
             aria-label={areTasksOpen ? "Close background tasks" : "Open background tasks"}
             aria-pressed={areTasksOpen}

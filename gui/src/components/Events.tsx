@@ -6,7 +6,9 @@ import { type CSSProperties, type JSX, useMemo, useState } from "react";
 import { chibitvClient, queryKeys } from "../api";
 import { useServices } from "../api/services";
 import { isTaskRunning, useRefreshEvents, useTasks } from "../api/tasks";
-import { type DateTime, type Event, TaskKind } from "../gen/chibitv/v1/chibitv_pb";
+import { toDate } from "../api/time";
+import { type Event, TaskKind } from "../gen/chibitv/v1/chibitv_pb";
+import { EventDetails } from "./EventDetails";
 
 const MINUTES_PER_DAY = 24 * 60;
 const PIXELS_PER_MINUTE = 1.5;
@@ -34,14 +36,8 @@ interface GuideEvent {
   title: string;
   startAt: Date;
   endAt: Date;
-}
-
-function toDate(value: DateTime | undefined): Date | undefined {
-  if (!value) {
-    return undefined;
-  }
-
-  return new Date(Number(value.seconds) * 1000 + value.nanos / 1_000_000);
+  /** The event as the server reports it, which the details are read from. */
+  event: Event;
 }
 
 function toGuideEvents(events: Event[]): GuideEvent[] {
@@ -53,7 +49,7 @@ function toGuideEvents(events: Event[]): GuideEvent[] {
         return [];
       }
 
-      return [{ id: event.id, serviceId: event.serviceId, title: event.title || "Untitled", startAt, endAt }];
+      return [{ id: event.id, serviceId: event.serviceId, title: event.title || "Untitled", startAt, endAt, event }];
     })
     .toSorted((a, b) => a.startAt.valueOf() - b.startAt.valueOf());
 }
@@ -75,6 +71,7 @@ export function Events(): JSX.Element {
   const todayKey = toDateKey(now);
   const [requestedDateKey, setRequestedDateKey] = useState<string>();
   const [expandedChannelIds, setExpandedChannelIds] = useState<Set<number>>(new Set());
+  const [selectedEvent, setSelectedEvent] = useState<GuideEvent>();
   const { data: channels = [] } = useQuery({
     queryKey: queryKeys.channels,
     queryFn: async () => (await chibitvClient.listChannels({})).channels,
@@ -174,6 +171,14 @@ export function Events(): JSX.Element {
         </Button>
       </div>
 
+      {selectedEvent && (
+        <EventDetails
+          event={selectedEvent.event}
+          serviceName={services.find((service) => service.id === selectedEvent.serviceId)?.name}
+          onClose={() => setSelectedEvent(undefined)}
+        />
+      )}
+
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="min-w-max">
           <div className="sticky top-0 z-30 flex h-18 border-b border-white/10 bg-surface/90 backdrop-blur-xl">
@@ -251,6 +256,7 @@ export function Events(): JSX.Element {
                       dayEnd={dayEnd}
                       dayStart={selectedDate}
                       nowOffset={showNow ? nowOffset : undefined}
+                      onSelect={setSelectedEvent}
                     />
                   ) : (
                     channelServices.map((service) => (
@@ -260,6 +266,7 @@ export function Events(): JSX.Element {
                         dayEnd={dayEnd}
                         dayStart={selectedDate}
                         nowOffset={showNow ? nowOffset : undefined}
+                        onSelect={setSelectedEvent}
                       />
                     ))
                   )}
@@ -297,11 +304,13 @@ function GuideLane({
   dayStart,
   dayEnd,
   nowOffset,
+  onSelect,
 }: {
   events: GuideEvent[];
   dayStart: Date;
   dayEnd: Date;
   nowOffset: number | undefined;
+  onSelect: (event: GuideEvent) => void;
 }): JSX.Element {
   const guideStyle = {
     height: GUIDE_HEIGHT,
@@ -320,17 +329,19 @@ function GuideLane({
           const height = ((visibleEnd.valueOf() - visibleStart.valueOf()) / 60_000) * PIXELS_PER_MINUTE;
 
           return (
-            <article
+            <button
               key={`${event.id}-${event.startAt.toISOString()}`}
-              className="absolute inset-x-1 overflow-hidden rounded-lg border border-accent/25 bg-accent-soft/85 px-2 py-1 text-accent-soft-foreground shadow-sm"
+              type="button"
+              className="absolute inset-x-1 overflow-hidden rounded-lg border border-accent/25 bg-accent-soft/85 px-2 py-1 text-left text-accent-soft-foreground shadow-sm transition-colors hover:bg-accent-soft focus-visible:outline-2 focus-visible:outline-accent"
               style={{ top, height }}
               title={`${timeFormatter.format(event.startAt)}–${timeFormatter.format(event.endAt)} ${event.title}`}
+              onClick={() => onSelect(event)}
             >
               <div className="text-[0.65rem] tabular-nums opacity-70">
                 {timeFormatter.format(event.startAt)}–{timeFormatter.format(event.endAt)}
               </div>
               <div className="text-xs font-medium leading-4">{event.title}</div>
-            </article>
+            </button>
           );
         })}
       {nowOffset !== undefined && (

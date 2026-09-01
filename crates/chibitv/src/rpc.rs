@@ -189,6 +189,27 @@ impl ChibitvService for ChibitvServiceImpl {
         })
     }
 
+    async fn schedule_recording(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, ScheduleRecordingRequest>,
+    ) -> ServiceResult<ScheduleRecordingResponse> {
+        let service_id = u16::try_from(request.service_id)
+            .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
+        let event_id = u16::try_from(request.event_id)
+            .map_err(|_| ConnectError::invalid_argument("event_id is out of range"))?;
+
+        let task = self
+            .workspace
+            .schedule_recording(service_id, event_id)
+            .map_err(workspace_error)?;
+
+        Response::ok(ScheduleRecordingResponse {
+            task: Some(task_message(&task)).into(),
+            ..Default::default()
+        })
+    }
+
     async fn stream(
         &self,
         _ctx: RequestContext,
@@ -245,6 +266,7 @@ fn task_message(value: &task::Task) -> Task {
         cancellable: value.cancellable,
         error: value.error.clone().unwrap_or_default(),
         created_at: Some(DateTime::from(value.created_at)).into(),
+        scheduled_at: value.scheduled_at.map(DateTime::from).into(),
         started_at: value.started_at.map(DateTime::from).into(),
         finished_at: value.finished_at.map(DateTime::from).into(),
         ..Default::default()
@@ -254,11 +276,13 @@ fn task_message(value: &task::Task) -> Task {
 fn task_kind(value: task::TaskKind) -> TaskKind {
     match value {
         task::TaskKind::RefreshEvents => TaskKind::RefreshEvents,
+        task::TaskKind::Record => TaskKind::Record,
     }
 }
 
 fn task_state(value: task::TaskState) -> TaskState {
     match value {
+        task::TaskState::Scheduled => TaskState::Scheduled,
         task::TaskState::Pending => TaskState::Pending,
         task::TaskState::Running => TaskState::Running,
         task::TaskState::Succeeded => TaskState::Succeeded,
@@ -316,6 +340,16 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
         }
         WorkspaceError::EventCrawlerUnavailable => {
             ConnectError::failed_precondition("event crawler is unavailable")
+        }
+        WorkspaceError::RecordingUnavailable => {
+            ConnectError::failed_precondition("recording is unavailable")
+        }
+        WorkspaceError::EventNotFound => ConnectError::not_found("event not found"),
+        WorkspaceError::EventNotScheduled => {
+            ConnectError::failed_precondition("the event is not announced with a time")
+        }
+        WorkspaceError::EventPassed => {
+            ConnectError::failed_precondition("the event is over already")
         }
         WorkspaceError::TaskNotFound => ConnectError::not_found("task not found"),
         WorkspaceError::TaskNotCancellable => {

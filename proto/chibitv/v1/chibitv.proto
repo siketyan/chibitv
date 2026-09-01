@@ -25,6 +25,11 @@ service ChibitvService {
   // told to stop, which it may take a moment to act on.
   rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
 
+  // ScheduleRecording books a recording of the event, as a task that starts
+  // shortly before the event does. Cancelling that task calls the recording
+  // off, or stops it while it runs.
+  rpc ScheduleRecording(ScheduleRecordingRequest) returns (ScheduleRecordingResponse);
+
   // Stream tunes to the requested service and streams it while the call is
   // kept open. A tuner is occupied only while at least one client streams a
   // service on its physical channel, and clients requesting the same service
@@ -104,12 +109,25 @@ message CancelTaskResponse {
   Task task = 1;
 }
 
+message ScheduleRecordingRequest {
+  uint32 service_id = 1;
+  uint32 event_id = 2;
+}
+
+message ScheduleRecordingResponse {
+  // The task the recording will run as.
+  Task task = 1;
+}
+
 // TaskKind is the work a background task performs.
 enum TaskKind {
   TASK_KIND_UNSPECIFIED = 0;
 
   // Collecting the programme guide from every configured channel.
   TASK_KIND_REFRESH_EVENTS = 1;
+
+  // Recording one programme to the storage.
+  TASK_KIND_RECORD = 2;
 }
 
 // TaskState is where a background task is in its lifetime.
@@ -130,6 +148,9 @@ enum TaskState {
 
   // Stopped because it was cancelled.
   TASK_STATE_CANCELLED = 5;
+
+  // Waiting for the time it is to start at.
+  TASK_STATE_SCHEDULED = 6;
 }
 
 // Task is one unit of work running in the background of the server.
@@ -154,6 +175,10 @@ message Task {
   string error = 8;
 
   optional DateTime created_at = 9;
+
+  // When a scheduled task is to start.
+  optional DateTime scheduled_at = 12;
+
   optional DateTime started_at = 10;
   optional DateTime finished_at = 11;
 }

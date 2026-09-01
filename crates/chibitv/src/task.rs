@@ -27,6 +27,8 @@ const FINISHED_HISTORY: usize = 32;
 pub enum TaskKind {
     /// Collects the programme guide from every configured channel.
     RefreshEvents,
+    /// Records one programme to the storage.
+    Record,
 }
 
 impl TaskKind {
@@ -36,6 +38,8 @@ impl TaskKind {
             // The guide is refreshed whenever it suits the viewer, and giving
             // up halfway only leaves the events already collected in place.
             Self::RefreshEvents => true,
+            // A recording stopped halfway keeps what it has recorded so far.
+            Self::Record => true,
         }
     }
 
@@ -45,6 +49,8 @@ impl TaskKind {
             // Crawling takes a tuner and walks every channel with it, so a
             // second crawl would only fight the first one over the tuner.
             Self::RefreshEvents => true,
+            // Recordings run side by side for as long as there are tuners.
+            Self::Record => false,
         }
     }
 }
@@ -52,6 +58,8 @@ impl TaskKind {
 /// Where a task is in its lifetime.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TaskState {
+    /// Waiting for the time it is to start at.
+    Scheduled,
     /// Accepted, but not started yet.
     Pending,
     Running,
@@ -63,6 +71,12 @@ pub enum TaskState {
 impl TaskState {
     pub fn is_finished(self) -> bool {
         matches!(self, Self::Succeeded | Self::Failed | Self::Cancelled)
+    }
+
+    /// Whether the work of the task is under way, rather than waiting for its
+    /// time to come or over already.
+    fn is_running(self) -> bool {
+        matches!(self, Self::Pending | Self::Running)
     }
 }
 
@@ -82,6 +96,8 @@ pub struct Task {
     /// Why the task failed, set in the failed state only.
     pub error: Option<String>,
     pub created_at: DateTime<Local>,
+    /// When a scheduled task is to start.
+    pub scheduled_at: Option<DateTime<Local>>,
     pub started_at: Option<DateTime<Local>>,
     pub finished_at: Option<DateTime<Local>>,
 }
@@ -185,53 +201,130 @@ impl Tasks {
     where
         F: FnOnce(&TaskHandle) -> anyhow::Result<()> + Send + 'static,
     {
-        let handle = {
-            let mut state = self.state.lock().unwrap();
-            if kind.is_exclusive()
-                && state
-                    .entries
-                    .values()
-                    .any(|entry| entry.task.kind == kind && !entry.task.state.is_finished())
-            {
-                return Err(SpawnError::AlreadyRunning);
-            }
-
-            let id = state.next_id;
-            state.next_id += 1;
-
-            let cancellation = Cancellation::default();
-            state.entries.insert(
-                id,
-                Entry {
-                    task: Task {
-                        id,
-                        kind,
-                        state: TaskState::Pending,
-                        title: title.into(),
-                        message: String::new(),
-                        progress: None,
-                        cancellable: kind.is_cancellable(),
-                        error: None,
-                        created_at: Local::now(),
-                        started_at: None,
-                        finished_at: None,
-                    },
-                    cancellation: cancellation.clone(),
-                },
-            );
-
-            TaskHandle {
-                id,
-                tasks: Arc::clone(self),
-                cancellation,
-            }
-        };
-
+        let handle = self.insert(kind, title.into(), TaskState::Pending, None)?;
         let task = self
             .broadcast(handle.id)
             .expect("the task was just created");
         info!(task_id = task.id, kind = ?task.kind, "Task queued");
 
+        self.run(handle, run);
+
+        Ok(task)
+    }
+
+    /// Adds a task that is to start at `at`, and does not start it.
+    ///
+    /// Whoever schedules it — the [`Scheduler`](crate::scheduler::Scheduler) —
+    /// starts its work with [`Tasks::start_scheduled`] when the time comes,
+    /// and until then the task can be looked at and cancelled like any other.
+    pub fn schedule(
+        self: &Arc<Self>,
+        kind: TaskKind,
+        title: impl Into<String>,
+        at: DateTime<Local>,
+    ) -> Task {
+        let handle = self
+            .insert(kind, title.into(), TaskState::Scheduled, Some(at))
+            .expect("a task that is not to start yet is never refused");
+        let task = self
+            .broadcast(handle.id)
+            .expect("the task was just created");
+        info!(task_id = task.id, kind = ?task.kind, %at, "Task scheduled");
+
+        task
+    }
+
+    /// Starts the work of a task that was scheduled.
+    ///
+    /// Returns whether it was started: a task cancelled before its time came
+    /// never runs.
+    pub fn start_scheduled<F>(self: &Arc<Self>, id: TaskId, run: F) -> bool
+    where
+        F: FnOnce(&TaskHandle) -> anyhow::Result<()> + Send + 'static,
+    {
+        let handle = {
+            let mut state = self.state.lock().unwrap();
+            let Some(entry) = state.entries.get_mut(&id) else {
+                return false;
+            };
+            if entry.task.state != TaskState::Scheduled {
+                return false;
+            }
+
+            entry.task.state = TaskState::Pending;
+
+            TaskHandle {
+                id,
+                tasks: Arc::clone(self),
+                cancellation: entry.cancellation.clone(),
+            }
+        };
+
+        self.broadcast(id);
+        self.run(handle, run);
+
+        true
+    }
+
+    /// Adds a task in the state it starts its life in.
+    ///
+    /// A kind that allows only one at a time is refused a second task here,
+    /// which is where every task that is to run now comes through.
+    fn insert(
+        self: &Arc<Self>,
+        kind: TaskKind,
+        title: String,
+        state: TaskState,
+        scheduled_at: Option<DateTime<Local>>,
+    ) -> Result<TaskHandle, SpawnError> {
+        let mut tasks = self.state.lock().unwrap();
+        if state != TaskState::Scheduled
+            && kind.is_exclusive()
+            && tasks
+                .entries
+                .values()
+                .any(|entry| entry.task.kind == kind && entry.task.state.is_running())
+        {
+            return Err(SpawnError::AlreadyRunning);
+        }
+
+        let id = tasks.next_id;
+        tasks.next_id += 1;
+
+        let cancellation = Cancellation::default();
+        tasks.entries.insert(
+            id,
+            Entry {
+                task: Task {
+                    id,
+                    kind,
+                    state,
+                    title,
+                    message: String::new(),
+                    progress: None,
+                    cancellable: kind.is_cancellable(),
+                    error: None,
+                    created_at: Local::now(),
+                    scheduled_at,
+                    started_at: None,
+                    finished_at: None,
+                },
+                cancellation: cancellation.clone(),
+            },
+        );
+
+        Ok(TaskHandle {
+            id,
+            tasks: Arc::clone(self),
+            cancellation,
+        })
+    }
+
+    /// Runs the work of a task that has been accepted, on a thread of its own.
+    fn run<F>(self: &Arc<Self>, handle: TaskHandle, run: F)
+    where
+        F: FnOnce(&TaskHandle) -> anyhow::Result<()> + Send + 'static,
+    {
         let tasks = Arc::clone(self);
         std::thread::spawn(move || {
             tasks.update(handle.id, |task| {
@@ -242,8 +335,6 @@ impl Tasks {
             let result = run(&handle);
             tasks.finish(handle.id, result, handle.is_cancelled());
         });
-
-        Ok(task)
     }
 
     /// Every task, oldest first.
@@ -272,19 +363,36 @@ impl Tasks {
     /// returns it as it is, so that a client racing the end of a task does not
     /// have to tell the two apart.
     pub fn cancel(&self, id: TaskId) -> Result<Task, CancelError> {
-        let state = self.state.lock().unwrap();
-        let entry = state.entries.get(&id).ok_or(CancelError::NotFound)?;
-        if entry.task.state.is_finished() {
-            return Ok(entry.task.clone());
-        }
-        if !entry.task.cancellable {
-            return Err(CancelError::NotCancellable);
-        }
+        let (task, is_finished) = {
+            let mut state = self.state.lock().unwrap();
+            let entry = state.entries.get_mut(&id).ok_or(CancelError::NotFound)?;
+            if entry.task.state.is_finished() {
+                return Ok(entry.task.clone());
+            }
+            if !entry.task.cancellable {
+                return Err(CancelError::NotCancellable);
+            }
 
-        entry.cancellation.cancel();
+            entry.cancellation.cancel();
+
+            // Nothing is running yet to notice that flag, so a task that was
+            // only waiting for its time ends here instead.
+            let is_finished = entry.task.state == TaskState::Scheduled;
+            if is_finished {
+                entry.task.state = TaskState::Cancelled;
+                entry.task.finished_at = Some(Local::now());
+            }
+
+            (entry.task.clone(), is_finished)
+        };
+
         info!(task_id = id, "Task cancellation requested");
+        if is_finished {
+            let _ = self.updates.send(task.clone());
+            self.prune();
+        }
 
-        Ok(entry.task.clone())
+        Ok(task)
     }
 
     fn update(&self, id: TaskId, change: impl FnOnce(&mut Task)) {
