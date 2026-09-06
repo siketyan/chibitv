@@ -6,7 +6,7 @@
     "node": "24"
   },
   "dependencies": {
-    "@bufbuild/protobuf": "2.14.0",
+    "@bufbuild/protobuf": "2.14.1",
     "@chibitv/mediabunny-mpeg2": "workspace:*",
     "@connectrpc/connect": "2.1.2",
     "@connectrpc/connect-web": "2.1.2",
@@ -16,16 +16,16 @@
     "mediabunny": "1.55.5"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.11",
+    "@biomejs/biome": "2.5.12",
     "@bufbuild/buf": "1.72.0",
-    "@bufbuild/protoc-gen-es": "2.14.0",
-    "@rsbuild/core": "2.2.0",
+    "@bufbuild/protoc-gen-es": "2.14.1",
+    "@rsbuild/core": "2.2.3",
     "@rsbuild/plugin-react": "2.1.0",
     "@tailwindcss/postcss": "4.3.3",
     "@tanstack/react-query": "5.102.8",
     "@tanstack/react-router": "1.170.32",
     "@types/react": "19.2.18",
-    "@types/react-dom": "19.2.5",
+    "@types/react-dom": "19.2.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "tailwindcss": "4.3.3",
