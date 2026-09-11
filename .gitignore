@@ -3,7 +3,7 @@ node_modules/
 target/
 
 # Config file
-config.toml
+/config.toml
 
 # The broadcast schedule the server keeps between runs
 chibitv.db

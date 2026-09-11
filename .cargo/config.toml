@@ -1,0 +1,7 @@
+# Where `crates/chibitv_ffmpeg/build.sh` installs the FFmpeg it builds, which
+# rusty_ffmpeg (behind chibitv_ffmpeg's backend features) links from there.
+# Variables already set in the environment take precedence, so a build that
+# keeps FFmpeg elsewhere sets these itself.
+[env]
+FFMPEG_PKG_CONFIG_PATH = { value = "crates/chibitv_ffmpeg/vendor/prefix/lib/pkgconfig", relative = true }
+FFMPEG_LINK_MODE = "static"

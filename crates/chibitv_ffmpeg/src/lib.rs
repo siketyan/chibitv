@@ -1,5 +1,5 @@
-//! Video transcoding for chibitv, done by a minimal FFmpeg built into the
-//! crate.
+//! Video transcoding for chibitv, done by a minimal FFmpeg linked in through
+//! rsmpeg.
 //!
 //! A [`Transcoder`] takes the access units of one video stream and gives
 //! back those of another: MPEG-2 or HEVC in, H.264, HEVC or AV1 out, with
@@ -7,10 +7,11 @@
 //! already in the codec asked for goes through untouched.
 //!
 //! The work is done on a hardware [`Acceleration`] when one is compiled in and
-//! usable on this machine, and by software encoders otherwise; the Cargo
-//! features of the crate decide what gets compiled in, and
-//! [`Acceleration::available`] tells what did. With no backend feature at all
-//! the crate builds without FFmpeg and can only pass streams through.
+//! usable on this machine, and by software encoders otherwise. `build.sh`
+//! builds the FFmpeg with the backends named to it, the Cargo features say
+//! which of them a build relies on, and [`Acceleration::available`] tells
+//! what the FFmpeg linked in has. With no backend feature at all the crate
+//! builds without FFmpeg and can only pass streams through.
 //!
 //! Access units are the codecs' own elementary streams: MPEG-2 pictures with
 //! their headers, H.264 and HEVC in Annex B with the parameter sets in-band at
@@ -28,8 +29,6 @@ mod av;
 mod backend;
 #[cfg(ffmpeg)]
 mod pipeline;
-#[cfg(ffmpeg)]
-mod sys;
 
 /// A video codec the transcoder reads or writes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -404,8 +403,7 @@ mod tests {
                 let (chroma, stride) = frame.plane(plane).unwrap();
                 for y in 0..(HEIGHT as usize).div_ceil(2) {
                     for x in 0..(WIDTH as usize).div_ceil(2) {
-                        chroma[y * stride + x] =
-                            (128 + ((x * plane as usize + index) & 0x3F)) as u8;
+                        chroma[y * stride + x] = (128 + ((x * plane + index) & 0x3F)) as u8;
                     }
                 }
             }
@@ -520,7 +518,7 @@ mod tests {
 
         #[test]
         fn reports_the_version_of_the_ffmpeg_built_in() {
-            assert!(ffmpeg_version().unwrap().starts_with("9."));
+            assert!(ffmpeg_version().unwrap().starts_with("8."));
         }
 
         #[cfg(all(ffmpeg_mpeg2_encoder, ffmpeg_x264))]
