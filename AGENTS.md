@@ -11,6 +11,7 @@ runtime setup (tuner devices, PC/SC, `config.toml`).
 
 - `[patch.crates-io]` in the workspace `Cargo.toml` replaces some crates.io dependencies (`dvbv5-sys`, `mpeg2ts`, `shiguredo_mp4`) with forks pinned to a Git revision. To try a local change to one of them, add a `[patch]` override to `.cargo/config.toml` instead of editing the manifest.
 - System libraries for the default `dvb` feature and PC/SC: `libdvbv5-dev` and `libpcsclite-dev`.
+- `chibitv_ffmpeg` builds its own minimal FFmpeg from `build.rs` when any of its backend features is on (none is by default, so a plain build needs nothing). That needs `make`, a C compiler, `nasm` on x86, `curl` and `tar`, plus the development package of each library a feature links: `libx264-dev`, `libx265-dev`, `libsvtav1enc-dev` for the software encoders, `libva-dev` for `vaapi`, `libvpl-dev` for `qsv`, the `ffnvcodec` headers for `nvidia`, the AMF SDK headers (pointed at with `CHIBITV_FFMPEG_AMF_INCLUDE`) for `amf`. The sources land and build in `crates/chibitv_ffmpeg/vendor/` (ignored by Git and Docker), or wherever `CHIBITV_FFMPEG_VENDOR_DIR` says; `CHIBITV_FFMPEG_SOURCE` substitutes an FFmpeg source tree for the release archive. Only Linux and macOS builds have been exercised; Windows needs MSYS2's `sh` and `make` on the `PATH` in an MSVC shell.
 - The Rust toolchain is pinned in `rust-toolchain.toml`, so rustup picks it up on its own. Bumping it means editing that file and the builder image the `Dockerfile` starts its Rust stage from, which never sees it.
 - JS tooling: Node 24 with pnpm (via corepack); run `pnpm install` at the repo root.
 
@@ -22,6 +23,7 @@ Rust (workspace of `crates/*`, edition 2024):
 - Test all: `cargo test --all-targets` (CI runs exactly this, on Linux and Windows)
 - Test one crate: `cargo test -p chibitv_b60`
 - Test one test: `cargo test -p chibitv_b60 <test_name>`
+- Test the transcoder with FFmpeg: `cargo test -p chibitv_ffmpeg --features software,vaapi` (CI runs this on Linux; `cargo test --all-targets` covers only the passthrough it does without FFmpeg)
 - Lint: `cargo clippy --all-targets -- -D warnings` (warnings fail CI)
 - Format: `cargo fmt --all` (checked in CI with `--check`)
 
@@ -48,6 +50,7 @@ The library crates map directly to ARIB standard documents and hold the parsing/
 - `chibitv_b60` — MMT/TLV container parsing for ISDB-S 4K: TLV packets, compressed IP, MMTP, messages/tables/descriptors, MFU (STD-B60).
 - `chibitv_b61` — ISDB-S conditional access: AES-CTR descrambling and the ACAS card protocol; needs the externally provided _Kd_ master key (STD-B61).
 - `chibitv_bon` — BonDriver, the de-facto tuner interface on Windows; a hand-written binding to its `IBonDriver2` vtable. Empty on other platforms.
+- `chibitv_ffmpeg` — video transcoding (MPEG-2 or HEVC in; H.264, HEVC or AV1 out, deinterlaced on the way) on a minimal FFmpeg built by its `build.rs`. FFmpeg stays inside the crate: `csrc/chibitv_ffmpeg.c` is the only code including its headers and exposes a flat C API, `src/sys.rs` binds to that, `src/av.rs` owns what it hands out, `src/backend.rs` is the table of what each acceleration decodes, filters and encodes with, and `src/pipeline.rs` runs the chain and falls back from one acceleration to the next. The public API in `src/lib.rs` speaks in codecs, accelerations and access units with timestamps in seconds. One Cargo feature per vendor's hardware acceleration (`videotoolbox`, `nvidia`, `qsv`, `vaapi`, `amf`) and per software encoder (`x264`, `x265`, `svt-av1`; `software` for all three); each hardware feature only takes effect on the platforms it exists on, so one feature list serves every platform. With no feature the crate has no FFmpeg and only passes streams through.
 
 ### The `chibitv` binary
 
