@@ -1,0 +1,57 @@
+[package]
+name = "chibitv_ffmpeg"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bytes = "1.12.0"
+tracing = "0.1.44"
+
+[build-dependencies]
+cc = "1.4.3"
+pkg-config = "0.3.34"
+
+[dev-dependencies]
+# The tests make their MPEG-2 input with FFmpeg's own encoder, which only the
+# tests need. Depending on the crate itself is how a feature is turned on for
+# its tests alone.
+chibitv_ffmpeg = { path = ".", features = ["mpeg2-encoder"] }
+
+[features]
+default = []
+
+# Hardware acceleration, one feature per vendor. Each only takes effect on the
+# platforms the vendor's API exists for and is ignored with a warning elsewhere,
+# so that one feature list serves every platform. Which ones a build ended up
+# with is reported by `Acceleration::available()`.
+#
+# Apple VideoToolbox: macOS only. Decodes MPEG-2 and HEVC, encodes H.264 and
+# HEVC. No extra dependency.
+videotoolbox = []
+# NVIDIA NVDEC/NVENC: Linux and Windows. Decodes MPEG-2 and HEVC, encodes H.264,
+# HEVC and AV1. Needs the `ffnvcodec` headers at build time; the driver
+# libraries are loaded at run time.
+nvidia = []
+# Intel Quick Sync Video through libvpl: Linux and Windows. Decodes MPEG-2 and
+# HEVC, encodes H.264, HEVC and AV1. Needs libvpl at build time (and libva on
+# Linux).
+qsv = []
+# VA-API: Linux only, Intel and AMD GPUs. Decodes MPEG-2 and HEVC, encodes
+# H.264, HEVC and AV1. Needs libva at build time.
+vaapi = []
+# AMD AMF: Windows and Linux. Encodes H.264, HEVC and AV1 after a software
+# decode. Needs the AMF SDK headers at build time; the runtime is loaded when
+# used.
+amf = []
+
+# Software encoders, the fallback when no hardware is usable. Each links the
+# library installed on the system. x264 and x265 are GPL, which the FFmpeg
+# build is configured for when either is on.
+x264 = []
+x265 = []
+svt-av1 = []
+software = ["x264", "x265", "svt-av1"]
+
+# Compiles FFmpeg's MPEG-2 encoder in as well, so that the tests can make their
+# input. Not a transcoding target.
+mpeg2-encoder = []

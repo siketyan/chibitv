@@ -437,6 +437,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chibitv_ffmpeg"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "cc",
+ "chibitv_ffmpeg",
+ "pkg-config",
+ "tracing",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
