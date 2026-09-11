@@ -62,9 +62,12 @@ jobs:
     permissions:
       contents: read
     env:
-      # Where chibitv_ffmpeg fetches and builds FFmpeg, kept out of the
-      # source tree so that it can be cached on its own.
+      # Where chibitv_ffmpeg's build.sh fetches, builds and installs FFmpeg,
+      # kept out of the source tree so that it can be cached on its own. The
+      # workspace's .cargo/config.toml points rusty_ffmpeg at the default
+      # place, so the install is pointed out here too.
       CHIBITV_FFMPEG_VENDOR_DIR: ${{ github.workspace }}/.ffmpeg-vendor
+      FFMPEG_PKG_CONFIG_PATH: ${{ github.workspace }}/.ffmpeg-vendor/prefix/lib/pkgconfig
     steps:
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -73,7 +76,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y nasm libx264-dev libx265-dev libsvtav1enc-dev libva-dev
+          sudo apt-get install --no-install-recommends -y nasm libclang-dev libx264-dev libx265-dev libsvtav1enc-dev libva-dev
       - name: Install Rust
         run: rustup toolchain install --no-self-update
       - name: Cache dependencies
@@ -81,8 +84,11 @@ jobs:
       - name: Cache the FFmpeg build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: .ffmpeg-vendor
-          key: ffmpeg-native-${{ hashFiles('crates/chibitv_ffmpeg/build.rs') }}
+          path: .ffmpeg-vendor/prefix
+          key: ffmpeg-native-${{ hashFiles('crates/chibitv_ffmpeg/build.sh') }}
+      # The script does nothing when the cached install matches.
+      - name: Build FFmpeg
+        run: bash crates/chibitv_ffmpeg/build.sh software vaapi mpeg2-encoder
       - name: Run Clippy
         run: cargo clippy -p chibitv_ffmpeg --all-targets --features software,vaapi -- -D warnings
       - name: Run tests
