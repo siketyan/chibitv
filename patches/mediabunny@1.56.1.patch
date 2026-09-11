@@ -1,8 +1,8 @@
 diff --git a/dist/mediabunny.d.ts b/dist/mediabunny.d.ts
-index f0667c1..8fb1d91 100644
+index bb1e32f..4e94063 100644
 --- a/dist/mediabunny.d.ts
 +++ b/dist/mediabunny.d.ts
-@@ -4523,7 +4523,7 @@ export declare type UrlSourceOptions = {
+@@ -4611,7 +4611,7 @@ export declare type UrlSourceOptions = {
   * @group Codecs
   * @public
   */
@@ -12,10 +12,10 @@ index f0667c1..8fb1d91 100644
  /**
   * The list of {@link VideoSample} pixel formats.
 diff --git a/dist/modules/src/codec-data.js b/dist/modules/src/codec-data.js
-index da3512f..d33d79d 100644
+index e9964a4..50ba108 100644
 --- a/dist/modules/src/codec-data.js
 +++ b/dist/modules/src/codec-data.js
-@@ -2041,6 +2041,28 @@ export const determineVideoPacketType = (codec, decoderConfig, packetData) => {
+@@ -2109,6 +2109,28 @@ export const determineVideoPacketType = (codec, decoderConfig, packetData) => {
                  return null;
              }
              ;
@@ -90,10 +90,10 @@ index f21174c..6b85059 100644
      if (codecString === 'mp3'
          || codecString === 'mp4a.69'
 diff --git a/dist/modules/src/isobmff/isobmff-demuxer.js b/dist/modules/src/isobmff/isobmff-demuxer.js
-index 9ea01e2..2f03bc2 100644
+index 575d5ed..2433c2d 100644
 --- a/dist/modules/src/isobmff/isobmff-demuxer.js
 +++ b/dist/modules/src/isobmff/isobmff-demuxer.js
-@@ -725,6 +725,12 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -721,6 +721,12 @@ export class IsobmffDemuxer extends Demuxer {
                                  track.info.codec = 'prores';
                                  track.info.proresFormat = lowercaseBoxName;
                              }
@@ -106,16 +106,16 @@ index 9ea01e2..2f03bc2 100644
                              else if (codecName === null) {
                                  Logging._warn(`Unknown encrypted video codec due to missing frma box.`);
                              }
-@@ -1172,7 +1178,7 @@ export class IsobmffDemuxer extends Demuxer {
-                     if (!track) {
+@@ -1165,7 +1171,7 @@ export class IsobmffDemuxer extends Demuxer {
+             case 'esds':
+                 {
+                     const track = this.currentTrack;
+-                    if (!track || track.info?.type !== 'audio') {
++                    if (!track || track.info === null) {
                          break;
                      }
--                    assert(track.info?.type === 'audio');
-+                    assert(track.info !== null);
                      slice.skip(4); // Version + flags
-                     const tag = readU8(slice);
-                     assert(tag === 0x03); // ES Descriptor
-@@ -1197,6 +1203,15 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1192,6 +1198,15 @@ export class IsobmffDemuxer extends Demuxer {
                      const decoderConfigDescriptorLength = readIsomVariableInteger(slice); // Length
                      const payloadStart = slice.filePos;
                      const objectTypeIndication = readU8(slice);
@@ -131,7 +131,7 @@ index 9ea01e2..2f03bc2 100644
                      if (objectTypeIndication === 0x40 || objectTypeIndication === 0x67) {
                          track.info.codec = 'aac';
                          track.info.aacCodecInfo = {
-@@ -2649,7 +2664,7 @@ class IsobmffTrackBacking {
+@@ -2644,7 +2659,7 @@ class IsobmffTrackBacking {
          const timestamp = (sampleInfo.presentationTimestamp - this.internalTrack.editListOffset)
              / this.internalTrack.timescale;
          const duration = sampleInfo.duration / this.internalTrack.timescale;
@@ -140,7 +140,7 @@ index 9ea01e2..2f03bc2 100644
          this.packetToSampleIndex.set(packet, sampleIndex);
          return packet;
      }
-@@ -2683,7 +2698,7 @@ class IsobmffTrackBacking {
+@@ -2678,7 +2693,7 @@ class IsobmffTrackBacking {
          const timestamp = (fragmentSample.presentationTimestamp - this.internalTrack.editListOffset)
              / this.internalTrack.timescale;
          const duration = fragmentSample.duration / this.internalTrack.timescale;
@@ -150,7 +150,7 @@ index 9ea01e2..2f03bc2 100644
          return packet;
      }
 diff --git a/dist/modules/src/media-source.js b/dist/modules/src/media-source.js
-index e6c3b19..e5e01ea 100644
+index d05b967..baf6e15 100644
 --- a/dist/modules/src/media-source.js
 +++ b/dist/modules/src/media-source.js
 @@ -680,6 +680,15 @@ class VideoEncoderWrapper {
