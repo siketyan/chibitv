@@ -53,6 +53,41 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --all-targets -- -D warnings
 
+  ffmpeg:
+    name: FFmpeg
+    runs-on: ubuntu-latest
+    # Building the minimal FFmpeg of chibitv_ffmpeg dominates this job when
+    # its cache misses.
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    env:
+      # Where chibitv_ffmpeg fetches and builds FFmpeg, kept out of the
+      # source tree so that it can be cached on its own.
+      CHIBITV_FFMPEG_VENDOR_DIR: ${{ github.workspace }}/.ffmpeg-vendor
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y nasm libx264-dev libx265-dev libsvtav1enc-dev libva-dev
+      - name: Install Rust
+        run: rustup toolchain install --no-self-update
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Cache the FFmpeg build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .ffmpeg-vendor
+          key: ffmpeg-native-${{ hashFiles('crates/chibitv_ffmpeg/build.rs') }}
+      - name: Run Clippy
+        run: cargo clippy -p chibitv_ffmpeg --all-targets --features software,vaapi -- -D warnings
+      - name: Run tests
+        run: cargo test -p chibitv_ffmpeg --features software,vaapi
+
   gui:
     name: GUI
     runs-on: ubuntu-latest
