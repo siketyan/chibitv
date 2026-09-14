@@ -139,5 +139,5 @@ builds only, which leaves the rsbuild development server above unaffected.
 - The [configuration reference](../reference/configuration) for every key of
   `config.toml`.
 - The [CLI reference](../reference/cli) for every subcommand and option.
-- The [README](https://github.com/siketyan/chibitv#readme) for running the
-  Docker image.
+- [Docker](../deployment/docker) for running the published image instead of
+  building from source.

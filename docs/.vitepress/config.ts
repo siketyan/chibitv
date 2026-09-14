@@ -24,6 +24,7 @@ export default defineConfig({
       { text: "Getting started", link: "/guide/getting-started" },
       { text: "Configuration", link: "/reference/configuration" },
       { text: "CLI", link: "/reference/cli" },
+      { text: "Docker", link: "/deployment/docker" },
     ],
 
     sidebar: [
@@ -37,6 +38,10 @@ export default defineConfig({
           { text: "Configuration", link: "/reference/configuration" },
           { text: "CLI", link: "/reference/cli" },
         ],
+      },
+      {
+        text: "Deployment",
+        items: [{ text: "Docker", link: "/deployment/docker" }],
       },
     ],
 

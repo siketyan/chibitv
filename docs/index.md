@@ -29,6 +29,9 @@ features:
   - title: CLI
     details: Every subcommand and option of the chibitv binary — live, record, remux, scan, status and serve.
     link: /reference/cli
+  - title: Docker
+    details: Running the image that serves the RPC API and the GUI from one binary, with the tuner devices and the PC/SC daemon of the host.
+    link: /deployment/docker
 ---
 
 > [!WARNING]
@@ -42,4 +45,5 @@ React GUI on top.
 Start with [getting started](./guide/getting-started) to set up the tuner, the
 CAS module and `config.toml`. The reference pages then cover every key of the
 [configuration](./reference/configuration) and every subcommand of the
-[CLI](./reference/cli).
+[CLI](./reference/cli), and [Docker](./deployment/docker) covers running the
+published image.
