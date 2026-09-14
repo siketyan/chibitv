@@ -5,6 +5,11 @@ export default defineConfig({
   description: "Yet another implementation for ARIB standards",
   lang: "en-US",
 
+  head: [
+    // Head links are not prefixed with `base`, so it is spelled out here.
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/chibitv/favicon.svg" }],
+  ],
+
   // The site is published to https://siketyan.github.io/chibitv/, so every
   // asset and link has to be prefixed with the repository name.
   base: "/chibitv/",
@@ -13,12 +18,19 @@ export default defineConfig({
   ignoreDeadLinks: false,
 
   themeConfig: {
+    logo: "/favicon.svg",
+
     nav: [
+      { text: "Getting started", link: "/guide/getting-started" },
       { text: "Configuration", link: "/reference/configuration" },
       { text: "CLI", link: "/reference/cli" },
     ],
 
     sidebar: [
+      {
+        text: "Guide",
+        items: [{ text: "Getting started", link: "/guide/getting-started" }],
+      },
       {
         text: "Reference",
         items: [
