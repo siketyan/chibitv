@@ -4,8 +4,8 @@ This file provides guidance to coding agents (Claude Code and others) when worki
 
 chibitv is an experimental implementation of the ARIB broadcasting standards: it tunes Japanese ISDB-S/ISDB-T
 broadcasts, descrambles them, and remuxes them to MPEG-2 TS / MP4 / fragmented MP4, with an HTTP streaming server and
-a React GUI on top. See README.md for the CLI subcommands (`live`, `record`, `remux`, `scan`, `status`, `serve`) and
-runtime setup (tuner devices, PC/SC, `config.toml`).
+a React GUI on top. See `docs/` for the CLI subcommands (`live`, `record`, `remux`, `scan`, `status`, `serve`) and
+runtime setup (tuner devices, PC/SC, `config.toml`), and for running the Docker image; README.md only links to it.
 
 ## Setup
 
