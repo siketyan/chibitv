@@ -2,6 +2,9 @@ dist/
 node_modules/
 target/
 
+# VitePress
+docs/.vitepress/cache/
+
 # Config file
 config.toml
 
@@ -20,4 +23,5 @@ chibitv.db-wal
 *.mp4
 
 # ... except TypeScript files ;)
+!docs/**/*.ts
 !gui/**/*.ts
