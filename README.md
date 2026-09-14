@@ -3,6 +3,11 @@
 > [!WARNING]
 > This software is intended for experimental purposes to understand the standards and is not recommended for any other use.
 
+## Documentation
+
+The reference for [`config.toml`](https://siketyan.github.io/chibitv/reference/configuration) and for the
+[CLI](https://siketyan.github.io/chibitv/reference/cli) is published at https://siketyan.github.io/chibitv/.
+
 ## Prerequisites
 
 - A DVB compatible tuner to produce raw MMT/TLV stream

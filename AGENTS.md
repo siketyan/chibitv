@@ -25,12 +25,14 @@ Rust (workspace of `crates/*`, edition 2024):
 - Lint: `cargo clippy --all-targets -- -D warnings` (warnings fail CI)
 - Format: `cargo fmt --all` (checked in CI with `--check`)
 
-JS/TS (pnpm workspace: `gui`, `packages/*`):
+JS/TS (pnpm workspace: `docs`, `gui`, `packages/*`):
 
 - Check everything: `pnpm check` at the root (biome + `tsc` for `gui`, `tsc` for `packages/mediabunny-mpeg2`)
 - Auto-fix GUI lint/format: `pnpm --filter chibitv fix`
 - GUI dev server: `pnpm --filter chibitv dev` (proxies `/api` to the backend at `[::1]:3001`; run `cargo run -- serve` alongside)
 - Build: `pnpm build` at the root
+- Documentation site: `pnpm --filter @chibitv/docs docs:dev` to preview, `docs:build` to build. The scripts are named
+  this way so that the root `pnpm build`, which the Docker image runs, does not build the docs.
 
 Protobuf (`proto/chibitv/v1/chibitv.proto` is the single source for the RPC API):
 

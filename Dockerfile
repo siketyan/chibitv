@@ -18,6 +18,7 @@ WORKDIR /app
 RUN corepack enable
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY patches/ patches/
+COPY docs/package.json docs/
 COPY gui/package.json gui/
 COPY packages/mediabunny-mpeg2/package.json packages/mediabunny-mpeg2/
 RUN pnpm install --frozen-lockfile
