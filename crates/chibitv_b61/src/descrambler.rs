@@ -27,6 +27,50 @@ impl Display for NoDecryptionKeyError {
 
 impl Error for NoDecryptionKeyError {}
 
+/// What the card answers an ECM with when the key it returns may be used: the
+/// programme is contracted for, is a pay-per-view one that has been bought, or
+/// is free to watch.
+const VIEWABLE_RETURN_CODES: [u16; 3] = [0x0200, 0x0400, 0x0800];
+
+/// What the card answers with when no contract covers the programme.
+const NOT_CONTRACTED_RETURN_CODE: u16 = 0x0801;
+
+/// The card handed over no key to descramble a programme with.
+///
+/// A programme no contract covers is the ordinary reason, and it is on air like
+/// any other: its signalling is not scrambled and its schedule is announced
+/// with everyone else's. So this is for the caller to expect and carry on from,
+/// rather than the end of the stream.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct EcmRefusedError {
+    /// What the card answered, as ARIB STD-B61 numbers it.
+    pub return_code: u16,
+}
+
+impl EcmRefusedError {
+    /// Whether the card refused because no contract covers the programme,
+    /// rather than because it could not make sense of the ECM.
+    pub fn is_not_contracted(&self) -> bool {
+        self.return_code == NOT_CONTRACTED_RETURN_CODE
+    }
+}
+
+impl Display for EcmRefusedError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        if self.is_not_contracted() {
+            return write!(f, "the card holds no contract for this programme");
+        }
+
+        write!(
+            f,
+            "the card answered the ECM with {:#06X} and no key",
+            self.return_code
+        )
+    }
+}
+
+impl Error for EcmRefusedError {}
+
 #[derive(Clone, Debug)]
 struct DecryptionKey {
     odd: [u8; 16],
@@ -50,6 +94,15 @@ fn decrypt_ecm(
 
     let (setting_response, ecm_response) =
         cas.scrambling_key_protection_setting_and_ecm_reception(&setting_data, &ecm)?;
+    if !VIEWABLE_RETURN_CODES.contains(&ecm_response.return_code) {
+        // The card answers a refusal with a scrambling key all the same, and it
+        // is not one that descrambles anything, so it is not worked out here.
+        return Err(EcmRefusedError {
+            return_code: ecm_response.return_code,
+        }
+        .into());
+    }
+
     let (a0_response, a0_hash) = setting_response.setting_response_data.split_at(8);
     let kcl = Sha256::digest([&master_key[..], &a0_init[..], a0_response].concat());
     let hash = Sha256::digest([&kcl, &a0_init[..]].concat());
@@ -220,6 +273,10 @@ impl Descrambler {
                 Ok(key) => {
                     self.key = Some((ecm, key));
                 }
+                // A card that hands over no key has settled the matter: it
+                // will answer the next ECM the same way, so this goes back to
+                // the caller whether or not it is waiting for a key.
+                Err(error) if error.is::<EcmRefusedError>() => return Err(error),
                 Err(error) => {
                     error!(%error, "Could not decrypt ECM");
                     if wait {
@@ -232,5 +289,43 @@ impl Descrambler {
                 return Ok(());
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reports_a_programme_the_card_holds_no_contract_for() {
+        let refusal = EcmRefusedError {
+            return_code: NOT_CONTRACTED_RETURN_CODE,
+        };
+
+        assert!(refusal.is_not_contracted());
+        assert_eq!(
+            refusal.to_string(),
+            "the card holds no contract for this programme"
+        );
+    }
+
+    #[test]
+    fn reports_a_card_that_could_not_make_sense_of_the_ecm() {
+        let refusal = EcmRefusedError {
+            return_code: 0xA103,
+        };
+
+        assert!(!refusal.is_not_contracted());
+        assert_eq!(
+            refusal.to_string(),
+            "the card answered the ECM with 0xA103 and no key"
+        );
+    }
+
+    #[test]
+    fn lets_through_the_programmes_the_card_hands_a_key_over_for() {
+        // Contracted for, bought as a pay-per-view programme, and free.
+        assert_eq!(VIEWABLE_RETURN_CODES, [0x0200, 0x0400, 0x0800]);
+        assert!(!VIEWABLE_RETURN_CODES.contains(&NOT_CONTRACTED_RETURN_CODE));
     }
 }
