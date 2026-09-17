@@ -5,7 +5,7 @@ mod descrambler;
 mod multi2;
 
 pub use cas::{EcmReceptionResponse, InitialSettingConditionResponse};
-pub use descrambler::{B25Descrambler, NoDecryptionKeyError};
+pub use descrambler::{B25Descrambler, EcmRefusedError, NoDecryptionKeyError};
 
 /// A physical CAS module capable of executing ARIB STD-B25 commands.
 pub trait CasModule: Send + Sync {

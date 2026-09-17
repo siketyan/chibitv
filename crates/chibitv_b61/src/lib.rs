@@ -3,7 +3,7 @@
 mod cas;
 mod descrambler;
 
-pub use descrambler::{Descrambler, NoDecryptionKeyError};
+pub use descrambler::{Descrambler, EcmRefusedError, NoDecryptionKeyError};
 
 /// A physical CAS module capable of executing ARIB STD-B61 commands.
 pub trait CasModule: Send + Sync {
