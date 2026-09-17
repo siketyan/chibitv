@@ -135,6 +135,7 @@ Scan the physical channels on air and print the discovered
 | `--start-channel <N>`         | integer | `13`     | First UHF physical channel to scan. ISDB-T only. |
 | `--end-channel <N>`           | integer | `52`     | Last UHF physical channel to scan. ISDB-T only. |
 | `--timeout <SECONDS>`         | integer | `12`     | Maximum time to wait on each channel.          |
+| `--fast`                      | flag    | off      | Read the channel list out of the signalling on one transponder per network. Satellite only. |
 
 A terrestrial scan walks the UHF physical channels in order. The range has to
 lie within 13 to 52, and the start must not exceed the end; anything else is
@@ -162,6 +163,18 @@ network it belongs to, and BS numbers its 4K network apart from its 2K one;
 which network the 4K on 110CS is numbered as is in ARIB TR-B39, so those
 transponders are left alone until it is known.
 
+`--fast` writes the same entries without tuning to a single stream. A satellite
+network describes itself in full — its NIT names every stream it is made of and
+the transponder each one sits on, and every stream carries the service
+description of the others beside its own — so one transponder per network is
+enough. BS-1, ND2 and ND4 are the ones a 2K scan reaches its three networks on,
+and BS-7 the one a 4K scan reaches its network on. The terrestrial channels
+share no network, so `--fast` is refused for them.
+
+A fast scan is a handful of tunes rather than one per stream, but it waits for
+every stream to be described on the transponder it is listening to, so give it
+a longer `--timeout` than a walk needs.
+
 ```shell
 cargo run -- scan > scanned-channels.toml
 
@@ -173,6 +186,9 @@ cargo run -- scan --delivery-system ISDB-S > scanned-channels.toml
 
 # The 4K broadcasting on the BS transponders.
 cargo run -- scan --delivery-system ISDB-S3 > scanned-4k-channels.toml
+
+# The same, read off one transponder per network rather than tuning to each.
+cargo run -- scan --delivery-system ISDB-S --fast --timeout 30 > scanned-channels.toml
 ```
 
 Review the generated file and merge its `[[channels]]` entries into
