@@ -249,11 +249,20 @@ fn discover_satellite_streams(
             };
             // Any transport stream of a transponder carries the NIT of the
             // whole network, so there is nothing else to wait for here.
-            let state = read_channel(tuners, cas, &transponder.name, inner, timeout, |state| {
-                state.nit.is_some()
-            })?;
+            let Some(state) =
+                read_channel(tuners, cas, &transponder.name, inner, timeout, |state| {
+                    state.nit.is_some()
+                })?
+            else {
+                // Nothing is coming off this transponder, and a stream id is
+                // not what would change that: the tuner locks on to the
+                // transponder rather than on to one stream of it.
+                break;
+            };
 
-            let Some(nit) = state.and_then(|state| state.nit) else {
+            // It answered but said nothing, so the id may not be one the driver
+            // picks a stream with. The next one is worth a try.
+            let Some(nit) = state.nit else {
                 continue;
             };
 
