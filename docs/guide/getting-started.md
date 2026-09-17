@@ -109,6 +109,10 @@ Review the generated file and merge its `[[channels]]` entries into
 `config.toml`. The server needs this catalog so that every configured physical
 channel's services are available before tuning.
 
+`scan` walks the terrestrial UHF band only, so a satellite channel is written
+by hand; the [channel reference](../reference/configuration#channels) says
+what each delivery system takes.
+
 ## Starting the server
 
 [`serve`](../reference/cli#serve) runs the HTTP API and the live stream; the

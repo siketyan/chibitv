@@ -31,9 +31,9 @@ else fails to load the configuration.
 master_key = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
 ```
 
-The key is read by the ISDB-S3 (B61) descrambler only. ISDB-T descrambling
-(B25) derives its keys from the card alone, so a terrestrial-only setup still
-needs the key to be present, but never uses its value.
+The key is read by the ISDB-S3 (B61) descrambler only. ISDB-T and ISDB-S
+descrambling (B25) derives its keys from the card alone, so a setup without a
+4K channel still needs the key to be present, but never uses its value.
 
 ## `[[tuners]]`
 
@@ -99,29 +99,14 @@ These keys are common to every channel:
 | Key                   | Type             | Default    | Description                                                             |
 | --------------------- | ---------------- | ---------- | ----------------------------------------------------------------------- |
 | `name`                | string           | _required_ | Display name of the channel.                                            |
-| `delivery_system`     | string           | _required_ | One of `ISDB-S3`, `ISDB-T`, `Bon-ISDB-S3`, `Bon-ISDB-T`.                |
+| `delivery_system`     | string           | _required_ | One of `ISDB-T`, `ISDB-S`, `ISDB-S3`, `Bon-ISDB-T`, `Bon-ISDB-S`, `Bon-ISDB-S3`. |
 | `transport_stream_id` | integer          | unset      | Transport stream ID, as written by [`scan`](./cli#scan).                |
 | `services`            | array of tables  | empty      | The service catalog of the channel; see [`[[channels.services]]`](#channels-services). |
 
-`delivery_system` also decides how the stream is demultiplexed: `ISDB-S3`
-carries MMT/TLV and `ISDB-T` carries MPEG-2 TS. The remaining keys depend on
-it. `ISDB-S3` is the 4K satellite broadcasting; the 2K BS/CS one (`ISDB-S`)
-is not supported yet.
-
-### `delivery_system = "ISDB-S3"`
-
-| Key         | Type    | Default    | Description                            |
-| ----------- | ------- | ---------- | -------------------------------------- |
-| `frequency` | integer | _required_ | Transponder frequency in kHz.          |
-| `stream_id` | integer | _required_ | TLV stream ID of the stream to select. |
-
-```toml
-[[channels]]
-name = "BS Example"
-delivery_system = "ISDB-S3"
-frequency = 1318000
-stream_id = 0x40F1
-```
+`delivery_system` also decides how the stream is demultiplexed and which
+descrambler is used: `ISDB-T` and `ISDB-S`, the 2K satellite broadcasting,
+carry MPEG-2 TS and are descrambled with B25, while `ISDB-S3`, the 4K one,
+carries MMT/TLV and is descrambled with B61. The remaining keys depend on it.
 
 ### `delivery_system = "ISDB-T"`
 
@@ -142,12 +127,46 @@ Rather than writing these by hand, let [`scan`](./cli#scan) discover the
 physical channels on air and print the entries, including their `services`, as
 TOML to merge into the file.
 
+### `delivery_system = "ISDB-S"`
+
+| Key         | Type    | Default    | Description                                  |
+| ----------- | ------- | ---------- | -------------------------------------------- |
+| `frequency` | integer | _required_ | Transponder frequency in kHz.                |
+| `stream_id` | integer | _required_ | Transport stream ID of the stream to select. |
+
+```toml
+[[channels]]
+name = "BS Example"
+delivery_system = "ISDB-S"
+frequency = 1049480
+stream_id = 0x4031
+```
+
+`scan` only walks the terrestrial UHF band, so a satellite channel is written
+by hand, along with its [`transport_stream_id`](#channels) and
+[`services`](#channels-services) that `serve` needs before tuning.
+
+### `delivery_system = "ISDB-S3"`
+
+| Key         | Type    | Default    | Description                            |
+| ----------- | ------- | ---------- | -------------------------------------- |
+| `frequency` | integer | _required_ | Transponder frequency in kHz.          |
+| `stream_id` | integer | _required_ | TLV stream ID of the stream to select. |
+
+```toml
+[[channels]]
+name = "BS 4K Example"
+delivery_system = "ISDB-S3"
+frequency = 1318000
+stream_id = 0x40F1
+```
+
 ### BonDriver channels
 
-A BonDriver holds the tuning parameters itself, so `Bon-ISDB-S3` and
-`Bon-ISDB-T` name the tuning space and channel numbers the driver enumerates
-instead of a frequency. The delivery system still has to be named, because it
-decides how the stream is demultiplexed.
+A BonDriver holds the tuning parameters itself, so `Bon-ISDB-T`,
+`Bon-ISDB-S` and `Bon-ISDB-S3` name the tuning space and channel numbers the
+driver enumerates instead of a frequency. The delivery system still has to be
+named, because it decides how the stream is demultiplexed.
 
 | Key       | Type    | Default    | Description                     |
 | --------- | ------- | ---------- | ------------------------------- |
@@ -162,17 +181,23 @@ space = 0
 channel = 0
 
 [[channels]]
-name = "BonDriver 4K Example"
+name = "BonDriver BS Example"
+delivery_system = "Bon-ISDB-S"
+space = 1
+channel = 0
+
+[[channels]]
+name = "BonDriver BS 4K Example"
 delivery_system = "Bon-ISDB-S3"
-space = 0
-channel = 1
+space = 2
+channel = 0
 ```
 
 ### `[[channels.services]]` {#channels-services}
 
 The services carried on a channel. [`scan`](./cli#scan) writes this catalog,
-and `serve` needs it for ISDB-T channels so that every configured physical
-channel's services are known before tuning.
+and `serve` needs it for the MPEG-2 TS channels, `ISDB-T` and `ISDB-S`, so
+that every configured physical channel's services are known before tuning.
 
 | Key             | Type    | Default    | Description                            |
 | --------------- | ------- | ---------- | -------------------------------------- |
