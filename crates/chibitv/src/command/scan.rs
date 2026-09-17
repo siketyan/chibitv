@@ -279,14 +279,6 @@ fn format_scan_output(channels: &[ChannelConfig]) -> String {
         }
 
         match channel.inner {
-            ChannelConfigInner::IsdbS {
-                frequency,
-                stream_id,
-            } => {
-                table["delivery_system"] = toml_edit::value("ISDB-S");
-                table["frequency"] = toml_edit::value(i64::from(frequency));
-                table["stream_id"] = toml_edit::value(i64::from(stream_id));
-            }
             ChannelConfigInner::IsdbT {
                 frequency,
                 bandwidth_hz,
@@ -297,6 +289,30 @@ fn format_scan_output(channels: &[ChannelConfig]) -> String {
                     table["bandwidth_hz"] = toml_edit::value(i64::from(bandwidth_hz));
                 }
             }
+            ChannelConfigInner::IsdbS {
+                frequency,
+                stream_id,
+            } => {
+                table["delivery_system"] = toml_edit::value("ISDB-S");
+                table["frequency"] = toml_edit::value(i64::from(frequency));
+                table["stream_id"] = toml_edit::value(i64::from(stream_id));
+            }
+            ChannelConfigInner::IsdbS3 {
+                frequency,
+                stream_id,
+            } => {
+                table["delivery_system"] = toml_edit::value("ISDB-S3");
+                table["frequency"] = toml_edit::value(i64::from(frequency));
+                table["stream_id"] = toml_edit::value(i64::from(stream_id));
+            }
+            ChannelConfigInner::BonIsdbT {
+                space,
+                channel: number,
+            } => {
+                table["delivery_system"] = toml_edit::value("Bon-ISDB-T");
+                table["space"] = toml_edit::value(i64::from(space));
+                table["channel"] = toml_edit::value(i64::from(number));
+            }
             ChannelConfigInner::BonIsdbS {
                 space,
                 channel: number,
@@ -305,11 +321,11 @@ fn format_scan_output(channels: &[ChannelConfig]) -> String {
                 table["space"] = toml_edit::value(i64::from(space));
                 table["channel"] = toml_edit::value(i64::from(number));
             }
-            ChannelConfigInner::BonIsdbT {
+            ChannelConfigInner::BonIsdbS3 {
                 space,
                 channel: number,
             } => {
-                table["delivery_system"] = toml_edit::value("Bon-ISDB-T");
+                table["delivery_system"] = toml_edit::value("Bon-ISDB-S3");
                 table["space"] = toml_edit::value(i64::from(space));
                 table["channel"] = toml_edit::value(i64::from(number));
             }

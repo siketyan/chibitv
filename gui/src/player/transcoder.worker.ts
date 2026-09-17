@@ -143,7 +143,7 @@ async function run(bitrate: number): Promise<void> {
       throw new Error("The stream does not contain a video track");
     }
 
-    // ISDB-S streams already carry HEVC that the browser can decode, so only MPEG-2 (ISDB-T)
+    // ISDB-S3 streams already carry HEVC that the browser can decode, so only MPEG-2 (ISDB-T)
     // is transcoded; anything else is passed through to MSE as-is.
     if ((await videoTrack.getCodec()) === "mpeg2") {
       mode = "transcode";

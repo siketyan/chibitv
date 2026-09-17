@@ -2,7 +2,7 @@
 
 This file provides guidance to coding agents (Claude Code and others) when working with code in this repository.
 
-chibitv is an experimental implementation of the ARIB broadcasting standards: it tunes Japanese ISDB-S/ISDB-T
+chibitv is an experimental implementation of the ARIB broadcasting standards: it tunes Japanese ISDB-T/S/S3
 broadcasts, descrambles them, and remuxes them to MPEG-2 TS / MP4 / fragmented MP4, with an HTTP streaming server and
 a React GUI on top. See `docs/` for the CLI subcommands (`live`, `record`, `remux`, `scan`, `status`, `serve`) and
 runtime setup (tuner devices, PC/SC, `config.toml`), and for running the Docker image; README.md only links to it.
@@ -46,9 +46,9 @@ The library crates map directly to ARIB standard documents and hold the parsing/
 
 - `chibitv_b10` — SI tables/descriptors for MPEG-2 TS (ISDB-T) broadcast metadata (STD-B10).
 - `chibitv_b24` — character encoding (ARIB extended 8-bit chars / additional symbols) (STD-B24).
-- `chibitv_b25` — ISDB-T conditional access: MULTI2 descrambling and the classic CAS card protocol (STD-B25).
-- `chibitv_b60` — MMT/TLV container parsing for ISDB-S 4K: TLV packets, compressed IP, MMTP, messages/tables/descriptors, MFU (STD-B60).
-- `chibitv_b61` — ISDB-S conditional access: AES-CTR descrambling and the ACAS card protocol; needs the externally provided _Kd_ master key (STD-B61).
+- `chibitv_b25` — ISDB-T/ISDB-S conditional access: MULTI2 descrambling and the classic CAS card protocol (STD-B25).
+- `chibitv_b60` — MMT/TLV container parsing for ISDB-S3 (BS/CS 4K): TLV packets, compressed IP, MMTP, messages/tables/descriptors, MFU (STD-B60).
+- `chibitv_b61` — ISDB-S3 conditional access: AES-CTR descrambling and the ACAS card protocol; needs the externally provided _Kd_ master key (STD-B61).
 - `chibitv_bon` — BonDriver, the de-facto tuner interface on Windows; a hand-written binding to its `IBonDriver2` vtable. Empty on other platforms.
 
 ### The `chibitv` binary

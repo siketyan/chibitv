@@ -25,7 +25,8 @@ const QUEUE_CAPACITY: usize = 256;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct SectionId {
     pub original_network_id: u16,
-    /// The TLV stream id on ISDB-S, the transport stream id on ISDB-T.
+    /// The TLV stream id on ISDB-S3, the transport stream id on ISDB-T and
+    /// ISDB-S.
     pub stream_id: u16,
     pub service_id: u16,
     pub table_id: u8,

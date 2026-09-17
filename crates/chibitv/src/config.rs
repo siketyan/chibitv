@@ -106,9 +106,6 @@ pub enum TunerConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "delivery_system")]
 pub enum ChannelConfigInner {
-    #[serde(rename = "ISDB-S")]
-    IsdbS { frequency: u32, stream_id: u32 },
-
     #[serde(rename = "ISDB-T")]
     IsdbT {
         frequency: u32,
@@ -120,15 +117,28 @@ pub enum ChannelConfigInner {
         bandwidth_hz: u32,
     },
 
+    /// Satellite 2K (BS/CS) broadcasting, which carries MPEG-2 TS.
+    /// `stream_id` is the transport stream id of the channel.
+    #[serde(rename = "ISDB-S")]
+    IsdbS { frequency: u32, stream_id: u32 },
+
+    /// Satellite 4K (BS/CS) broadcasting, which carries MMT/TLV.
+    /// `stream_id` is the TLV stream id of the channel.
+    #[serde(rename = "ISDB-S3")]
+    IsdbS3 { frequency: u32, stream_id: u32 },
+
     /// A channel identified by the tuning space and channel numbers a
     /// BonDriver enumerates, rather than by tuning parameters, which a
     /// BonDriver holds in its own configuration. The delivery system still
     /// has to be named, because it decides how the stream is demultiplexed.
+    #[serde(rename = "Bon-ISDB-T")]
+    BonIsdbT { space: u32, channel: u32 },
+
     #[serde(rename = "Bon-ISDB-S")]
     BonIsdbS { space: u32, channel: u32 },
 
-    #[serde(rename = "Bon-ISDB-T")]
-    BonIsdbT { space: u32, channel: u32 },
+    #[serde(rename = "Bon-ISDB-S3")]
+    BonIsdbS3 { space: u32, channel: u32 },
 }
 
 fn default_isdb_t_bandwidth_hz() -> u32 {
@@ -226,6 +236,41 @@ mod tests {
         assert_eq!(channel.services.len(), 1);
         assert_eq!(channel.services[0].id, 23608);
         assert_eq!(channel.services[0].name, "TOKYO MX1");
+    }
+
+    #[test]
+    fn tells_the_satellite_delivery_systems_apart() {
+        let config = toml::from_str::<ChannelList>(
+            r#"
+                [[channels]]
+                name = "BS 2K"
+                delivery_system = "ISDB-S"
+                frequency = 1049480
+                stream_id = 0x4031
+
+                [[channels]]
+                name = "BS 4K"
+                delivery_system = "ISDB-S3"
+                frequency = 1318000
+                stream_id = 0x40F1
+            "#,
+        )
+        .unwrap();
+
+        assert!(matches!(
+            config.channels[0].inner,
+            ChannelConfigInner::IsdbS {
+                frequency: 1_049_480,
+                stream_id: 0x4031,
+            }
+        ));
+        assert!(matches!(
+            config.channels[1].inner,
+            ChannelConfigInner::IsdbS3 {
+                frequency: 1_318_000,
+                stream_id: 0x40F1,
+            }
+        ));
     }
 
     #[test]
