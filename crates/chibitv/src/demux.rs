@@ -43,6 +43,41 @@ pub trait Demux {
     fn next_packet(&mut self) -> anyhow::Result<Option<Packet>>;
 }
 
+/// Whether the card protecting the stream hands over no key to descramble it
+/// with, which is the one error reading on does not get past.
+///
+/// Both conditional access systems answer that way, and what reads a [`Demux`]
+/// does not know which of them is in the way, so the two are asked about
+/// together here. A programme with no contract behind it is the ordinary
+/// reason, and the card will answer the next ECM the same way: nothing is
+/// coming, so whatever wants the picture stops, while whatever wants the
+/// tables — a scan, the programme guide — carries on reading them unscrambled.
+pub fn is_descrambling_refused(error: &anyhow::Error) -> bool {
+    error.is::<chibitv_b25::EcmRefusedError>() || error.is::<chibitv_b61::EcmRefusedError>()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tells_a_card_that_hands_over_no_key_from_any_other_error() {
+        assert!(is_descrambling_refused(
+            &chibitv_b25::EcmRefusedError {
+                return_code: 0x0801
+            }
+            .into()
+        ));
+        assert!(is_descrambling_refused(
+            &chibitv_b61::EcmRefusedError {
+                return_code: 0x0801
+            }
+            .into()
+        ));
+        assert!(!is_descrambling_refused(&anyhow::anyhow!("a torn packet")));
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct PacketQueue {
     packets: VecDeque<Packet>,
