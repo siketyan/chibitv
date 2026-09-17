@@ -14,7 +14,7 @@ use chibitv_b25::B25Descrambler;
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
 use crate::config::{ChannelConfig, ChannelConfigInner, Config, ServiceConfig};
-use crate::demux::{Demux, Packet, SignalingEvent};
+use crate::demux::{Demux, Packet, SignalingEvent, is_descrambling_refused};
 use crate::m2ts::M2tsDemuxer;
 use crate::tuner::Tuners;
 
@@ -434,12 +434,23 @@ fn read_channel(
     let descrambler = B25Descrambler::init(cas.clone())?;
     let mut demux = M2tsDemuxer::new(tuner.open()?, descrambler);
     let mut state = ScanState::default();
+    let mut refused = false;
     let deadline = Instant::now() + timeout;
 
     while Instant::now() < deadline && !is_done(&state) {
         let packet = match demux.next_packet() {
             Ok(Some(packet)) => packet,
             Ok(None) => break,
+            // The tables a scan is after are not scrambled, and an ECM arrives
+            // every few hundred milliseconds, so a card that will not
+            // unscramble the channel is said once and read past.
+            Err(error) if is_descrambling_refused(&error) => {
+                if !std::mem::replace(&mut refused, true) {
+                    warn!(channel = label, %error, "Scanning the tables only");
+                }
+
+                continue;
+            }
             Err(error) => {
                 warn!(channel = label, error = %error, "Could not read transport stream");
                 continue;
