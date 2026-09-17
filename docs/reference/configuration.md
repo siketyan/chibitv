@@ -31,7 +31,7 @@ else fails to load the configuration.
 master_key = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
 ```
 
-The key is read by the ISDB-S (B61) descrambler only. ISDB-T descrambling
+The key is read by the ISDB-S3 (B61) descrambler only. ISDB-T descrambling
 (B25) derives its keys from the card alone, so a terrestrial-only setup still
 needs the key to be present, but never uses its value.
 
@@ -99,15 +99,16 @@ These keys are common to every channel:
 | Key                   | Type             | Default    | Description                                                             |
 | --------------------- | ---------------- | ---------- | ----------------------------------------------------------------------- |
 | `name`                | string           | _required_ | Display name of the channel.                                            |
-| `delivery_system`     | string           | _required_ | One of `ISDB-S`, `ISDB-T`, `Bon-ISDB-S`, `Bon-ISDB-T`.                  |
+| `delivery_system`     | string           | _required_ | One of `ISDB-S3`, `ISDB-T`, `Bon-ISDB-S3`, `Bon-ISDB-T`.                |
 | `transport_stream_id` | integer          | unset      | Transport stream ID, as written by [`scan`](./cli#scan).                |
 | `services`            | array of tables  | empty      | The service catalog of the channel; see [`[[channels.services]]`](#channels-services). |
 
-`delivery_system` also decides how the stream is demultiplexed: `ISDB-S`
+`delivery_system` also decides how the stream is demultiplexed: `ISDB-S3`
 carries MMT/TLV and `ISDB-T` carries MPEG-2 TS. The remaining keys depend on
-it.
+it. `ISDB-S3` is the 4K satellite broadcasting; the 2K BS/CS one (`ISDB-S`)
+is not supported yet.
 
-### `delivery_system = "ISDB-S"`
+### `delivery_system = "ISDB-S3"`
 
 | Key         | Type    | Default    | Description                            |
 | ----------- | ------- | ---------- | -------------------------------------- |
@@ -117,7 +118,7 @@ it.
 ```toml
 [[channels]]
 name = "BS Example"
-delivery_system = "ISDB-S"
+delivery_system = "ISDB-S3"
 frequency = 1318000
 stream_id = 0x40F1
 ```
@@ -143,7 +144,7 @@ TOML to merge into the file.
 
 ### BonDriver channels
 
-A BonDriver holds the tuning parameters itself, so `Bon-ISDB-S` and
+A BonDriver holds the tuning parameters itself, so `Bon-ISDB-S3` and
 `Bon-ISDB-T` name the tuning space and channel numbers the driver enumerates
 instead of a frequency. The delivery system still has to be named, because it
 decides how the stream is demultiplexed.
@@ -162,7 +163,7 @@ channel = 0
 
 [[channels]]
 name = "BonDriver 4K Example"
-delivery_system = "Bon-ISDB-S"
+delivery_system = "Bon-ISDB-S3"
 space = 0
 channel = 1
 ```

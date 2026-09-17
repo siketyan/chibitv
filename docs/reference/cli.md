@@ -62,9 +62,9 @@ cargo run -- live --channel 0 | mpv -
 cargo run -- live --channel 0 > live.m2ts
 ```
 
-Both ISDB-S channels using MMT/TLV and ISDB-T channels using MPEG-2 TS are
+Both ISDB-S3 channels using MMT/TLV and ISDB-T channels using MPEG-2 TS are
 supported; the delivery system of the channel picks the descrambler (B61 for
-ISDB-S, B25 for ISDB-T) and the demultiplexer.
+ISDB-S3, B25 for ISDB-T) and the demultiplexer.
 
 ## `record`
 
@@ -165,7 +165,7 @@ cargo run -- status --channel 1
 cargo run -- status --channel 1 --timeout 10
 ```
 
-This command supports ISDB-T channels only, which carry MPEG-2 TS; an ISDB-S
+This command supports ISDB-T channels only, which carry MPEG-2 TS; an ISDB-S3
 channel is rejected. The command prints as soon as the tables it needs have
 arrived, so the timeout is an upper bound rather than how long it takes.
 
@@ -187,7 +187,7 @@ pnpm --filter chibitv dev
 
 Open `http://localhost:3000/` in your browser and enjoy!
 
-The server supports ISDB-S and ISDB-T channels and requires at least one
+The server supports ISDB-S3 and ISDB-T channels and requires at least one
 configured tuner and channel. For ISDB-T, generate the service catalog with
 [`scan`](#scan) first, so that every configured physical channel's services
 are available before tuning.

@@ -4,7 +4,7 @@ layout: home
 hero:
   name: chibitv
   text: Yet another implementation for ARIB standards
-  tagline: Tune, descramble and remux Japanese ISDB-S/ISDB-T broadcasts.
+  tagline: Tune, descramble and remux Japanese ISDB-S3/ISDB-T broadcasts.
   image:
     src: /favicon.svg
     alt: chibitv
@@ -38,7 +38,7 @@ features:
 > This software is intended for experimental purposes to understand the
 > standards and is not recommended for any other use.
 
-chibitv tunes Japanese ISDB-S/ISDB-T broadcasts, descrambles them, and remuxes
+chibitv tunes Japanese ISDB-S3/ISDB-T broadcasts, descrambles them, and remuxes
 them to MPEG-2 TS / MP4 / fragmented MP4, with an HTTP streaming server and a
 React GUI on top.
 
