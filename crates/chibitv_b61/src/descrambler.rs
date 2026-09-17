@@ -28,16 +28,18 @@ impl Display for NoDecryptionKeyError {
 impl Error for NoDecryptionKeyError {}
 
 /// The codes the ECM reception command answers with when it hands over a key
-/// that descrambles: the programme has been purchased, or it is being
-/// previewed.
-const VIEWABLE_RETURN_CODES: [u16; 5] = [0x0200, 0x0400, 0x0800, 0x4280, 0x4480];
+/// that descrambles: the programme has been purchased, on a tier or as a
+/// conditional access pay-per-view one, or it is being previewed.
+///
+/// ACAS numbers these its own way rather than the way B-CAS does, having one
+/// kind of pay-per-view programme where the older card has two.
+const VIEWABLE_RETURN_CODES: [u16; 3] = [0x0600, 0x0800, 0x4680];
 
 /// The codes it answers with when no contract covers the programme: the card
 /// holds no key for it at all, or the contract does not reach the tier or the
 /// pay-per-view programme it is broadcast in, has run out, or is restricted.
-const NOT_CONTRACTED_RETURN_CODES: [u16; 10] = [
-    0x8301, 0x8302, 0x8303, 0x8501, 0x8502, 0x8503, 0x8901, 0x8902, 0x8903, 0xA103,
-];
+const NOT_CONTRACTED_RETURN_CODES: [u16; 7] =
+    [0x8701, 0x8702, 0x8703, 0x8901, 0x8902, 0x8903, 0xA103];
 
 /// The card handed over no key to descramble a programme with.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -314,10 +316,35 @@ mod tests {
 
     #[test]
     fn keeps_the_two_sets_of_return_codes_apart() {
+        // Bought on a tier, bought as a pay-per-view programme, and being
+        // previewed.
+        assert_eq!(VIEWABLE_RETURN_CODES, [0x0600, 0x0800, 0x4680]);
         assert!(
             !VIEWABLE_RETURN_CODES
                 .iter()
                 .any(|code| NOT_CONTRACTED_RETURN_CODES.contains(code))
+        );
+
+        // A contract that ran out on the tier it is broadcast in, and one that
+        // never reached the pay-per-view programme.
+        assert!(
+            EcmRefusedError {
+                return_code: 0x8902
+            }
+            .is_not_contracted()
+        );
+        assert!(
+            EcmRefusedError {
+                return_code: 0x8701
+            }
+            .is_not_contracted()
+        );
+        // Out of the preview of a programme that is there to be bought.
+        assert!(
+            !EcmRefusedError {
+                return_code: 0x8700
+            }
+            .is_not_contracted()
         );
     }
 }
