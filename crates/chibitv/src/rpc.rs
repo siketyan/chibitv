@@ -11,6 +11,8 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::warn;
 
 use crate::channel::ChannelInner;
+use crate::channel_scanner::{ScanDeliverySystem, ScanRequest, format_scan_output};
+use crate::config::{ChannelConfig, ChannelConfigInner};
 use crate::proto::chibitv::v1::*;
 use crate::registry;
 use crate::service_information::Signal;
@@ -135,6 +137,66 @@ impl ChibitvService for ChibitvServiceImpl {
 
         Response::ok(RefreshEventsResponse {
             task: Some(task_message(&task)).into(),
+            ..Default::default()
+        })
+    }
+
+    async fn scan_channels(
+        &self,
+        _ctx: RequestContext,
+        request: ServiceRequest<'_, ScanChannelsRequest>,
+    ) -> ServiceResult<ScanChannelsResponse> {
+        const DEFAULT_TIMEOUT_SECONDS: u32 = 12;
+        const MAX_TIMEOUT_SECONDS: u32 = 120;
+
+        let timeout_seconds = match request.timeout_seconds {
+            0 => DEFAULT_TIMEOUT_SECONDS,
+            seconds if seconds <= MAX_TIMEOUT_SECONDS => seconds,
+            _ => {
+                return Err(ConnectError::invalid_argument(
+                    "timeout_seconds must be at most 120",
+                ));
+            }
+        };
+        let delivery_system = match request.delivery_system.as_known() {
+            Some(DeliverySystem::IsdbS) => ScanDeliverySystem::IsdbS,
+            Some(DeliverySystem::IsdbS3) => ScanDeliverySystem::IsdbS3,
+            // The terrestrial channels are what a request that says nothing
+            // asks for, as they are what the command scans by default.
+            Some(DeliverySystem::Unspecified | DeliverySystem::IsdbT) => ScanDeliverySystem::IsdbT,
+            None => {
+                return Err(ConnectError::invalid_argument(
+                    "delivery_system is not one this server knows",
+                ));
+            }
+        };
+
+        let task = self
+            .workspace
+            .scan_channels(ScanRequest {
+                delivery_system,
+                fast: request.fast,
+                timeout: Duration::from_secs(u64::from(timeout_seconds)),
+                ..ScanRequest::default()
+            })
+            .map_err(workspace_error)?;
+
+        Response::ok(ScanChannelsResponse {
+            task: Some(task_message(&task)).into(),
+            ..Default::default()
+        })
+    }
+
+    async fn get_scan_result(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, GetScanResultRequest>,
+    ) -> ServiceResult<GetScanResultResponse> {
+        let found = self.workspace.scan_result();
+
+        Response::ok(GetScanResultResponse {
+            channels: found.iter().map(scanned_channel).collect(),
+            toml: format_scan_output(&found),
             ..Default::default()
         })
     }
@@ -312,6 +374,7 @@ fn task_kind(value: task::TaskKind) -> TaskKind {
     match value {
         task::TaskKind::RefreshEvents => TaskKind::RefreshEvents,
         task::TaskKind::Record => TaskKind::Record,
+        task::TaskKind::ScanChannels => TaskKind::ScanChannels,
     }
 }
 
@@ -366,6 +429,43 @@ fn delivery_system(inner: &ChannelInner) -> DeliverySystem {
     }
 }
 
+fn scanned_channel(channel: &ChannelConfig) -> ScannedChannel {
+    let (delivery_system, frequency, stream_id) = match channel.inner {
+        ChannelConfigInner::IsdbT { frequency, .. } => (DeliverySystem::IsdbT, frequency, None),
+        ChannelConfigInner::IsdbS {
+            frequency,
+            stream_id,
+        } => (DeliverySystem::IsdbS, frequency, Some(stream_id)),
+        ChannelConfigInner::IsdbS3 {
+            frequency,
+            stream_id,
+        } => (DeliverySystem::IsdbS3, frequency, Some(stream_id)),
+        // A scan finds no BonDriver channel: the driver enumerates those.
+        ChannelConfigInner::BonIsdbT { .. } => (DeliverySystem::IsdbT, 0, None),
+        ChannelConfigInner::BonIsdbS { .. } => (DeliverySystem::IsdbS, 0, None),
+        ChannelConfigInner::BonIsdbS3 { .. } => (DeliverySystem::IsdbS3, 0, None),
+    };
+
+    ScannedChannel {
+        name: channel.name.clone(),
+        delivery_system: delivery_system.into(),
+        frequency,
+        stream_id,
+        transport_stream_id: channel.transport_stream_id.map(u32::from),
+        services: channel
+            .services
+            .iter()
+            .map(|service| ScannedService {
+                id: u32::from(service.id),
+                name: service.name.clone(),
+                provider_name: service.provider_name.clone(),
+                ..Default::default()
+            })
+            .collect(),
+        ..Default::default()
+    }
+}
+
 fn workspace_error(error: WorkspaceError) -> ConnectError {
     match error {
         WorkspaceError::ChannelNotFound => ConnectError::not_found("channel not found"),
@@ -376,6 +476,12 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
         }
         WorkspaceError::EventCrawlerUnavailable => {
             ConnectError::failed_precondition("event crawler is unavailable")
+        }
+        WorkspaceError::ChannelScannerUnavailable => {
+            ConnectError::failed_precondition("scanning is unavailable")
+        }
+        WorkspaceError::ScanNotPossible(error) => {
+            ConnectError::invalid_argument(format!("{error:#}"))
         }
         WorkspaceError::RecordingUnavailable => {
             ConnectError::failed_precondition("recording is unavailable")
