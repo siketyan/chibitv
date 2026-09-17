@@ -32,6 +32,20 @@ function post(message: TranscoderResponse, transfer: Transferable[] = []): void 
   scope.postMessage(message, transfer);
 }
 
+function describeError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return String(error);
+  }
+
+  // Firefox omits the message from error.stack, unlike V8, so keep it either way.
+  const message = `${error.name}: ${error.message}`;
+  if (!error.stack) {
+    return message;
+  }
+
+  return error.stack.includes(error.message) ? error.stack : `${message}\n${error.stack}`;
+}
+
 function sendChunk(data: Uint8Array): Promise<void> {
   const chunkId = nextChunkId++;
   const buffer = data.slice().buffer;
@@ -193,7 +207,7 @@ scope.addEventListener("message", (event) => {
   void run(request.bitrate).catch((error: unknown) => {
     post({
       type: "error",
-      error: error instanceof Error ? (error.stack ?? error.message) : String(error),
+      error: describeError(error),
     });
   });
 });

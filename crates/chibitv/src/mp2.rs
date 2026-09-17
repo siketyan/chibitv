@@ -8,6 +8,20 @@ const LAST_SLICE_START_CODE: u8 = 0xAF;
 const SEQUENCE_HEADER_CODE: u8 = 0xB3;
 const EXTENSION_START_CODE: u8 = 0xB5;
 const GROUP_START_CODE: u8 = 0xB8;
+const PICTURE_CODING_EXTENSION_ID: u32 = 8;
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+enum PictureStructure {
+    TopField,
+    BottomField,
+    Frame,
+}
+
+impl PictureStructure {
+    fn is_field(self) -> bool {
+        matches!(self, Self::TopField | Self::BottomField)
+    }
+}
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum PictureCodingType {
@@ -175,19 +189,39 @@ impl Mp2Parser {
 }
 
 /// Finds the start of the second access unit in `buf`.
+///
+/// A frame coded as two field pictures forms a single access unit, since the
+/// elementary stream carries one PES packet, and therefore one timestamp, per
+/// frame either way.
 fn find_access_unit_boundary(buf: &[u8]) -> Option<usize> {
     let mut picture_found = false;
     let mut slice_found = false;
     let mut following_header = None;
+    let mut second_field_expected = false;
+    let mut in_second_field = false;
 
     for (offset, code) in start_codes(buf) {
         match code {
+            PICTURE_START_CODE if second_field_expected => {
+                // The second field of the same frame continues this access
+                // unit, so any header seen since the first field belongs to it.
+                second_field_expected = false;
+                in_second_field = true;
+                slice_found = false;
+                following_header = None;
+            }
             PICTURE_START_CODE if picture_found => {
                 return Some(following_header.unwrap_or(offset));
             }
             PICTURE_START_CODE => {
                 picture_found = true;
                 slice_found = false;
+                in_second_field = false;
+            }
+            EXTENSION_START_CODE if picture_found && !in_second_field => {
+                if picture_structure(&buf[offset + 4..]).is_some_and(PictureStructure::is_field) {
+                    second_field_expected = true;
+                }
             }
             FIRST_SLICE_START_CODE..=LAST_SLICE_START_CODE if picture_found => {
                 slice_found = true;
@@ -195,7 +229,9 @@ fn find_access_unit_boundary(buf: &[u8]) -> Option<usize> {
             SEQUENCE_HEADER_CODE | GROUP_START_CODE if picture_found && slice_found => {
                 // These headers describe the following picture. Do not split
                 // until its picture start code arrives, since the input may end
-                // partway through the headers.
+                // partway through the headers. They never separate the two
+                // fields of a frame, so a pair still open here is broken.
+                second_field_expected = false;
                 following_header.get_or_insert(offset);
             }
             _ => {}
@@ -203,6 +239,23 @@ fn find_access_unit_boundary(buf: &[u8]) -> Option<usize> {
     }
 
     None
+}
+
+/// Reads `picture_structure` out of a picture coding extension.
+///
+/// `data` starts just after the extension start code. Returns `None` for any
+/// other extension, and for one truncated before the field.
+fn picture_structure(data: &[u8]) -> Option<PictureStructure> {
+    if read_bits(data, 0, 4)? != PICTURE_CODING_EXTENSION_ID {
+        return None;
+    }
+
+    match read_bits(data, 22, 2)? {
+        1 => Some(PictureStructure::TopField),
+        2 => Some(PictureStructure::BottomField),
+        3 => Some(PictureStructure::Frame),
+        _ => None,
+    }
 }
 
 fn find_picture_start(buf: &[u8]) -> Option<usize> {
@@ -371,6 +424,71 @@ mod tests {
                 .is_none()
         );
         assert!(parser.flush().is_none());
+    }
+
+    fn picture_coding_extension(structure: PictureStructure) -> Vec<u8> {
+        let mut data = vec![
+            0x00,
+            0x00,
+            0x01,
+            EXTENSION_START_CODE,
+            0x00,
+            0xFF,
+            0x00,
+            0x00,
+        ];
+        let code = match structure {
+            PictureStructure::TopField => 1,
+            PictureStructure::BottomField => 2,
+            PictureStructure::Frame => 3,
+        };
+        write_bits(&mut data[4..], 0, 4, PICTURE_CODING_EXTENSION_ID);
+        write_bits(&mut data[4..], 22, 2, code);
+        data
+    }
+
+    fn picture(structure: PictureStructure) -> Vec<u8> {
+        let mut data = PICTURE.to_vec();
+        data.extend_from_slice(&picture_coding_extension(structure));
+        data.extend_from_slice(SLICE);
+        data
+    }
+
+    #[test]
+    fn keeps_both_fields_of_a_frame_in_one_access_unit() {
+        let mut parser = Mp2Parser::default();
+        let frame = [
+            picture(PictureStructure::TopField),
+            picture(PictureStructure::BottomField),
+        ]
+        .concat();
+        let mut input = frame.clone();
+        input.extend_from_slice(&picture(PictureStructure::TopField));
+
+        assert_eq!(&parser.push(&input).unwrap()[..], frame);
+    }
+
+    #[test]
+    fn splits_between_frame_pictures() {
+        let mut parser = Mp2Parser::default();
+        let frame = picture(PictureStructure::Frame);
+        let mut input = frame.clone();
+        input.extend_from_slice(&frame);
+
+        assert_eq!(&parser.push(&input).unwrap()[..], frame);
+    }
+
+    #[test]
+    fn splits_after_a_field_without_its_pair() {
+        let mut parser = Mp2Parser::default();
+        let gop_header = [0x00, 0x00, 0x01, GROUP_START_CODE, 0x00];
+        let first = picture(PictureStructure::TopField);
+        let mut input = first.clone();
+        input.extend_from_slice(&gop_header);
+        input.extend_from_slice(&picture(PictureStructure::TopField));
+
+        assert_eq!(&parser.push(&input).unwrap()[..], first);
+        assert!(parser.flush().unwrap().starts_with(&gop_header));
     }
 
     #[test]
