@@ -44,7 +44,7 @@ Protobuf (`proto/chibitv/v1/chibitv.proto` is the single source for the RPC API)
 
 The library crates map directly to ARIB standard documents and hold the parsing/crypto logic; the `chibitv` binary crate composes them into pipelines:
 
-- `chibitv_b10` — SI tables/descriptors for MPEG-2 TS (ISDB-T) broadcast metadata (STD-B10).
+- `chibitv_b10` — SI tables/descriptors for MPEG-2 TS (ISDB-T/ISDB-S) broadcast metadata (STD-B10).
 - `chibitv_b24` — character encoding (ARIB extended 8-bit chars / additional symbols) (STD-B24).
 - `chibitv_b25` — ISDB-T/ISDB-S conditional access: MULTI2 descrambling and the classic CAS card protocol (STD-B25).
 - `chibitv_b60` — MMT/TLV container parsing for ISDB-S3 (BS/CS 4K): TLV packets, compressed IP, MMTP, messages/tables/descriptors, MFU (STD-B60).
