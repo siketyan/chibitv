@@ -27,13 +27,17 @@ impl Display for NoDecryptionKeyError {
 
 impl Error for NoDecryptionKeyError {}
 
-/// What the card answers an ECM with when the key it returns may be used: the
-/// programme is contracted for, is a pay-per-view one that has been bought, or
-/// is free to watch.
-const VIEWABLE_RETURN_CODES: [u16; 3] = [0x0200, 0x0400, 0x0800];
+/// The codes the ECM reception command answers with when it hands over a key
+/// that descrambles: the programme has been purchased, or it is being
+/// previewed.
+const VIEWABLE_RETURN_CODES: [u16; 5] = [0x0200, 0x0400, 0x0800, 0x4280, 0x4480];
 
-/// What the card answers with when no contract covers the programme.
-const NOT_CONTRACTED_RETURN_CODE: u16 = 0x0801;
+/// The codes it answers with when no contract covers the programme: the card
+/// holds no key for it at all, or the contract does not reach the tier or the
+/// pay-per-view programme it is broadcast in, has run out, or is restricted.
+const NOT_CONTRACTED_RETURN_CODES: [u16; 10] = [
+    0x8301, 0x8302, 0x8303, 0x8501, 0x8502, 0x8503, 0x8901, 0x8902, 0x8903, 0xA103,
+];
 
 /// The card handed over no key to descramble a programme with.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -44,23 +48,22 @@ pub struct EcmRefusedError {
 
 impl EcmRefusedError {
     /// Whether the card refused because no contract covers the programme,
-    /// rather than because it could not make sense of the ECM.
+    /// rather than because it would not sell it or could not make sense of the
+    /// ECM.
     pub fn is_not_contracted(&self) -> bool {
-        self.return_code == NOT_CONTRACTED_RETURN_CODE
+        NOT_CONTRACTED_RETURN_CODES.contains(&self.return_code)
     }
 }
 
 impl Display for EcmRefusedError {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        if self.is_not_contracted() {
-            return write!(f, "the card holds no contract for this programme");
-        }
+        let reason = if self.is_not_contracted() {
+            "the card holds no contract for this programme"
+        } else {
+            "the card handed over no key"
+        };
 
-        write!(
-            f,
-            "the card answered the ECM with {:#06X} and no key",
-            self.return_code
-        )
+        write!(f, "{reason} ({:#06X})", self.return_code)
     }
 }
 
@@ -289,33 +292,32 @@ mod tests {
     #[test]
     fn reports_a_programme_the_card_holds_no_contract_for() {
         let refusal = EcmRefusedError {
-            return_code: NOT_CONTRACTED_RETURN_CODE,
+            return_code: 0xA103,
         };
 
         assert!(refusal.is_not_contracted());
         assert_eq!(
             refusal.to_string(),
-            "the card holds no contract for this programme"
+            "the card holds no contract for this programme (0xA103)"
         );
     }
 
     #[test]
     fn reports_a_card_that_could_not_make_sense_of_the_ecm() {
         let refusal = EcmRefusedError {
-            return_code: 0xA103,
+            return_code: 0xA106,
         };
 
         assert!(!refusal.is_not_contracted());
-        assert_eq!(
-            refusal.to_string(),
-            "the card answered the ECM with 0xA103 and no key"
-        );
+        assert_eq!(refusal.to_string(), "the card handed over no key (0xA106)");
     }
 
     #[test]
-    fn lets_through_the_programmes_the_card_hands_a_key_over_for() {
-        // Contracted for, bought as a pay-per-view programme, and free.
-        assert_eq!(VIEWABLE_RETURN_CODES, [0x0200, 0x0400, 0x0800]);
-        assert!(!VIEWABLE_RETURN_CODES.contains(&NOT_CONTRACTED_RETURN_CODE));
+    fn keeps_the_two_sets_of_return_codes_apart() {
+        assert!(
+            !VIEWABLE_RETURN_CODES
+                .iter()
+                .any(|code| NOT_CONTRACTED_RETURN_CODES.contains(code))
+        );
     }
 }
