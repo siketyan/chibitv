@@ -191,8 +191,14 @@ fn scan_satellite(
         );
 
         let label = format!("TSID {transport_stream_id:#06X}");
-        let Some(state) =
-            read_channel(tuners, cas, &label, inner, timeout, ScanState::is_complete)?
+        let Some(state) = read_channel(
+            tuners,
+            cas,
+            &label,
+            inner,
+            timeout,
+            ScanState::has_service_catalog,
+        )?
         else {
             continue;
         };
@@ -453,10 +459,18 @@ fn read_channel(
 impl ScanState {
     /// Whether everything a channel is scanned for has arrived.
     fn is_complete(&self) -> bool {
-        self.nit.is_some()
-            && self.sdt_last_section_number.is_some_and(|last_section| {
-                self.sdt_sections.len() == usize::from(last_section) + 1
-            })
+        self.nit.is_some() && self.has_service_catalog()
+    }
+
+    /// Whether every service the channel carries has been named.
+    ///
+    /// This is all a satellite scan waits for: it heard the network out on the
+    /// transponder it came in on, and a NIT repeats far more slowly than an SDT
+    /// does, so waiting for another one on every stream would be most of what
+    /// the scan spends its time on.
+    fn has_service_catalog(&self) -> bool {
+        self.sdt_last_section_number
+            .is_some_and(|last_section| self.sdt_sections.len() == usize::from(last_section) + 1)
             && !self.services.is_empty()
     }
 
@@ -812,6 +826,60 @@ mod tests {
                 },
             ]
         );
+    }
+
+    fn television_service(service_id: u16, name: &str) -> ServiceInformation {
+        ServiceInformation {
+            service_id,
+            eit_user_defined_flags: 0,
+            eit_schedule_flag: true,
+            eit_present_following_flag: true,
+            running_status: 4,
+            free_ca_mode: true,
+            descriptors: vec![Descriptor::Service(
+                chibitv_b10::descriptor::ServiceDescriptor {
+                    service_type: TELEVISION_SERVICE_TYPE,
+                    service_provider_name: b"NHK".to_vec(),
+                    service_name: name.as_bytes().to_vec(),
+                },
+            )],
+        }
+    }
+
+    #[test]
+    fn stops_a_satellite_stream_at_its_service_catalog() {
+        let mut state = ScanState {
+            sdt_last_section_number: Some(0),
+            ..ScanState::default()
+        };
+        state.sdt_sections.insert(0);
+        state
+            .services
+            .insert(0x0400, television_service(0x0400, "BS"));
+
+        // The network was heard out on the transponder the stream came in on,
+        // so there is nothing left for a satellite scan to wait for.
+        assert!(state.has_service_catalog());
+        // A terrestrial scan has not heard it yet, and still waits.
+        assert!(!state.is_complete());
+    }
+
+    #[test]
+    fn waits_for_the_rest_of_a_service_catalog_that_is_still_arriving() {
+        let mut state = ScanState {
+            sdt_last_section_number: Some(1),
+            ..ScanState::default()
+        };
+        state.sdt_sections.insert(0);
+        state
+            .services
+            .insert(0x0400, television_service(0x0400, "BS"));
+
+        assert!(!state.has_service_catalog());
+
+        state.sdt_sections.insert(1);
+
+        assert!(state.has_service_catalog());
     }
 
     #[test]
