@@ -45,9 +45,6 @@ impl<D: Demux, M: Mux> Remuxer<D, M> {
             let packet = match self.demux.next_packet() {
                 Ok(Some(packet)) => packet,
                 Ok(None) => return Ok(None),
-                // There is nothing left to remux out of a stream the card will
-                // not unscramble, and reading on would only meet the same
-                // answer, so it ends the stream rather than being skipped.
                 Err(error) if is_descrambling_refused(&error) => return Err(error),
                 Err(error) => {
                     error!(%error, "Failed to read demuxed packet");

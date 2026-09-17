@@ -36,11 +36,6 @@ const VIEWABLE_RETURN_CODES: [u16; 3] = [0x0200, 0x0400, 0x0800];
 const NOT_CONTRACTED_RETURN_CODE: u16 = 0x0801;
 
 /// The card handed over no key to descramble a programme with.
-///
-/// A programme no contract covers is the ordinary reason, and it is on air like
-/// any other: its signalling is not scrambled and its schedule is announced
-/// with everyone else's. So this is for the caller to expect and carry on from,
-/// rather than the end of the stream.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct EcmRefusedError {
     /// What the card answered, as ARIB STD-B61 numbers it.
@@ -95,8 +90,6 @@ fn decrypt_ecm(
     let (setting_response, ecm_response) =
         cas.scrambling_key_protection_setting_and_ecm_reception(&setting_data, &ecm)?;
     if !VIEWABLE_RETURN_CODES.contains(&ecm_response.return_code) {
-        // The card answers a refusal with a scrambling key all the same, and it
-        // is not one that descrambles anything, so it is not worked out here.
         return Err(EcmRefusedError {
             return_code: ecm_response.return_code,
         }
@@ -273,9 +266,6 @@ impl Descrambler {
                 Ok(key) => {
                     self.key = Some((ecm, key));
                 }
-                // A card that hands over no key has settled the matter: it
-                // will answer the next ECM the same way, so this goes back to
-                // the caller whether or not it is waiting for a key.
                 Err(error) if error.is::<EcmRefusedError>() => return Err(error),
                 Err(error) => {
                     error!(%error, "Could not decrypt ECM");

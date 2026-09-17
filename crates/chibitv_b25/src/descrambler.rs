@@ -30,11 +30,6 @@ const VIEWABLE_RETURN_CODES: [u16; 3] = [0x0200, 0x0400, 0x0800];
 const NOT_CONTRACTED_RETURN_CODE: u16 = 0x0801;
 
 /// The card handed over no key to descramble a programme with.
-///
-/// A programme no contract covers is the ordinary reason, and it is on air like
-/// any other: its tables are not scrambled and its schedule is announced with
-/// everyone else's. So this is for the caller to expect and carry on from,
-/// rather than the end of the stream.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct EcmRefusedError {
     /// What the card answered, as ARIB STD-B25 numbers it.
@@ -96,8 +91,6 @@ impl B25Descrambler {
     pub fn push_ecm(&mut self, ecm: &[u8]) -> Result<()> {
         let response = self.cas.lock().unwrap().ecm_reception(ecm)?;
         if !VIEWABLE_RETURN_CODES.contains(&response.return_code) {
-            // The card answers a refusal with a key all the same, and it is not
-            // one that descrambles anything, so it is left where it is.
             return Err(EcmRefusedError {
                 return_code: response.return_code,
             }

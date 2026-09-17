@@ -35,12 +35,6 @@ The key is read by the ISDB-S3 (B61) descrambler only. ISDB-T and ISDB-S
 descrambling (B25) derives its keys from the card alone, so a setup without a
 4K channel still needs the key to be present, but never uses its value.
 
-Whichever card is in use, it hands over a key only for a programme it holds a
-contract for. Watching or recording one it does not stops with what the card
-answered, rather than playing noise. Such a programme is still on air like any
-other and its tables are not scrambled, so [`scan`](./cli#scan) finds it and
-the programme guide collects its schedule all the same.
-
 ## `[[tuners]]`
 
 An array of tables, one per tuner. `type` picks the implementation, and the
