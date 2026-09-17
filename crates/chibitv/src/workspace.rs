@@ -198,8 +198,10 @@ impl Workspace {
                 *stream_id == u32::from(service.transport_stream_id)
             }
             ChannelInner::IsdbT { .. }
-            | ChannelInner::BonIsdbS3 { .. }
-            | ChannelInner::BonIsdbT { .. } => service.channel_id == channel.id,
+            | ChannelInner::IsdbS { .. }
+            | ChannelInner::BonIsdbT { .. }
+            | ChannelInner::BonIsdbS { .. }
+            | ChannelInner::BonIsdbS3 { .. } => service.channel_id == channel.id,
         })
     }
 

@@ -63,10 +63,12 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         .collect::<Vec<_>>();
 
     let cas = PcscCasModule::open_shared()?;
-    let b61_descrambler = if channels
-        .iter()
-        .any(|channel| matches!(channel.inner, ChannelInner::IsdbS3 { .. }))
-    {
+    let b61_descrambler = if channels.iter().any(|channel| {
+        matches!(
+            channel.inner,
+            ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. }
+        )
+    }) {
         Some(Descrambler::init(
             cas.clone(),
             config.cas.master_key.into(),

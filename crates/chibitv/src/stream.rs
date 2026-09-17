@@ -234,7 +234,10 @@ fn start_stream(
                 &event_id,
             )
         }
-        ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => {
+        ChannelInner::IsdbT { .. }
+        | ChannelInner::IsdbS { .. }
+        | ChannelInner::BonIsdbT { .. }
+        | ChannelInner::BonIsdbS { .. } => {
             let descrambler = B25Descrambler::init(cas)?;
             // A service of zero streams the whole transport stream instead of
             // picking one service out of it.

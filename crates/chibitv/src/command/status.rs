@@ -51,9 +51,12 @@ pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     if !matches!(
         channel.inner,
-        ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. }
+        ChannelInner::IsdbT { .. }
+            | ChannelInner::IsdbS { .. }
+            | ChannelInner::BonIsdbT { .. }
+            | ChannelInner::BonIsdbS { .. }
     ) {
-        anyhow::bail!("Only ISDB-T channels, which carry MPEG-2 TS, are supported");
+        anyhow::bail!("Only ISDB-T and ISDB-S channels, which carry MPEG-2 TS, are supported");
     }
 
     info!("Tuning to the channel: {:?}", channel);

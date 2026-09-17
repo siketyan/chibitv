@@ -361,6 +361,7 @@ fn fmp4_response(data: bytes::Bytes) -> StreamResponse {
 fn delivery_system(inner: &ChannelInner) -> DeliverySystem {
     match inner {
         ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => DeliverySystem::IsdbT,
+        ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => DeliverySystem::IsdbS,
         ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => DeliverySystem::IsdbS3,
     }
 }
@@ -479,6 +480,54 @@ mod tests {
     use chrono::{FixedOffset, NaiveDate};
 
     use super::*;
+
+    #[test]
+    fn reports_the_delivery_system_of_every_kind_of_channel() {
+        let of = |inner| delivery_system(&inner);
+
+        assert_eq!(
+            of(ChannelInner::IsdbT {
+                frequency: 515_142_857,
+                bandwidth_hz: 6_000_000,
+            }),
+            DeliverySystem::IsdbT,
+        );
+        assert_eq!(
+            of(ChannelInner::IsdbS {
+                frequency: 1_049_480,
+                stream_id: 0x4031,
+            }),
+            DeliverySystem::IsdbS,
+        );
+        assert_eq!(
+            of(ChannelInner::IsdbS3 {
+                frequency: 1_318_000,
+                stream_id: 0x40F1,
+            }),
+            DeliverySystem::IsdbS3,
+        );
+        assert_eq!(
+            of(ChannelInner::BonIsdbT {
+                space: 0,
+                channel: 0,
+            }),
+            DeliverySystem::IsdbT,
+        );
+        assert_eq!(
+            of(ChannelInner::BonIsdbS {
+                space: 0,
+                channel: 1,
+            }),
+            DeliverySystem::IsdbS,
+        );
+        assert_eq!(
+            of(ChannelInner::BonIsdbS3 {
+                space: 0,
+                channel: 2,
+            }),
+            DeliverySystem::IsdbS3,
+        );
+    }
 
     #[test]
     fn converts_broadcast_time_to_a_unix_timestamp() {

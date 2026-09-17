@@ -73,7 +73,10 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
             let demux = MmtDemuxer::new(BufReader::new(input), descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }
-        ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => {
+        ChannelInner::IsdbT { .. }
+        | ChannelInner::IsdbS { .. }
+        | ChannelInner::BonIsdbT { .. }
+        | ChannelInner::BonIsdbS { .. } => {
             let descrambler = B25Descrambler::init(cas)?;
             let demux = M2tsDemuxer::new(input, descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)

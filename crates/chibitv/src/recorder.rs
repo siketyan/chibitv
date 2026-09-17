@@ -130,7 +130,10 @@ impl Recorder {
                     task,
                 )
             }
-            ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => {
+            ChannelInner::IsdbT { .. }
+            | ChannelInner::IsdbS { .. }
+            | ChannelInner::BonIsdbT { .. }
+            | ChannelInner::BonIsdbS { .. } => {
                 let descrambler = B25Descrambler::init(self.cas.clone())?;
                 let demux = M2tsDemuxer::new_for_service(reader, descrambler, recording.service_id);
                 run(Remuxer::new(demux, mux)?, recording, task)

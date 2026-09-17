@@ -74,7 +74,10 @@ impl EventCrawler {
             };
             let deadline = Instant::now() + dwell_time;
             match channel.inner {
-                ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => {
+                ChannelInner::IsdbT { .. }
+                | ChannelInner::IsdbS { .. }
+                | ChannelInner::BonIsdbT { .. }
+                | ChannelInner::BonIsdbS { .. } => {
                     let descrambler = B25Descrambler::init(self.cas.clone())?;
                     let mut demux = M2tsDemuxer::new(reader, descrambler);
                     crawl_channel(&mut demux, channel, &registry, deadline, task)?;

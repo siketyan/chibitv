@@ -186,10 +186,19 @@ impl Tuner for DvbTuner {
             let p = self.dev.fe_parms;
 
             match channel.inner {
-                ChannelInner::BonIsdbS3 { .. } | ChannelInner::BonIsdbT { .. } => {
+                ChannelInner::BonIsdbT { .. }
+                | ChannelInner::BonIsdbS { .. }
+                | ChannelInner::BonIsdbS3 { .. } => {
                     bail!("A DVB tuner cannot take a BonDriver channel");
                 }
-                ChannelInner::IsdbS3 {
+                // ISDB-S3 shares the ISDB-S delivery system: the kernel API
+                // has no separate one for it, and a 4K tuner takes the same
+                // frequency and stream id.
+                ChannelInner::IsdbS {
+                    frequency,
+                    stream_id,
+                }
+                | ChannelInner::IsdbS3 {
                     frequency,
                     stream_id,
                 } => {
