@@ -2,7 +2,7 @@ use std::env;
 use std::ffi::c_void;
 use std::io::{ErrorKind, Read};
 use std::ptr::{null, null_mut};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::bail;
 use dvbv5_sys::dvb_dev_type::{DVB_DEVICE_DEMUX, DVB_DEVICE_DVR, DVB_DEVICE_FRONTEND};
@@ -24,6 +24,8 @@ use crate::tuner::{Channel, Tuner};
 
 const DVR_BUFFER_SIZE: i32 = 32 * 1024 * 1024;
 const DVB_VERBOSE_ENV: &str = "CHIBITV_DVB_VERBOSE";
+const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct DvbDevice {
     dvb: *mut dvb_device,
@@ -237,19 +239,17 @@ impl Tuner for DvbTuner {
 
             dvb_fe_set_parms(p);
 
-            let mut attempt = 0;
+            let deadline = Instant::now() + LOCK_TIMEOUT;
             let mut status: fe_status = fe_status::FE_NONE;
             while (status as u8 & fe_status::FE_HAS_LOCK as u8) == 0 {
-                std::thread::sleep(Duration::from_secs(1));
+                if Instant::now() >= deadline {
+                    bail!("No signal");
+                }
+
+                std::thread::sleep(LOCK_POLL_INTERVAL);
 
                 dvb_fe_get_stats(p);
                 dvb_fe_retrieve_stats(p, DTV_STATUS, &mut status as *mut fe_status as *mut _);
-
-                if attempt >= 5 {
-                    bail!("No signal");
-                } else {
-                    attempt += 1;
-                }
             }
 
             dvb_fe_get_stats(p);

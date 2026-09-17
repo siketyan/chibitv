@@ -95,23 +95,27 @@ else it cannot tell which programme is on air:
 TZ=JST-9 cargo run -- serve
 ```
 
-## Scanning terrestrial channels
+## Scanning channels
 
-For ISDB-T, let [`scan`](../reference/cli#scan) discover the physical channels
-on air rather than writing them by hand. It prints `[[channels]]` entries, and
-their inline `services` catalog, as TOML:
+Let [`scan`](../reference/cli#scan) discover the channels on air rather than
+writing them by hand. It prints `[[channels]]` entries, and their inline
+`services` catalog, as TOML:
 
 ```shell
+# The terrestrial UHF channels.
 cargo run -- scan > scanned-channels.toml
+
+# The BS and CS110 transponders.
+cargo run -- scan --delivery-system ISDB-S > scanned-satellite.toml
 ```
 
 Review the generated file and merge its `[[channels]]` entries into
 `config.toml`. The server needs this catalog so that every configured physical
 channel's services are available before tuning.
 
-`scan` walks the terrestrial UHF band only, so a satellite channel is written
-by hand; the [channel reference](../reference/configuration#channels) says
-what each delivery system takes.
+ISDB-S3, the 4K satellite broadcasting, is the one `scan` does not find; the
+[channel reference](../reference/configuration#channels) says what writing such
+a channel by hand takes.
 
 ## Starting the server
 

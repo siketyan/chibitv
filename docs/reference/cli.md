@@ -35,7 +35,7 @@ from `RUST_LOG`, which `--verbose` only changes the default of.
 | [`live`](#live)     | Watch a channel as a remuxed M2TS stream written to stdout. |
 | [`record`](#record) | Record a MMT/TLV stream from a tuner.                   |
 | [`remux`](#remux)   | Demux a MMT/TLV stream and mux a M2TS stream.           |
-| [`scan`](#scan)     | Scan UHF channels and print ISDB-T channel config as TOML. |
+| [`scan`](#scan)     | Scan physical channels and print the channel config as TOML. |
 | [`status`](#status) | Show current broadcast status from B10 SI tables.       |
 | [`serve`](#serve)   | Run the chibitv server.                                 |
 
@@ -125,30 +125,47 @@ Two limits are worth knowing before picking a format:
 
 ## `scan`
 
-Scan terrestrial UHF physical channels and print the discovered ISDB-T
+Scan the physical channels on air and print the discovered
 [`[[channels]]`](./configuration#channels) entries, and their inline
 `services` catalog, as TOML on stdout.
 
-| Option                    | Type    | Default | Description                                   |
-| ------------------------- | ------- | ------- | --------------------------------------------- |
-| `--start-channel <N>`     | integer | `13`    | First UHF physical channel to scan.           |
-| `--end-channel <N>`       | integer | `52`    | Last UHF physical channel to scan.            |
-| `--timeout <SECONDS>`     | integer | `12`    | Maximum time to wait on each UHF channel.     |
+| Option                        | Type    | Default  | Description                                    |
+| ----------------------------- | ------- | -------- | ---------------------------------------------- |
+| `--delivery-system <SYSTEM>`  | string  | `ISDB-T` | `ISDB-T` for terrestrial UHF, `ISDB-S` for BS and CS110. |
+| `--start-channel <N>`         | integer | `13`     | First UHF physical channel to scan. ISDB-T only. |
+| `--end-channel <N>`           | integer | `52`     | Last UHF physical channel to scan. ISDB-T only. |
+| `--timeout <SECONDS>`         | integer | `12`     | Maximum time to wait on each channel.          |
 
-The range has to lie within 13 to 52, and the start must not exceed the end;
-anything else is rejected before tuning. Scanning the full range waits up to
-the timeout on every channel that carries nothing, so a complete scan takes a
-while.
+A terrestrial scan walks the UHF physical channels in order. The range has to
+lie within 13 to 52, and the start must not exceed the end; anything else is
+rejected before tuning. Scanning the full range waits up to the timeout on
+every channel that carries nothing, so a complete scan takes a while.
+
+A satellite scan works the other way round, because a satellite transport
+stream is picked by its id rather than by a channel number and which ids are on
+air changes as broadcasters come and go. The built-in BS and CS110 transponder
+frequencies are only a way in: the first transponder that answers hands over
+its network's NIT, which names every transport stream of that network and the
+transponder each one sits on, and the scan then tunes to the ones carrying
+television to read their services. Reaching a network is therefore a couple of
+tunes, and the length of the scan is set by how many streams it finds.
+
+`scan` does not find ISDB-S3, the 4K satellite broadcasting, which signals over
+MMT/TLV rather than the SI tables this reads; those channels are still written
+by hand.
 
 ```shell
 cargo run -- scan > scanned-channels.toml
 
 # Scan a smaller range and wait up to 5 seconds per channel.
 cargo run -- scan --start-channel 20 --end-channel 30 --timeout 5 > scanned-channels.toml
+
+# Scan the BS and CS110 transponders instead.
+cargo run -- scan --delivery-system ISDB-S > scanned-channels.toml
 ```
 
 Review the generated file and merge its `[[channels]]` entries into
-`config.toml`. This is also how ISDB-T channels get the service catalog that
+`config.toml`. This is also how a channel gets the service catalog that
 [`serve`](#serve) needs.
 
 ## `status`

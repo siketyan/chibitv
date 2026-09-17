@@ -20,7 +20,7 @@ pub(super) enum Command {
     /// Demux a MMT/TLV stream and mux a M2TS stream.
     Remux(remux::Options),
 
-    /// Scan UHF channels and print ISDB-T channel config as TOML.
+    /// Scan physical channels and print the channel config as TOML.
     Scan(scan::Options),
 
     /// Run the chibitv server.

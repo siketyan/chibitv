@@ -138,13 +138,16 @@ TOML to merge into the file.
 [[channels]]
 name = "BS Example"
 delivery_system = "ISDB-S"
-frequency = 1049480
+frequency = 1087840
 stream_id = 0x4031
 ```
 
-`scan` only walks the terrestrial UHF band, so a satellite channel is written
-by hand, along with its [`transport_stream_id`](#channels) and
-[`services`](#channels-services) that `serve` needs before tuning.
+The frequency is the one the converter on the dish hands the tuner, not the one
+the satellite radiates: BS-3 sits at 11 087.84 MHz on air and reaches the tuner
+at 1 087.84 MHz. [`scan --delivery-system ISDB-S`](./cli#scan) walks the BS and
+CS110 transponders and prints these entries, along with the
+[`transport_stream_id`](#channels) and [`services`](#channels-services) that
+`serve` needs before tuning.
 
 ### `delivery_system = "ISDB-S3"`
 
