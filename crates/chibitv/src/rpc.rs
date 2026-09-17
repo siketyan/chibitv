@@ -361,7 +361,7 @@ fn fmp4_response(data: bytes::Bytes) -> StreamResponse {
 fn delivery_system(inner: &ChannelInner) -> DeliverySystem {
     match inner {
         ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => DeliverySystem::IsdbT,
-        ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => DeliverySystem::IsdbS,
+        ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => DeliverySystem::IsdbS3,
     }
 }
 

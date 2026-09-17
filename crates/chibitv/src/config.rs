@@ -106,8 +106,10 @@ pub enum TunerConfig {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "delivery_system")]
 pub enum ChannelConfigInner {
-    #[serde(rename = "ISDB-S")]
-    IsdbS { frequency: u32, stream_id: u32 },
+    /// Satellite 4K broadcasting, which carries MMT/TLV. The 2K BS/CS one,
+    /// which carries MPEG-2 TS, would be `ISDB-S` and is not supported yet.
+    #[serde(rename = "ISDB-S3")]
+    IsdbS3 { frequency: u32, stream_id: u32 },
 
     #[serde(rename = "ISDB-T")]
     IsdbT {
@@ -124,8 +126,8 @@ pub enum ChannelConfigInner {
     /// BonDriver enumerates, rather than by tuning parameters, which a
     /// BonDriver holds in its own configuration. The delivery system still
     /// has to be named, because it decides how the stream is demultiplexed.
-    #[serde(rename = "Bon-ISDB-S")]
-    BonIsdbS { space: u32, channel: u32 },
+    #[serde(rename = "Bon-ISDB-S3")]
+    BonIsdbS3 { space: u32, channel: u32 },
 
     #[serde(rename = "Bon-ISDB-T")]
     BonIsdbT { space: u32, channel: u32 },

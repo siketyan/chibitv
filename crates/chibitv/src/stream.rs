@@ -217,7 +217,7 @@ fn start_stream(
     let event_id = Arc::new(RwLock::new(None));
 
     let kill_tx = match &channel.inner {
-        ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => {
+        ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
             let descrambler = b61_descrambler
                 .ok_or_else(|| anyhow::anyhow!("B61 descrambler is not configured"))?;
             let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);

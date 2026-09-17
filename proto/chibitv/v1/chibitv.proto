@@ -60,8 +60,13 @@ enum DeliverySystem {
   // Terrestrial digital broadcasting.
   DELIVERY_SYSTEM_ISDB_T = 1;
 
-  // Satellite (BS/CS 4K) broadcasting.
-  DELIVERY_SYSTEM_ISDB_S = 2;
+  // Satellite (BS/CS 4K) broadcasting, carried on MMT/TLV.
+  // Numbered before ISDB-S because it was the first satellite system
+  // supported; the value is kept as it is for compatibility.
+  DELIVERY_SYSTEM_ISDB_S3 = 2;
+
+  // Satellite (BS/CS 2K) broadcasting, carried on MPEG-2 TS.
+  DELIVERY_SYSTEM_ISDB_S = 3;
 }
 
 message ListServicesRequest {}

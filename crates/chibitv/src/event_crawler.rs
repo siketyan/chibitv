@@ -79,7 +79,7 @@ impl EventCrawler {
                     let mut demux = M2tsDemuxer::new(reader, descrambler);
                     crawl_channel(&mut demux, channel, &registry, deadline, task)?;
                 }
-                ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => {
+                ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
                     let descrambler =
                         Descrambler::init(self.cas.clone(), self.cas_master_key, false)?;
                     let mut demux = MmtDemuxer::new(

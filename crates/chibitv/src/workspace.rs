@@ -194,11 +194,11 @@ impl Workspace {
     /// The physical channel the service is carried on.
     fn channel_of(&self, service: &Service) -> Option<&Channel> {
         self.channels.iter().find(|channel| match &channel.inner {
-            ChannelInner::IsdbS { stream_id, .. } => {
+            ChannelInner::IsdbS3 { stream_id, .. } => {
                 *stream_id == u32::from(service.transport_stream_id)
             }
             ChannelInner::IsdbT { .. }
-            | ChannelInner::BonIsdbS { .. }
+            | ChannelInner::BonIsdbS3 { .. }
             | ChannelInner::BonIsdbT { .. } => service.channel_id == channel.id,
         })
     }

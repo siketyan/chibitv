@@ -121,7 +121,7 @@ impl Recorder {
         let mux = M2tsMuxer::new(TsPacketWriter::new(writer.clone()));
 
         let result = match recording.channel.inner {
-            ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => {
+            ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
                 let descrambler = Descrambler::init(self.cas.clone(), self.cas_master_key, false)?;
                 let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
                 run(

@@ -51,7 +51,7 @@ impl Tuner for BonTuner {
 
     fn tune(&self, channel: Channel) -> anyhow::Result<()> {
         let (space, number) = match channel.inner {
-            ChannelInner::BonIsdbS { space, channel }
+            ChannelInner::BonIsdbS3 { space, channel }
             | ChannelInner::BonIsdbT { space, channel } => (space, channel),
             _ => bail!("A BonDriver tuner only takes channels of the BonDriver kind"),
         };

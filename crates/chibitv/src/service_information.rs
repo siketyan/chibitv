@@ -29,7 +29,7 @@ pub enum Signal {
 struct SectionKey {
     table_id: u8,
     original_network_id: u16,
-    /// The TLV stream id on ISDB-S, the transport stream id on ISDB-T.
+    /// The TLV stream id on ISDB-S3, the transport stream id on ISDB-T.
     stream_id: u16,
     service_id: u16,
     section_number: u8,

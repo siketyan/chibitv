@@ -564,7 +564,7 @@ mod tests {
     }
 
     #[test]
-    fn registers_isdb_s_service_with_channel_id() {
+    fn registers_isdb_s3_service_with_channel_id() {
         let registry = Registry::default();
         registry.put_service(
             4,
@@ -590,7 +590,7 @@ mod tests {
     }
 
     #[test]
-    fn collects_isdb_s_event_summary_and_details() {
+    fn collects_isdb_s3_event_summary_and_details() {
         let registry = Registry::default();
         registry.put_service(
             0,

@@ -279,11 +279,11 @@ fn format_scan_output(channels: &[ChannelConfig]) -> String {
         }
 
         match channel.inner {
-            ChannelConfigInner::IsdbS {
+            ChannelConfigInner::IsdbS3 {
                 frequency,
                 stream_id,
             } => {
-                table["delivery_system"] = toml_edit::value("ISDB-S");
+                table["delivery_system"] = toml_edit::value("ISDB-S3");
                 table["frequency"] = toml_edit::value(i64::from(frequency));
                 table["stream_id"] = toml_edit::value(i64::from(stream_id));
             }
@@ -297,11 +297,11 @@ fn format_scan_output(channels: &[ChannelConfig]) -> String {
                     table["bandwidth_hz"] = toml_edit::value(i64::from(bandwidth_hz));
                 }
             }
-            ChannelConfigInner::BonIsdbS {
+            ChannelConfigInner::BonIsdbS3 {
                 space,
                 channel: number,
             } => {
-                table["delivery_system"] = toml_edit::value("Bon-ISDB-S");
+                table["delivery_system"] = toml_edit::value("Bon-ISDB-S3");
                 table["space"] = toml_edit::value(i64::from(space));
                 table["channel"] = toml_edit::value(i64::from(number));
             }

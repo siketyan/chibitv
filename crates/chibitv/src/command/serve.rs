@@ -65,7 +65,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let cas = PcscCasModule::open_shared()?;
     let b61_descrambler = if channels
         .iter()
-        .any(|channel| matches!(channel.inner, ChannelInner::IsdbS { .. }))
+        .any(|channel| matches!(channel.inner, ChannelInner::IsdbS3 { .. }))
     {
         Some(Descrambler::init(
             cas.clone(),

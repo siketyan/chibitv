@@ -11,7 +11,8 @@ import { useSelectService, useServiceId } from "../router";
 
 const DELIVERY_SYSTEMS: { id: DeliverySystem; label: string }[] = [
   { id: DeliverySystem.ISDB_T, label: "Terrestrial" },
-  { id: DeliverySystem.ISDB_S, label: "BS 4K" },
+  { id: DeliverySystem.ISDB_S3, label: "BS/CS 4K" },
+  { id: DeliverySystem.ISDB_S, label: "BS/CS 2K" },
   { id: DeliverySystem.UNSPECIFIED, label: "Other" },
 ];
 
