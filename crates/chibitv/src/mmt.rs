@@ -17,6 +17,7 @@ use chibitv_b60::mmtp::{
 };
 use chibitv_b60::table::Table;
 use chibitv_b60::tlv::{TlvPacket, TlvPacketType};
+use chibitv_b60::tlv_si;
 use chibitv_b61::Descrambler;
 
 use crate::demux::{Demux, MediaPacket, Packet, PacketQueue, SignalingEvent, TrackType};
@@ -71,11 +72,26 @@ impl<R: BufRead> MmtDemuxer<R> {
         let mut reader = Read::chain(Cursor::new(&[0x7F]), self.reader.by_ref());
 
         let tlv_packet = match TlvPacket::try_read(&mut reader) {
-            Ok(Some(packet)) if packet.packet_type == TlvPacketType::CompressedIP => packet,
-            Ok(_) => return Ok(Some(vec![])),
+            Ok(Some(packet)) => packet,
+            Ok(None) => return Ok(Some(vec![])),
             Err(e) if e.kind() == ErrorKind::UnexpectedEof => return Ok(None),
             Err(e) => Err(e)?,
         };
+
+        match tlv_packet.packet_type {
+            TlvPacketType::CompressedIP => {}
+            // The transmission control signal carries the TLV-SI, which says
+            // what the network is made of and where the rest of it is.
+            TlvPacketType::TransmissionControlSignal => {
+                return Ok(Some(
+                    tlv_si::read_sections(tlv_packet.data)
+                        .into_iter()
+                        .map(|table| Packet::Signaling(SignalingEvent::TlvTable(table)))
+                        .collect(),
+                ));
+            }
+            _ => return Ok(Some(vec![])),
+        }
 
         if let Some(ecm_index) = tlv_packet
             .data

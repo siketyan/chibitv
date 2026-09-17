@@ -125,6 +125,9 @@ impl ServiceInformationProcessor {
                 self.process_m2_section_message(message)
             }
             SignalingEvent::B60Message(_) => Ok(()),
+            // The TLV-SI describes where the stream is rather than what is on
+            // it, which is the scanner's business rather than the guide's.
+            SignalingEvent::TlvTable(_) => Ok(()),
         }
     }
 
