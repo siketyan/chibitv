@@ -1,7 +1,9 @@
 use bytes::Bytes;
 use tracing::error;
 
-use crate::demux::{Demux, MediaPacket, Packet, SignalingEvent, TrackType};
+use crate::demux::{
+    Demux, MediaPacket, Packet, SignalingEvent, TrackType, is_descrambling_refused,
+};
 
 pub trait Mux {
     /// Adds a track to the stream.
@@ -43,6 +45,10 @@ impl<D: Demux, M: Mux> Remuxer<D, M> {
             let packet = match self.demux.next_packet() {
                 Ok(Some(packet)) => packet,
                 Ok(None) => return Ok(None),
+                // There is nothing left to remux out of a stream the card will
+                // not unscramble, and reading on would only meet the same
+                // answer, so it ends the stream rather than being skipped.
+                Err(error) if is_descrambling_refused(&error) => return Err(error),
                 Err(error) => {
                     error!(%error, "Failed to read demuxed packet");
                     continue;
@@ -126,6 +132,58 @@ mod tests {
             self.finalized = true;
             Ok(())
         }
+    }
+
+    /// A demultiplexer that answers with whatever the test hands it, errors
+    /// and all.
+    struct FailingDemux {
+        results: VecDeque<anyhow::Result<Option<Packet>>>,
+    }
+
+    impl Demux for FailingDemux {
+        fn next_packet(&mut self) -> anyhow::Result<Option<Packet>> {
+            self.results.pop_front().unwrap_or(Ok(None))
+        }
+    }
+
+    fn signaling() -> SignalingEvent {
+        SignalingEvent::B10Table {
+            table_id: 0x42,
+            table: B10Table::Unknown(0x42, vec![1, 2, 3]),
+        }
+    }
+
+    #[test]
+    fn stops_the_stream_the_card_will_not_unscramble() {
+        let demux = FailingDemux {
+            results: VecDeque::from([
+                Err(chibitv_b25::EcmRefusedError {
+                    return_code: 0x0801,
+                }
+                .into()),
+                // Reading on would only meet the same answer, so this is never
+                // reached.
+                Ok(Some(Packet::Signaling(signaling()))),
+            ]),
+        };
+        let mut remuxer = Remuxer::new(demux, RecordingMux::default()).unwrap();
+
+        let error = remuxer.next().unwrap_err();
+
+        assert!(is_descrambling_refused(&error));
+    }
+
+    #[test]
+    fn reads_past_an_error_the_next_packet_may_recover_from() {
+        let demux = FailingDemux {
+            results: VecDeque::from([
+                Err(anyhow::anyhow!("a torn packet")),
+                Ok(Some(Packet::Signaling(signaling()))),
+            ]),
+        };
+        let mut remuxer = Remuxer::new(demux, RecordingMux::default()).unwrap();
+
+        assert!(remuxer.next().unwrap().is_some());
     }
 
     #[test]
