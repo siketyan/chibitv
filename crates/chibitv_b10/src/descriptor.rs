@@ -80,6 +80,87 @@ impl ServiceListDescriptor {
     }
 }
 
+/// The transponder one transport stream of a satellite network is carried on,
+/// as the NIT describes it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SatelliteDeliverySystemDescriptor {
+    /// Downlink frequency in kHz, which is what the satellite radiates rather
+    /// than what reaches the tuner: see
+    /// [`SatelliteDeliverySystemDescriptor::intermediate_frequency_khz`].
+    pub frequency_khz: u32,
+    /// Orbital position in tenths of a degree, so that 110.0°E is 1100.
+    pub orbital_position: u16,
+    /// Whether the satellite sits east of the prime meridian, as every one
+    /// Japan broadcasts from does.
+    pub west_east_flag: bool,
+    pub polarisation: u8,
+    pub modulation: u8,
+    pub symbol_rate: u32,
+    pub fec_inner: u8,
+}
+
+/// The local oscillator of the BS/CS110 converter every Japanese dish carries,
+/// in kHz.
+const LNB_LOCAL_OSCILLATOR_KHZ: u32 = 10_678_000;
+
+impl SatelliteDeliverySystemDescriptor {
+    pub fn read(bytes: &mut Bytes) -> Result<Self> {
+        if bytes.remaining() < 11 {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "satellite delivery system descriptor must be at least 11 bytes",
+            ));
+        }
+
+        // The frequency is eight BCD digits of GHz with the point after the
+        // second one, which is hundredths of a MHz, so ten kHz each.
+        let frequency_khz = read_bcd(bytes.get_u32()) * 10;
+        let orbital_position = read_bcd(u32::from(bytes.get_u16())) as u16;
+
+        let flags = bytes.get_u8();
+        let west_east_flag = flags & 0x80 != 0;
+        let polarisation = (flags >> 5) & 0x03;
+        let modulation = flags & 0x1F;
+
+        // Twenty-eight BCD digits of the symbol rate in units of 100 sym/s,
+        // followed by the inner FEC in the low nibble.
+        let rate_and_fec = bytes.get_u32();
+        let symbol_rate = read_bcd(rate_and_fec >> 4);
+        let fec_inner = (rate_and_fec & 0x0F) as u8;
+
+        Ok(Self {
+            frequency_khz,
+            orbital_position,
+            west_east_flag,
+            polarisation,
+            modulation,
+            symbol_rate,
+            fec_inner,
+        })
+    }
+
+    /// The frequency the tuner is given, which is what is left of the downlink
+    /// once the converter on the dish has shifted it down.
+    ///
+    /// A descriptor naming a frequency the converter cannot reach has none.
+    pub fn intermediate_frequency_khz(&self) -> Option<u32> {
+        self.frequency_khz.checked_sub(LNB_LOCAL_OSCILLATOR_KHZ)
+    }
+}
+
+/// Reads a field of binary coded decimal digits as the number it spells.
+///
+/// A nibble that is not a digit is read as nothing rather than refused: the
+/// field is one number, and the rest of it is still worth having.
+fn read_bcd(value: u32) -> u32 {
+    (0..8)
+        .rev()
+        .fold(0, |number, digit| match (value >> (digit * 4)) & 0x0F {
+            nibble if nibble < 10 => number * 10 + nibble,
+            _ => number,
+        })
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ServiceDescriptor {
     pub service_type: u8,
@@ -222,6 +303,7 @@ pub enum DescriptorTag {
     CaDescriptor = 0x09,
     NetworkNameDescriptor = 0x40,
     ServiceListDescriptor = 0x41,
+    SatelliteDeliverySystemDescriptor = 0x43,
     ServiceDescriptor = 0x48,
     ShortEventDescriptor = 0x4D,
     ExtendedEventDescriptor = 0x4E,
@@ -232,6 +314,7 @@ pub enum Descriptor {
     Ca(CaDescriptor),
     NetworkName(NetworkNameDescriptor),
     ServiceList(ServiceListDescriptor),
+    SatelliteDeliverySystem(SatelliteDeliverySystemDescriptor),
     Service(ServiceDescriptor),
     ShortEvent(ShortEventDescriptor),
     ExtendedEvent(ExtendedEventDescriptor),
@@ -255,6 +338,9 @@ impl Descriptor {
             }
             DescriptorTag::ServiceListDescriptor => {
                 Self::ServiceList(ServiceListDescriptor::read(&mut bytes)?)
+            }
+            DescriptorTag::SatelliteDeliverySystemDescriptor => {
+                Self::SatelliteDeliverySystem(SatelliteDeliverySystemDescriptor::read(&mut bytes)?)
             }
             DescriptorTag::ServiceDescriptor => Self::Service(ServiceDescriptor::read(&mut bytes)?),
             DescriptorTag::ShortEventDescriptor => {
@@ -337,6 +423,55 @@ mod tests {
                 ca_pid: 0x1FFF,
                 private_data: vec![],
             })
+        );
+    }
+
+    #[test]
+    fn read_satellite_delivery_system_descriptor() {
+        let descriptor = Descriptor::read(&mut Bytes::from_static(&[
+            0x43, 0x0B, // descriptor_tag, descriptor_length
+            0x01, 0x19, 0x96, 0x00, // frequency, as 011.99600 GHz
+            0x11, 0x00, // orbital_position, as 110.0 degrees
+            0xAB, // west_east_flag, polarisation, modulation
+            0x02, 0x88, 0x60, 0x0F, // symbol_rate, as 028.8600 Msym/s, and FEC_inner
+        ]))
+        .unwrap();
+
+        let Descriptor::SatelliteDeliverySystem(descriptor) = descriptor else {
+            panic!("the descriptor was read as {descriptor:?}");
+        };
+        assert_eq!(descriptor.frequency_khz, 11_996_000);
+        assert_eq!(descriptor.orbital_position, 1100);
+        assert!(descriptor.west_east_flag);
+        assert_eq!(descriptor.polarisation, 0x01);
+        assert_eq!(descriptor.modulation, 0x0B);
+        assert_eq!(descriptor.symbol_rate, 288_600);
+        assert_eq!(descriptor.fec_inner, 0x0F);
+    }
+
+    #[test]
+    fn converts_a_downlink_frequency_to_the_one_the_tuner_takes() {
+        // BS-15, which the dish hands to the tuner at 1318 MHz.
+        let descriptor = SatelliteDeliverySystemDescriptor {
+            frequency_khz: 11_996_000,
+            orbital_position: 1100,
+            west_east_flag: true,
+            polarisation: 0x01,
+            modulation: 0x0B,
+            symbol_rate: 288_600,
+            fec_inner: 0x0F,
+        };
+
+        assert_eq!(descriptor.intermediate_frequency_khz(), Some(1_318_000));
+
+        // Nothing the converter can shift down is below its oscillator.
+        assert_eq!(
+            SatelliteDeliverySystemDescriptor {
+                frequency_khz: 1_000_000,
+                ..descriptor
+            }
+            .intermediate_frequency_khz(),
+            None,
         );
     }
 
