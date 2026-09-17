@@ -6,5 +6,6 @@ pub mod mfu;
 pub mod mmtp;
 pub mod table;
 pub mod tlv;
+pub mod tlv_si;
 
 mod read_ext;
