@@ -117,9 +117,8 @@ fn crawl_channel<D: Demux>(
         let packet = match demux.next_packet() {
             Ok(Some(packet)) => packet,
             Ok(None) => break,
-            // The events are announced in the clear, so a channel the card will
-            // not unscramble is crawled like any other; it is only worth saying
-            // so once rather than on every ECM.
+            // The events are announced in the clear, so a channel the card
+            // will not unscramble is crawled like any other.
             Err(error) if is_descrambling_refused(&error) => {
                 if !std::mem::replace(&mut refused, true) {
                     warn!(channel_id = channel.id, %error, "Collecting the events only");

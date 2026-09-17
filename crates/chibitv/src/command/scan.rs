@@ -433,9 +433,8 @@ fn read_channel(
         let packet = match demux.next_packet() {
             Ok(Some(packet)) => packet,
             Ok(None) => break,
-            // The tables a scan is after are not scrambled, and an ECM arrives
-            // every few hundred milliseconds, so a card that will not
-            // unscramble the channel is said once and read past.
+            // The tables are not scrambled, so the scan reads past a card
+            // that will not unscramble the rest of the channel.
             Err(error) if is_descrambling_refused(&error) => {
                 if !std::mem::replace(&mut refused, true) {
                     warn!(channel = label, %error, "Scanning the tables only");
