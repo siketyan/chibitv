@@ -31,6 +31,7 @@ const FIRST_UHF_FREQUENCY_HZ: u32 = 473_142_857;
 const UHF_CHANNEL_BANDWIDTH_HZ: u32 = 6_000_000;
 
 const BS_NETWORK_ID: u16 = 4;
+const BS_4K_NETWORK_ID: u16 = 11;
 const FIRST_BS_FREQUENCY_KHZ: u32 = 1_049_480;
 const BS_FREQUENCY_STEP_KHZ: u32 = 38_360;
 const LAST_BS_TRANSPONDER: u8 = 23;
@@ -393,7 +394,7 @@ fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
 fn discover_tlv_streams(scanner: &Scanner) -> anyhow::Result<BTreeMap<u16, TlvStream>> {
     let mut discovered = BTreeMap::<u16, TlvStream>::new();
 
-    for transponder in transponders() {
+    for transponder in transponders_4k() {
         if discovered
             .values()
             .any(|stream| stream.frequency_khz == transponder.frequency_khz)
@@ -508,17 +509,21 @@ impl Transponder {
     /// The stream ids to reach the transponder with, before anything on air is
     /// known.
     ///
-    /// ARIB numbers a satellite transport stream after the transponder it sits
-    /// on and its place on it, so the first two streams of a transponder can be
-    /// named without having heard from the network yet. A relative number comes
-    /// first, for the drivers that pick a stream by its place instead.
+    /// ARIB numbers a satellite stream after the transponder it sits on and its
+    /// place on it, so the first two streams of a transponder can be named
+    /// without having heard from the network yet.
     fn seed_stream_ids(&self) -> impl Iterator<Item = u32> {
-        [
-            0,
-            u32::from(satellite_stream_id(self.network_id, self.number, 0)),
-            u32::from(satellite_stream_id(self.network_id, self.number, 1)),
-        ]
-        .into_iter()
+        // A relative number reaches whichever stream the driver counts first,
+        // which is a 2K one, so it is no way in to a 4K network.
+        let relative = (self.network_id != BS_4K_NETWORK_ID).then_some(0);
+
+        relative.into_iter().chain(
+            [
+                satellite_stream_id(self.network_id, self.number, 0),
+                satellite_stream_id(self.network_id, self.number, 1),
+            ]
+            .map(u32::from),
+        )
     }
 }
 
@@ -527,17 +532,22 @@ fn satellite_stream_id(network_id: u16, transponder: u8, index: u8) -> u16 {
     (network_id << 12) | (u16::from(transponder) << 4) | u16::from(index)
 }
 
-/// Every transponder of the satellites Japan broadcasts from, BS first.
-fn transponders() -> impl Iterator<Item = Transponder> {
-    let bs = (1..=LAST_BS_TRANSPONDER)
+/// The BS transponders, as the network numbered `network_id` names them.
+fn bs_transponders(network_id: u16) -> impl Iterator<Item = Transponder> {
+    (1..=LAST_BS_TRANSPONDER)
         .step_by(2)
-        .map(|number| Transponder {
+        .map(move |number| Transponder {
             name: format!("BS-{number}"),
-            network_id: BS_NETWORK_ID,
+            network_id,
             number,
             frequency_khz: FIRST_BS_FREQUENCY_KHZ
                 + u32::from(number - 1) / 2 * BS_FREQUENCY_STEP_KHZ,
-        });
+        })
+}
+
+/// Every transponder of the satellites Japan broadcasts 2K from, BS first.
+fn transponders() -> impl Iterator<Item = Transponder> {
+    let bs = bs_transponders(BS_NETWORK_ID);
 
     let cs110 = (2..=LAST_CS110_TRANSPONDER)
         .step_by(2)
@@ -552,6 +562,17 @@ fn transponders() -> impl Iterator<Item = Transponder> {
         });
 
     bs.chain(cs110)
+}
+
+/// The transponders the 4K broadcasting is carried on.
+///
+/// BS numbers its 4K network apart from its 2K one, and a stream id is built
+/// from the network it belongs to, so the same frequencies are walked under a
+/// different number. CS110 is left out: which network its 4K is numbered as is
+/// in ARIB TR-B39, and probing its transponders under the BS number reaches
+/// nothing.
+fn transponders_4k() -> impl Iterator<Item = Transponder> {
+    bs_transponders(BS_4K_NETWORK_ID)
 }
 
 impl Scanner {
@@ -1227,7 +1248,7 @@ mod tests {
         TlvNit {
             section_syntax_indicator: true,
             section_length: 0,
-            original_network_id: BS_NETWORK_ID,
+            original_network_id: BS_4K_NETWORK_ID,
             version_number: 0,
             current_next_indicator: true,
             section_number: 0,
@@ -1293,8 +1314,8 @@ mod tests {
     fn reads_the_tlv_streams_of_a_network_from_its_nit() {
         let streams = tlv_streams(&tlv_nit(vec![
             TlvStreamInformation {
-                tlv_stream_id: 0x40F1,
-                original_network_id: BS_NETWORK_ID,
+                tlv_stream_id: 0xB070,
+                original_network_id: BS_4K_NETWORK_ID,
                 descriptors: vec![
                     tlv_satellite_descriptor(11_996_000),
                     tlv_service_list(&[TELEVISION_SERVICE_TYPE]),
@@ -1302,8 +1323,8 @@ mod tests {
             },
             // Data only, so there is nothing to watch on it.
             TlvStreamInformation {
-                tlv_stream_id: 0x40F2,
-                original_network_id: BS_NETWORK_ID,
+                tlv_stream_id: 0xB071,
+                original_network_id: BS_4K_NETWORK_ID,
                 descriptors: vec![
                     tlv_satellite_descriptor(11_996_000),
                     tlv_service_list(&[0xC0]),
@@ -1311,8 +1332,8 @@ mod tests {
             },
             // Nothing says which transponder it is on, so it cannot be tuned.
             TlvStreamInformation {
-                tlv_stream_id: 0x4111,
-                original_network_id: BS_NETWORK_ID,
+                tlv_stream_id: 0xB0F0,
+                original_network_id: BS_4K_NETWORK_ID,
                 descriptors: vec![tlv_service_list(&[TELEVISION_SERVICE_TYPE])],
             },
         ]));
@@ -1320,31 +1341,52 @@ mod tests {
         assert_eq!(
             streams,
             [TlvStream {
-                tlv_stream_id: 0x40F1,
+                tlv_stream_id: 0xB070,
                 frequency_khz: 1_318_000,
             }]
         );
     }
 
     #[test]
+    fn numbers_the_4k_network_apart_from_the_2k_one() {
+        let transponders = transponders_4k().collect::<Vec<_>>();
+
+        // The same twelve BS transponders, under the other network number.
+        assert_eq!(transponders.len(), 12);
+        assert!(
+            transponders
+                .iter()
+                .all(|transponder| transponder.network_id == BS_4K_NETWORK_ID)
+        );
+
+        let bs7 = transponders
+            .iter()
+            .find(|transponder| transponder.name == "BS-7")
+            .unwrap();
+        // The network names 0xB070, which is this rule under number 11.
+        assert_eq!(bs7.seed_stream_ids().collect::<Vec<_>>(), [0xB070, 0xB071]);
+        assert_eq!(bs7.frequency_khz, 1_164_560);
+    }
+
+    #[test]
     fn collects_the_services_of_the_stream_being_scanned() {
         let mut state = TlvScanState {
-            watched_stream: Some(0x40F1),
+            watched_stream: Some(0xB070),
             ..TlvScanState::default()
         };
 
         // A stream describes its neighbours as well as itself.
         state.read_m2_table(
-            "BS-15",
-            mh_sdt(0x40F2, vec![mh_service(0x4066, "Elsewhere", 0x01)]),
+            "BS-7",
+            mh_sdt(0xB071, vec![mh_service(0x4066, "Elsewhere", 0x01)]),
         );
         assert!(state.service_configs().is_empty());
         assert!(!state.has_service_catalog());
 
         state.read_m2_table(
-            "BS-15",
+            "BS-7",
             mh_sdt(
-                0x40F1,
+                0xB070,
                 vec![
                     mh_service(0x4065, "NHK BS4K", 0x01),
                     // Not television, so it is not a service to tune to.

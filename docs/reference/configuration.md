@@ -164,8 +164,9 @@ frequency = 1318000
 stream_id = 0x40F1
 ```
 
-[`scan --delivery-system ISDB-S3`](./cli#scan) walks the transponders for these
-the way the 2K scan does, and needs the [`master_key`](#cas) to read them.
+[`scan --delivery-system ISDB-S3`](./cli#scan) walks the BS transponders for
+these the way the 2K scan does, and needs the [`master_key`](#cas) to read
+them.
 
 ### BonDriver channels
 

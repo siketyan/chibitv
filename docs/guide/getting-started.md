@@ -108,7 +108,7 @@ cargo run -- scan > scanned-channels.toml
 # The BS and CS110 transponders.
 cargo run -- scan --delivery-system ISDB-S > scanned-satellite.toml
 
-# The 4K broadcasting on the same transponders.
+# The 4K broadcasting on the BS transponders.
 cargo run -- scan --delivery-system ISDB-S3 > scanned-4k.toml
 ```
 
@@ -117,7 +117,7 @@ Review the generated file and merge its `[[channels]]` entries into
 channel's services are available before tuning.
 
 2K and 4K share the transponders but not the signalling, so a dish carrying
-both is scanned twice.
+both is scanned twice. The 4K scan reaches BS only for now.
 
 ## Starting the server
 

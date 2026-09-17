@@ -131,7 +131,7 @@ Scan the physical channels on air and print the discovered
 
 | Option                        | Type    | Default  | Description                                    |
 | ----------------------------- | ------- | -------- | ---------------------------------------------- |
-| `--delivery-system <SYSTEM>`  | string  | `ISDB-T` | `ISDB-T` for terrestrial UHF, `ISDB-S` for BS and CS110, `ISDB-S3` for the 4K broadcasting on them. |
+| `--delivery-system <SYSTEM>`  | string  | `ISDB-T` | `ISDB-T` for terrestrial UHF, `ISDB-S` for BS and CS110, `ISDB-S3` for the 4K broadcasting on BS. |
 | `--start-channel <N>`         | integer | `13`     | First UHF physical channel to scan. ISDB-T only. |
 | `--end-channel <N>`           | integer | `52`     | Last UHF physical channel to scan. ISDB-T only. |
 | `--timeout <SECONDS>`         | integer | `12`     | Maximum time to wait on each channel.          |
@@ -157,6 +157,11 @@ network, and the services of a stream are named by its own MH-SDT. It needs the
 and 4K are separate scans because they share the transponders but not the
 signalling, so a dish carrying both is scanned twice.
 
+The 4K scan walks the BS transponders only. A stream id is built from the
+network it belongs to, and BS numbers its 4K network apart from its 2K one;
+which network the 4K on 110CS is numbered as is in ARIB TR-B39, so those
+transponders are left alone until it is known.
+
 ```shell
 cargo run -- scan > scanned-channels.toml
 
@@ -166,7 +171,7 @@ cargo run -- scan --start-channel 20 --end-channel 30 --timeout 5 > scanned-chan
 # Scan the BS and CS110 transponders instead.
 cargo run -- scan --delivery-system ISDB-S > scanned-channels.toml
 
-# The 4K broadcasting on the same transponders.
+# The 4K broadcasting on the BS transponders.
 cargo run -- scan --delivery-system ISDB-S3 > scanned-4k-channels.toml
 ```
 
