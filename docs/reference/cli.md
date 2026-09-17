@@ -131,7 +131,7 @@ Scan the physical channels on air and print the discovered
 
 | Option                        | Type    | Default  | Description                                    |
 | ----------------------------- | ------- | -------- | ---------------------------------------------- |
-| `--delivery-system <SYSTEM>`  | string  | `ISDB-T` | `ISDB-T` for terrestrial UHF, `ISDB-S` for BS and CS110. |
+| `--delivery-system <SYSTEM>`  | string  | `ISDB-T` | `ISDB-T` for terrestrial UHF, `ISDB-S` for BS and CS110, `ISDB-S3` for the 4K broadcasting on BS. |
 | `--start-channel <N>`         | integer | `13`     | First UHF physical channel to scan. ISDB-T only. |
 | `--end-channel <N>`           | integer | `52`     | Last UHF physical channel to scan. ISDB-T only. |
 | `--timeout <SECONDS>`         | integer | `12`     | Maximum time to wait on each channel.          |
@@ -141,18 +141,26 @@ lie within 13 to 52, and the start must not exceed the end; anything else is
 rejected before tuning. Scanning the full range waits up to the timeout on
 every channel that carries nothing, so a complete scan takes a while.
 
-A satellite scan works the other way round, because a satellite transport
-stream is picked by its id rather than by a channel number and which ids are on
-air changes as broadcasters come and go. The built-in BS and CS110 transponder
+A satellite scan works the other way round, because a satellite stream is
+picked by its id rather than by a channel number and which ids are on air
+changes as broadcasters come and go. The built-in BS and CS110 transponder
 frequencies are only a way in: the first transponder that answers hands over
-its network's NIT, which names every transport stream of that network and the
-transponder each one sits on, and the scan then tunes to the ones carrying
-television to read their services. Reaching a network is therefore a couple of
-tunes, and the length of the scan is set by how many streams it finds.
+its network's NIT, which names every stream of that network and the transponder
+each one sits on, and the scan then tunes to the ones carrying television to
+read their services. Reaching a network is therefore a couple of tunes, and the
+length of the scan is set by how many streams it finds.
 
-`scan` does not find ISDB-S3, the 4K satellite broadcasting, which signals over
-MMT/TLV rather than the SI tables this reads; those channels are still written
-by hand.
+`ISDB-S3`, the 4K broadcasting, is scanned the same way over MMT/TLV: the
+transmission control signal of a TLV stream carries the TLV-NIT that names the
+network, and the services of a stream are named by its own MH-SDT. It needs the
+[`master_key`](./configuration#cas) and an ACAS card, as watching 4K does. 2K
+and 4K are separate scans because they share the transponders but not the
+signalling, so a dish carrying both is scanned twice.
+
+The 4K scan walks the BS transponders only. A stream id is built from the
+network it belongs to, and BS numbers its 4K network apart from its 2K one;
+which network the 4K on 110CS is numbered as is in ARIB TR-B39, so those
+transponders are left alone until it is known.
 
 ```shell
 cargo run -- scan > scanned-channels.toml
@@ -162,6 +170,9 @@ cargo run -- scan --start-channel 20 --end-channel 30 --timeout 5 > scanned-chan
 
 # Scan the BS and CS110 transponders instead.
 cargo run -- scan --delivery-system ISDB-S > scanned-channels.toml
+
+# The 4K broadcasting on the BS transponders.
+cargo run -- scan --delivery-system ISDB-S3 > scanned-4k-channels.toml
 ```
 
 Review the generated file and merge its `[[channels]]` entries into

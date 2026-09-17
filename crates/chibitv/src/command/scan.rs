@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::io::BufReader;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -10,13 +11,19 @@ use chibitv_b10::descriptor::Descriptor;
 use chibitv_b10::table::{Nit, Sdt, ServiceInformation, Table};
 use chibitv_b24::decode as decode_b24;
 use chibitv_b25::B25Descrambler;
+use chibitv_b60::descriptor::Descriptor as MmtDescriptor;
+use chibitv_b60::message::Message;
+use chibitv_b60::table::{MhSdt, ServiceInformation as MmtServiceInformation, Table as MmtTable};
+use chibitv_b60::tlv_si::{Descriptor as TlvDescriptor, Table as TlvTable, TlvNit};
+use chibitv_b61::Descrambler;
 
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
 use crate::config::{ChannelConfig, ChannelConfigInner, Config, ServiceConfig};
 use crate::demux::{Demux, Packet, SignalingEvent, is_descrambling_refused};
 use crate::m2ts::M2tsDemuxer;
-use crate::tuner::Tuners;
+use crate::mmt::MmtDemuxer;
+use crate::tuner::{TunerInput, Tuners};
 
 const FIRST_UHF_CHANNEL: u8 = 13;
 const LAST_UHF_CHANNEL: u8 = 52;
@@ -24,6 +31,7 @@ const FIRST_UHF_FREQUENCY_HZ: u32 = 473_142_857;
 const UHF_CHANNEL_BANDWIDTH_HZ: u32 = 6_000_000;
 
 const BS_NETWORK_ID: u16 = 4;
+const BS_4K_NETWORK_ID: u16 = 11;
 const FIRST_BS_FREQUENCY_KHZ: u32 = 1_049_480;
 const BS_FREQUENCY_STEP_KHZ: u32 = 38_360;
 const LAST_BS_TRANSPONDER: u8 = 23;
@@ -44,6 +52,10 @@ pub enum ScanDeliverySystem {
     /// The BS and CS110 satellite transponders.
     #[value(name = "ISDB-S")]
     IsdbS,
+
+    /// The BS and CS110 satellite transponders carrying 4K.
+    #[value(name = "ISDB-S3")]
+    IsdbS3,
 }
 
 #[derive(Clone, Debug, Parser)]
@@ -86,11 +98,16 @@ pub async fn scan(options: &Options, config: &Config) -> anyhow::Result<()> {
         anyhow::bail!("No tuners are configured");
     }
 
-    let cas = PcscCasModule::open_shared()?;
-    let timeout = Duration::from_secs(options.timeout);
+    let scanner = Scanner {
+        tuners,
+        cas: PcscCasModule::open_shared()?,
+        master_key: config.cas.master_key.into(),
+        timeout: Duration::from_secs(options.timeout),
+    };
     let channels = match options.delivery_system {
-        ScanDeliverySystem::IsdbT => scan_terrestrial(options, &tuners, &cas, timeout)?,
-        ScanDeliverySystem::IsdbS => scan_satellite(&tuners, &cas, timeout)?,
+        ScanDeliverySystem::IsdbT => scan_terrestrial(&scanner, options)?,
+        ScanDeliverySystem::IsdbS => scan_satellite(&scanner)?,
+        ScanDeliverySystem::IsdbS3 => scan_satellite_4k(&scanner)?,
     };
 
     print!("{}", format_scan_output(&channels));
@@ -98,13 +115,19 @@ pub async fn scan(options: &Options, config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Walks the terrestrial UHF band, one physical channel at a time.
-fn scan_terrestrial(
-    options: &Options,
-    tuners: &Tuners,
-    cas: &Arc<PcscCasModule>,
+/// What every scan needs to hand a channel: a tuner to reach it with, the card
+/// that unscrambles it, and how long to wait on it.
+struct Scanner {
+    tuners: Tuners,
+    cas: Arc<PcscCasModule>,
+    /// The key the 4K descrambler needs, which the terrestrial and 2K ones do
+    /// without.
+    master_key: [u8; 32],
     timeout: Duration,
-) -> anyhow::Result<Vec<ChannelConfig>> {
+}
+
+/// Walks the terrestrial UHF band, one physical channel at a time.
+fn scan_terrestrial(scanner: &Scanner, options: &Options) -> anyhow::Result<Vec<ChannelConfig>> {
     if options.start_channel < FIRST_UHF_CHANNEL
         || options.end_channel > LAST_UHF_CHANNEL
         || options.start_channel > options.end_channel
@@ -127,9 +150,7 @@ fn scan_terrestrial(
         info!(physical_channel, frequency, "Scanning UHF channel");
 
         let label = format!("UHF {physical_channel}");
-        let Some(state) =
-            read_channel(tuners, cas, &label, inner, timeout, ScanState::is_complete)?
-        else {
+        let Some(state) = scanner.read_channel(&label, inner, ScanState::is_complete)? else {
             continue;
         };
         let Some(name) = state.channel_name() else {
@@ -158,12 +179,8 @@ fn scan_terrestrial(
 /// over its network's NIT, which names every transport stream of that network
 /// and the transponder each one sits on. What is left is to tune to the ones
 /// carrying television and read their service catalog.
-fn scan_satellite(
-    tuners: &Tuners,
-    cas: &Arc<PcscCasModule>,
-    timeout: Duration,
-) -> anyhow::Result<Vec<ChannelConfig>> {
-    let streams = discover_satellite_streams(tuners, cas, timeout)?;
+fn scan_satellite(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
+    let streams = discover_satellite_streams(scanner)?;
     if streams.is_empty() {
         warn!("No satellite network answered: is the dish connected and its converter powered?");
     }
@@ -183,14 +200,7 @@ fn scan_satellite(
         );
 
         let label = format!("TSID {transport_stream_id:#06X}");
-        let Some(state) = read_channel(
-            tuners,
-            cas,
-            &label,
-            inner,
-            timeout,
-            ScanState::has_service_catalog,
-        )?
+        let Some(state) = scanner.read_channel(&label, inner, ScanState::has_service_catalog)?
         else {
             continue;
         };
@@ -215,11 +225,7 @@ fn scan_satellite(
 }
 
 /// Finds every satellite transport stream worth tuning to, by its id.
-fn discover_satellite_streams(
-    tuners: &Tuners,
-    cas: &Arc<PcscCasModule>,
-    timeout: Duration,
-) -> anyhow::Result<BTreeMap<u16, SatelliteStream>> {
+fn discover_satellite_streams(scanner: &Scanner) -> anyhow::Result<BTreeMap<u16, SatelliteStream>> {
     let mut discovered = BTreeMap::<u16, SatelliteStream>::new();
 
     for transponder in transponders() {
@@ -248,9 +254,7 @@ fn discover_satellite_streams(
             // Any transport stream of a transponder carries the NIT of the
             // whole network, so there is nothing else to wait for here.
             let Some(state) =
-                read_channel(tuners, cas, &transponder.name, inner, timeout, |state| {
-                    state.nit.is_some()
-                })?
+                scanner.read_channel(&transponder.name, inner, |state| state.nit.is_some())?
             else {
                 // Nothing is coming off this transponder, and a stream id is
                 // not what would change that: the tuner locks on to the
@@ -335,6 +339,159 @@ fn carries_television(descriptors: &[Descriptor]) -> bool {
     listed.peek().is_none() || listed.any(|service| service.service_type == TELEVISION_SERVICE_TYPE)
 }
 
+/// Walks the BS and CS110 transponders for the 4K broadcasting.
+///
+/// It works the way the 2K scan does, a transponder being only a way in and the
+/// network naming the rest, but over MMT/TLV: the transmission control signal
+/// of a TLV stream carries the TLV-NIT, which names every TLV stream of the
+/// network, and the services of one are named by its own MH-SDT.
+fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
+    let streams = discover_tlv_streams(scanner)?;
+    if streams.is_empty() {
+        warn!("No 4K network answered: is the dish connected and its converter powered?");
+    }
+
+    let mut channels = Vec::new();
+    for stream in streams.values() {
+        let tlv_stream_id = stream.tlv_stream_id;
+        let frequency = stream.frequency_khz;
+        let inner = ChannelInner::IsdbS3 {
+            frequency,
+            stream_id: u32::from(tlv_stream_id),
+        };
+
+        info!(tlv_stream_id, frequency, "Scanning TLV stream");
+
+        let label = format!("TLV stream {tlv_stream_id:#06X}");
+        let Some(state) = scanner.read_tlv_channel(
+            &label,
+            inner,
+            Some(tlv_stream_id),
+            TlvScanState::has_service_catalog,
+        )?
+        else {
+            continue;
+        };
+        let Some(name) = state.channel_name() else {
+            continue;
+        };
+
+        channels.push(ChannelConfig {
+            name,
+            transport_stream_id: Some(tlv_stream_id),
+            services: state.service_configs(),
+            inner: ChannelConfigInner::IsdbS3 {
+                frequency,
+                stream_id: u32::from(tlv_stream_id),
+            },
+        });
+    }
+
+    Ok(channels)
+}
+
+/// Finds every TLV stream worth tuning to, by its id.
+fn discover_tlv_streams(scanner: &Scanner) -> anyhow::Result<BTreeMap<u16, TlvStream>> {
+    let mut discovered = BTreeMap::<u16, TlvStream>::new();
+
+    for transponder in transponders_4k() {
+        if discovered
+            .values()
+            .any(|stream| stream.frequency_khz == transponder.frequency_khz)
+        {
+            continue;
+        }
+
+        for stream_id in transponder.seed_stream_ids() {
+            info!(
+                transponder = transponder.name,
+                frequency = transponder.frequency_khz,
+                stream_id,
+                "Probing satellite transponder for 4K"
+            );
+
+            let inner = ChannelInner::IsdbS3 {
+                frequency: transponder.frequency_khz,
+                stream_id,
+            };
+            let Some(state) =
+                scanner.read_tlv_channel(&transponder.name, inner, None, |state| {
+                    state.nit.is_some()
+                })?
+            else {
+                // As in the 2K scan: a transponder the tuner cannot reach is
+                // one no stream id would have helped with.
+                break;
+            };
+
+            let Some(nit) = state.nit else {
+                continue;
+            };
+
+            let found = tlv_streams(&nit);
+            info!(
+                transponder = transponder.name,
+                original_network_id = nit.original_network_id,
+                streams = found.len(),
+                "4K network found"
+            );
+            discovered.extend(
+                found
+                    .into_iter()
+                    .map(|stream| (stream.tlv_stream_id, stream)),
+            );
+
+            break;
+        }
+    }
+
+    Ok(discovered)
+}
+
+/// One TLV stream of a network, as its TLV-NIT describes it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct TlvStream {
+    tlv_stream_id: u16,
+    /// The frequency the dish hands the tuner, in kHz.
+    frequency_khz: u32,
+}
+
+/// The TLV streams a TLV-NIT describes that are worth tuning to, under the same
+/// rules [`satellite_streams`] reads a NIT by.
+fn tlv_streams(nit: &TlvNit) -> Vec<TlvStream> {
+    nit.tlv_streams
+        .iter()
+        .filter(|stream| tlv_stream_carries_television(&stream.descriptors))
+        .filter_map(|stream| {
+            let frequency_khz = stream.descriptors.iter().find_map(|descriptor| {
+                let TlvDescriptor::SatelliteDeliverySystem(descriptor) = descriptor else {
+                    return None;
+                };
+
+                descriptor.intermediate_frequency_khz()
+            })?;
+
+            Some(TlvStream {
+                tlv_stream_id: stream.tlv_stream_id,
+                frequency_khz,
+            })
+        })
+        .collect()
+}
+
+fn tlv_stream_carries_television(descriptors: &[TlvDescriptor]) -> bool {
+    let mut listed = descriptors
+        .iter()
+        .filter_map(|descriptor| match descriptor {
+            TlvDescriptor::ServiceList(descriptor) => Some(&descriptor.services),
+            _ => None,
+        })
+        .flatten()
+        .peekable();
+
+    listed.peek().is_none() || listed.any(|service| service.service_type == TELEVISION_SERVICE_TYPE)
+}
+
 /// A transponder the scan reaches for before the network has described itself.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Transponder {
@@ -352,17 +509,21 @@ impl Transponder {
     /// The stream ids to reach the transponder with, before anything on air is
     /// known.
     ///
-    /// ARIB numbers a satellite transport stream after the transponder it sits
-    /// on and its place on it, so the first two streams of a transponder can be
-    /// named without having heard from the network yet. A relative number comes
-    /// first, for the drivers that pick a stream by its place instead.
+    /// ARIB numbers a satellite stream after the transponder it sits on and its
+    /// place on it, so the first two streams of a transponder can be named
+    /// without having heard from the network yet.
     fn seed_stream_ids(&self) -> impl Iterator<Item = u32> {
-        [
-            0,
-            u32::from(satellite_stream_id(self.network_id, self.number, 0)),
-            u32::from(satellite_stream_id(self.network_id, self.number, 1)),
-        ]
-        .into_iter()
+        // A relative number reaches whichever stream the driver counts first,
+        // which is a 2K one, so it is no way in to a 4K network.
+        let relative = (self.network_id != BS_4K_NETWORK_ID).then_some(0);
+
+        relative.into_iter().chain(
+            [
+                satellite_stream_id(self.network_id, self.number, 0),
+                satellite_stream_id(self.network_id, self.number, 1),
+            ]
+            .map(u32::from),
+        )
     }
 }
 
@@ -371,17 +532,22 @@ fn satellite_stream_id(network_id: u16, transponder: u8, index: u8) -> u16 {
     (network_id << 12) | (u16::from(transponder) << 4) | u16::from(index)
 }
 
-/// Every transponder of the satellites Japan broadcasts from, BS first.
-fn transponders() -> impl Iterator<Item = Transponder> {
-    let bs = (1..=LAST_BS_TRANSPONDER)
+/// The BS transponders, as the network numbered `network_id` names them.
+fn bs_transponders(network_id: u16) -> impl Iterator<Item = Transponder> {
+    (1..=LAST_BS_TRANSPONDER)
         .step_by(2)
-        .map(|number| Transponder {
+        .map(move |number| Transponder {
             name: format!("BS-{number}"),
-            network_id: BS_NETWORK_ID,
+            network_id,
             number,
             frequency_khz: FIRST_BS_FREQUENCY_KHZ
                 + u32::from(number - 1) / 2 * BS_FREQUENCY_STEP_KHZ,
-        });
+        })
+}
+
+/// Every transponder of the satellites Japan broadcasts 2K from, BS first.
+fn transponders() -> impl Iterator<Item = Transponder> {
+    let bs = bs_transponders(BS_NETWORK_ID);
 
     let cs110 = (2..=LAST_CS110_TRANSPONDER)
         .step_by(2)
@@ -398,64 +564,144 @@ fn transponders() -> impl Iterator<Item = Transponder> {
     bs.chain(cs110)
 }
 
-/// Tunes to one physical channel and reads its tables until `is_done` is
-/// satisfied or the time runs out.
+/// The transponders the 4K broadcasting is carried on.
 ///
-/// A channel nothing could be tuned to is reported as nothing found rather than
-/// as an error, so that the rest of the scan carries on.
-fn read_channel(
-    tuners: &Tuners,
-    cas: &Arc<PcscCasModule>,
-    label: &str,
-    inner: ChannelInner,
-    timeout: Duration,
-    is_done: impl Fn(&ScanState) -> bool,
-) -> anyhow::Result<Option<ScanState>> {
-    let channel = Channel {
-        id: 0,
-        name: label.to_string(),
-        inner,
-    };
+/// BS numbers its 4K network apart from its 2K one, and a stream id is built
+/// from the network it belongs to, so the same frequencies are walked under a
+/// different number. CS110 is left out: which network its 4K is numbered as is
+/// in ARIB TR-B39, and probing its transponders under the BS number reaches
+/// nothing.
+fn transponders_4k() -> impl Iterator<Item = Transponder> {
+    bs_transponders(BS_4K_NETWORK_ID)
+}
 
-    let tuner = tuners.try_acquire_by_id(0)?;
-    if let Err(error) = tuner.tune(channel) {
-        warn!(channel = label, error = %error, "Could not tune to the channel");
-        return Ok(None);
-    }
+impl Scanner {
+    /// Tunes to one channel and reads its tables until `is_done` is satisfied
+    /// or the time runs out.
+    ///
+    /// A channel nothing could be tuned to is reported as nothing found rather
+    /// than as an error, so that the rest of the scan carries on.
+    fn read_channel(
+        &self,
+        label: &str,
+        inner: ChannelInner,
+        is_done: impl Fn(&ScanState) -> bool,
+    ) -> anyhow::Result<Option<ScanState>> {
+        let Some(input) = self.tune(label, inner)? else {
+            return Ok(None);
+        };
 
-    let descrambler = B25Descrambler::init(cas.clone())?;
-    let mut demux = M2tsDemuxer::new(tuner.open()?, descrambler);
-    let mut state = ScanState::default();
-    let mut refused = false;
-    let deadline = Instant::now() + timeout;
+        let descrambler = B25Descrambler::init(self.cas.clone())?;
+        let mut demux = M2tsDemuxer::new(input, descrambler);
+        let mut state = ScanState::default();
+        let mut refused = false;
+        let deadline = Instant::now() + self.timeout;
 
-    while Instant::now() < deadline && !is_done(&state) {
-        let packet = match demux.next_packet() {
-            Ok(Some(packet)) => packet,
-            Ok(None) => break,
-            // The tables are not scrambled, so the scan reads past a card
-            // that will not unscramble the rest of the channel.
-            Err(error) if is_descrambling_refused(&error) => {
-                if !std::mem::replace(&mut refused, true) {
-                    warn!(channel = label, %error, "Scanning the tables only");
+        while Instant::now() < deadline && !is_done(&state) {
+            let packet = match demux.next_packet() {
+                Ok(Some(packet)) => packet,
+                Ok(None) => break,
+                // The tables are not scrambled, so the scan reads past a card
+                // that will not unscramble the rest of the channel.
+                Err(error) if is_descrambling_refused(&error) => {
+                    if !std::mem::replace(&mut refused, true) {
+                        warn!(channel = label, %error, "Scanning the tables only");
+                    }
+
+                    continue;
                 }
+                Err(error) => {
+                    warn!(channel = label, error = %error, "Could not read transport stream");
+                    continue;
+                }
+            };
 
+            let Packet::Signaling(SignalingEvent::B10Table { table_id, table }) = packet else {
                 continue;
-            }
-            Err(error) => {
-                warn!(channel = label, error = %error, "Could not read transport stream");
-                continue;
-            }
-        };
+            };
 
-        let Packet::Signaling(SignalingEvent::B10Table { table_id, table }) = packet else {
-            continue;
-        };
+            state.read_table(label, table_id, table);
+        }
 
-        state.read_table(label, table_id, table);
+        Ok(Some(state))
     }
 
-    Ok(Some(state))
+    /// The MMT/TLV counterpart of [`Scanner::read_channel`].
+    ///
+    /// `watched_stream` is the TLV stream the services are collected of, which
+    /// a probe that only wants the network leaves unset.
+    fn read_tlv_channel(
+        &self,
+        label: &str,
+        inner: ChannelInner,
+        watched_stream: Option<u16>,
+        is_done: impl Fn(&TlvScanState) -> bool,
+    ) -> anyhow::Result<Option<TlvScanState>> {
+        let Some(input) = self.tune(label, inner)? else {
+            return Ok(None);
+        };
+
+        // Nothing the scan reads is scrambled, but the descrambler is what the
+        // demultiplexer is built around, so it is set up all the same.
+        let descrambler = Descrambler::init(self.cas.clone(), self.master_key, false)?;
+        let mut demux = MmtDemuxer::new(BufReader::new(input), descrambler);
+        let mut state = TlvScanState {
+            watched_stream,
+            ..TlvScanState::default()
+        };
+        let mut refused = false;
+        let deadline = Instant::now() + self.timeout;
+
+        while Instant::now() < deadline && !is_done(&state) {
+            let packet = match demux.next_packet() {
+                Ok(Some(packet)) => packet,
+                Ok(None) => break,
+                // The signalling is not scrambled, so the scan reads past a
+                // card that will not unscramble the rest of the stream.
+                Err(error) if is_descrambling_refused(&error) => {
+                    if !std::mem::replace(&mut refused, true) {
+                        warn!(channel = label, %error, "Scanning the signalling only");
+                    }
+
+                    continue;
+                }
+                Err(error) => {
+                    warn!(channel = label, error = %error, "Could not read TLV stream");
+                    continue;
+                }
+            };
+
+            match packet {
+                Packet::Signaling(SignalingEvent::TlvTable(table)) => {
+                    state.read_tlv_table(label, table);
+                }
+                Packet::Signaling(SignalingEvent::B60Message(Message::M2Section(message))) => {
+                    state.read_m2_table(label, message.table);
+                }
+                _ => {}
+            }
+        }
+
+        Ok(Some(state))
+    }
+
+    /// Tunes the first tuner to the channel, reporting one it cannot reach as
+    /// nothing rather than as an error.
+    fn tune(&self, label: &str, inner: ChannelInner) -> anyhow::Result<Option<TunerInput>> {
+        let channel = Channel {
+            id: 0,
+            name: label.to_string(),
+            inner,
+        };
+
+        let tuner = self.tuners.try_acquire_by_id(0)?;
+        if let Err(error) = tuner.tune(channel) {
+            warn!(channel = label, error = %error, "Could not tune to the channel");
+            return Ok(None);
+        }
+
+        Ok(Some(tuner.open()?))
+    }
 }
 
 impl ScanState {
@@ -546,6 +792,111 @@ impl ScanState {
     }
 }
 
+/// What a 4K scan collects from one TLV stream.
+#[derive(Clone, Debug, Default)]
+struct TlvScanState {
+    /// The TLV stream whose services are being collected, unset while probing
+    /// a transponder for the network alone.
+    watched_stream: Option<u16>,
+    nit: Option<TlvNit>,
+    services: BTreeMap<u16, MmtServiceInformation>,
+    sdt_sections: BTreeSet<u8>,
+    sdt_last_section_number: Option<u8>,
+    logged_networks: BTreeSet<u16>,
+    logged_services: BTreeSet<u16>,
+}
+
+impl TlvScanState {
+    /// The MMT counterpart of [`ScanState::has_service_catalog`], and all a 4K
+    /// scan waits for once the network has been heard out.
+    fn has_service_catalog(&self) -> bool {
+        self.sdt_last_section_number
+            .is_some_and(|last_section| self.sdt_sections.len() == usize::from(last_section) + 1)
+            && !self.services.is_empty()
+    }
+
+    fn read_tlv_table(&mut self, channel: &str, table: TlvTable) {
+        let TlvTable::TlvNit(nit) = table else {
+            return;
+        };
+
+        if self.logged_networks.insert(nit.original_network_id) {
+            info!(
+                channel,
+                original_network_id = nit.original_network_id,
+                network_name = tlv_network_name(&nit).unwrap_or_default(),
+                "Network found"
+            );
+        }
+
+        if self.nit.is_none() {
+            self.nit = Some(nit);
+        }
+    }
+
+    fn read_m2_table(&mut self, channel: &str, table: MmtTable) {
+        let MmtTable::MhSdt(sdt) = table else {
+            return;
+        };
+
+        // A stream describes the others as well as itself, and only its own
+        // services belong to the channel being scanned.
+        if self.watched_stream != Some(sdt.tlv_stream_id) {
+            return;
+        }
+
+        self.read_mh_sdt(channel, sdt);
+    }
+
+    fn read_mh_sdt(&mut self, channel: &str, sdt: MhSdt) {
+        self.sdt_sections.insert(sdt.section_number);
+        self.sdt_last_section_number = Some(sdt.last_section_number);
+
+        for service in sdt.services {
+            if self.logged_services.insert(service.service_id) {
+                let descriptor = mmt_service_descriptor(&service).unwrap_or_default();
+
+                info!(
+                    channel,
+                    tlv_stream_id = sdt.tlv_stream_id,
+                    service_id = service.service_id,
+                    service_type = descriptor.service_type.unwrap_or_default(),
+                    service_name = descriptor.service_name,
+                    "Service found"
+                );
+            }
+
+            self.services.insert(service.service_id, service);
+        }
+    }
+
+    fn channel_name(&self) -> Option<String> {
+        self.services
+            .values()
+            .filter_map(mmt_service_descriptor)
+            .find_map(|descriptor| {
+                (!descriptor.service_name.is_empty()).then_some(descriptor.service_name)
+            })
+            .or_else(|| self.nit.as_ref().and_then(tlv_network_name))
+    }
+
+    fn service_configs(&self) -> Vec<ServiceConfig> {
+        self.services
+            .values()
+            .filter_map(|service| {
+                let descriptor = mmt_service_descriptor(service)?;
+                (descriptor.service_type == Some(TELEVISION_SERVICE_TYPE)).then_some(
+                    ServiceConfig {
+                        id: service.service_id,
+                        name: descriptor.service_name,
+                        provider_name: descriptor.provider_name,
+                    },
+                )
+            })
+            .collect()
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 struct ServiceDescriptor {
     service_type: Option<u8>,
@@ -577,6 +928,37 @@ fn service_descriptor(service: &ServiceInformation) -> Option<ServiceDescriptor>
             service_type: Some(descriptor.service_type),
             service_name: text_bytes(&descriptor.service_name),
             provider_name: text_bytes(&descriptor.service_provider_name),
+        })
+    })
+}
+
+/// The MMT counterpart of [`network_name`], which the 4K signalling spells in
+/// UTF-8 rather than in the encoding the SI tables use.
+fn tlv_network_name(nit: &TlvNit) -> Option<String> {
+    nit.descriptors.iter().find_map(|descriptor| {
+        let TlvDescriptor::NetworkName(descriptor) = descriptor else {
+            return None;
+        };
+
+        let name = String::from_utf8_lossy(&descriptor.network_name).to_string();
+        (!name.is_empty()).then_some(name)
+    })
+}
+
+/// The MMT counterpart of [`service_descriptor`].
+///
+/// The 4K signalling spells its names in UTF-8 rather than in the encoding the
+/// SI tables use.
+fn mmt_service_descriptor(service: &MmtServiceInformation) -> Option<ServiceDescriptor> {
+    service.descriptors.iter().find_map(|descriptor| {
+        let MmtDescriptor::MhService(descriptor) = descriptor else {
+            return None;
+        };
+
+        Some(ServiceDescriptor {
+            service_type: Some(descriptor.service_type),
+            service_name: String::from_utf8_lossy(&descriptor.service_name).to_string(),
+            provider_name: String::from_utf8_lossy(&descriptor.service_provider_name).to_string(),
         })
     })
 }
@@ -686,6 +1068,13 @@ mod tests {
         SatelliteDeliverySystemDescriptor, ServiceListDescriptor, ServiceListItem,
     };
     use chibitv_b10::table::TransportStreamInformation;
+    use chibitv_b60::descriptor::MhServiceDescriptor;
+    use chibitv_b60::tlv_si::{
+        NetworkNameDescriptor as TlvNetworkNameDescriptor,
+        SatelliteDeliverySystemDescriptor as TlvSatelliteDeliverySystemDescriptor,
+        ServiceListDescriptor as TlvServiceListDescriptor, ServiceListItem as TlvServiceListItem,
+        TlvStreamInformation,
+    };
 
     use super::*;
 
@@ -830,6 +1219,48 @@ mod tests {
         );
     }
 
+    fn tlv_satellite_descriptor(frequency_khz: u32) -> TlvDescriptor {
+        TlvDescriptor::SatelliteDeliverySystem(TlvSatelliteDeliverySystemDescriptor {
+            frequency_khz,
+            orbital_position: 1100,
+            west_east_flag: true,
+            polarisation: 0x01,
+            modulation: 0x0B,
+            symbol_rate: 288_600,
+            fec_inner: 0x0F,
+        })
+    }
+
+    fn tlv_service_list(service_types: &[u8]) -> TlvDescriptor {
+        TlvDescriptor::ServiceList(TlvServiceListDescriptor {
+            services: service_types
+                .iter()
+                .enumerate()
+                .map(|(index, service_type)| TlvServiceListItem {
+                    service_id: 0x4065 + index as u16,
+                    service_type: *service_type,
+                })
+                .collect(),
+        })
+    }
+
+    fn tlv_nit(tlv_streams: Vec<TlvStreamInformation>) -> TlvNit {
+        TlvNit {
+            section_syntax_indicator: true,
+            section_length: 0,
+            original_network_id: BS_4K_NETWORK_ID,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            descriptors: vec![TlvDescriptor::NetworkName(TlvNetworkNameDescriptor {
+                network_name: b"BS4".to_vec(),
+            })],
+            tlv_streams,
+            crc_32: 0,
+        }
+    }
+
     fn television_service(service_id: u16, name: &str) -> ServiceInformation {
         ServiceInformation {
             service_id,
@@ -846,6 +1277,141 @@ mod tests {
                 },
             )],
         }
+    }
+
+    fn mh_service(service_id: u16, name: &str, service_type: u8) -> MmtServiceInformation {
+        MmtServiceInformation {
+            service_id,
+            eit_user_defined_flags: 0,
+            eit_schedule_flag: true,
+            eit_present_following_flag: true,
+            running_status: 4,
+            free_ca_mode: true,
+            descriptors: vec![MmtDescriptor::MhService(MhServiceDescriptor {
+                service_type,
+                service_provider_name: "NHK".as_bytes().to_vec(),
+                service_name: name.as_bytes().to_vec(),
+            })],
+        }
+    }
+
+    fn mh_sdt(tlv_stream_id: u16, services: Vec<MmtServiceInformation>) -> MmtTable {
+        MmtTable::MhSdt(MhSdt {
+            section_syntax_indicator: true,
+            section_length: 0,
+            tlv_stream_id,
+            version_number: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            original_network_id: BS_NETWORK_ID,
+            services,
+            crc_32: 0,
+        })
+    }
+
+    #[test]
+    fn reads_the_tlv_streams_of_a_network_from_its_nit() {
+        let streams = tlv_streams(&tlv_nit(vec![
+            TlvStreamInformation {
+                tlv_stream_id: 0xB070,
+                original_network_id: BS_4K_NETWORK_ID,
+                descriptors: vec![
+                    tlv_satellite_descriptor(11_996_000),
+                    tlv_service_list(&[TELEVISION_SERVICE_TYPE]),
+                ],
+            },
+            // Data only, so there is nothing to watch on it.
+            TlvStreamInformation {
+                tlv_stream_id: 0xB071,
+                original_network_id: BS_4K_NETWORK_ID,
+                descriptors: vec![
+                    tlv_satellite_descriptor(11_996_000),
+                    tlv_service_list(&[0xC0]),
+                ],
+            },
+            // Nothing says which transponder it is on, so it cannot be tuned.
+            TlvStreamInformation {
+                tlv_stream_id: 0xB0F0,
+                original_network_id: BS_4K_NETWORK_ID,
+                descriptors: vec![tlv_service_list(&[TELEVISION_SERVICE_TYPE])],
+            },
+        ]));
+
+        assert_eq!(
+            streams,
+            [TlvStream {
+                tlv_stream_id: 0xB070,
+                frequency_khz: 1_318_000,
+            }]
+        );
+    }
+
+    #[test]
+    fn numbers_the_4k_network_apart_from_the_2k_one() {
+        let transponders = transponders_4k().collect::<Vec<_>>();
+
+        // The same twelve BS transponders, under the other network number.
+        assert_eq!(transponders.len(), 12);
+        assert!(
+            transponders
+                .iter()
+                .all(|transponder| transponder.network_id == BS_4K_NETWORK_ID)
+        );
+
+        let bs7 = transponders
+            .iter()
+            .find(|transponder| transponder.name == "BS-7")
+            .unwrap();
+        // The network names 0xB070, which is this rule under number 11.
+        assert_eq!(bs7.seed_stream_ids().collect::<Vec<_>>(), [0xB070, 0xB071]);
+        assert_eq!(bs7.frequency_khz, 1_164_560);
+    }
+
+    #[test]
+    fn collects_the_services_of_the_stream_being_scanned() {
+        let mut state = TlvScanState {
+            watched_stream: Some(0xB070),
+            ..TlvScanState::default()
+        };
+
+        // A stream describes its neighbours as well as itself.
+        state.read_m2_table(
+            "BS-7",
+            mh_sdt(0xB071, vec![mh_service(0x4066, "Elsewhere", 0x01)]),
+        );
+        assert!(state.service_configs().is_empty());
+        assert!(!state.has_service_catalog());
+
+        state.read_m2_table(
+            "BS-7",
+            mh_sdt(
+                0xB070,
+                vec![
+                    mh_service(0x4065, "NHK BS4K", 0x01),
+                    // Not television, so it is not a service to tune to.
+                    mh_service(0x4067, "Data", 0xC0),
+                ],
+            ),
+        );
+        let services = state.service_configs();
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].id, 0x4065);
+        assert_eq!(services[0].name, "NHK BS4K");
+        assert_eq!(services[0].provider_name, "NHK");
+        assert_eq!(state.channel_name().as_deref(), Some("NHK BS4K"));
+        // The network was heard out while the transponder was probed, so there
+        // is nothing left to wait for.
+        assert!(state.has_service_catalog());
+    }
+
+    #[test]
+    fn falls_back_to_the_network_name_of_a_stream_without_a_named_service() {
+        let mut state = TlvScanState::default();
+
+        state.read_tlv_table("BS-15", TlvTable::TlvNit(tlv_nit(vec![])));
+
+        assert_eq!(state.channel_name().as_deref(), Some("BS4"));
     }
 
     #[test]
@@ -932,5 +1498,28 @@ mod tests {
         assert!(toml.contains("delivery_system = \"ISDB-S\""));
         assert!(toml.contains("frequency = 1087840"));
         assert!(toml.contains("stream_id = 16433"));
+    }
+
+    #[test]
+    fn serializes_a_4k_channel_with_the_tlv_stream_it_is_picked_by() {
+        let channels = vec![ChannelConfig {
+            name: "NHK BS4K".to_string(),
+            transport_stream_id: Some(0x40F1),
+            services: vec![ServiceConfig {
+                id: 0x4065,
+                name: "NHK BS4K".to_string(),
+                provider_name: "NHK".to_string(),
+            }],
+            inner: ChannelConfigInner::IsdbS3 {
+                frequency: 1_318_000,
+                stream_id: 0x40F1,
+            },
+        }];
+
+        let toml = format_scan_output(&channels);
+
+        assert!(toml.contains("delivery_system = \"ISDB-S3\""));
+        assert!(toml.contains("frequency = 1318000"));
+        assert!(toml.contains("stream_id = 16625"));
     }
 }

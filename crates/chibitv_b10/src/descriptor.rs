@@ -95,7 +95,9 @@ pub struct SatelliteDeliverySystemDescriptor {
 
 /// The local oscillator of the BS/CS110 converter every Japanese dish carries,
 /// in kHz.
-const LNB_LOCAL_OSCILLATOR_KHZ: u32 = 10_678_000;
+const RIGHT_HANDED_OSCILLATOR_KHZ: u32 = 10_678_000;
+const LEFT_HANDED_OSCILLATOR_KHZ: u32 = 9_505_000;
+const LEFT_HANDED_CIRCULAR_POLARISATION: u8 = 0b10;
 
 impl SatelliteDeliverySystemDescriptor {
     pub fn read(bytes: &mut Bytes) -> Result<Self> {
@@ -138,7 +140,15 @@ impl SatelliteDeliverySystemDescriptor {
     ///
     /// A descriptor naming a frequency the converter cannot reach has none.
     pub fn intermediate_frequency_khz(&self) -> Option<u32> {
-        self.frequency_khz.checked_sub(LNB_LOCAL_OSCILLATOR_KHZ)
+        // The two senses of circular polarisation are shifted down by
+        // converters of their own, so which one carries the stream decides
+        // where it lands.
+        let oscillator = match self.polarisation {
+            LEFT_HANDED_CIRCULAR_POLARISATION => LEFT_HANDED_OSCILLATOR_KHZ,
+            _ => RIGHT_HANDED_OSCILLATOR_KHZ,
+        };
+
+        self.frequency_khz.checked_sub(oscillator)
     }
 }
 
@@ -426,7 +436,7 @@ mod tests {
             0x43, 0x0B, // descriptor_tag, descriptor_length
             0x01, 0x19, 0x96, 0x00, // frequency, as 011.99600 GHz
             0x11, 0x00, // orbital_position, as 110.0 degrees
-            0xAB, // west_east_flag, polarisation, modulation
+            0xEB, // west_east_flag, polarisation, modulation
             0x02, 0x88, 0x60, 0x0F, // symbol_rate, as 028.8600 Msym/s, and FEC_inner
         ]))
         .unwrap();
@@ -437,7 +447,7 @@ mod tests {
         assert_eq!(descriptor.frequency_khz, 11_996_000);
         assert_eq!(descriptor.orbital_position, 1100);
         assert!(descriptor.west_east_flag);
-        assert_eq!(descriptor.polarisation, 0x01);
+        assert_eq!(descriptor.polarisation, 0b11);
         assert_eq!(descriptor.modulation, 0x0B);
         assert_eq!(descriptor.symbol_rate, 288_600);
         assert_eq!(descriptor.fec_inner, 0x0F);
@@ -445,18 +455,30 @@ mod tests {
 
     #[test]
     fn converts_a_downlink_frequency_to_the_one_the_tuner_takes() {
-        // BS-15, which the dish hands to the tuner at 1318 MHz.
+        // BS-15, right-handed, which the dish hands to the tuner at 1318 MHz.
         let descriptor = SatelliteDeliverySystemDescriptor {
             frequency_khz: 11_996_000,
             orbital_position: 1100,
             west_east_flag: true,
-            polarisation: 0x01,
+            polarisation: 0b11,
             modulation: 0x0B,
             symbol_rate: 288_600,
             fec_inner: 0x0F,
         };
 
         assert_eq!(descriptor.intermediate_frequency_khz(), Some(1_318_000));
+
+        // BS-14, left-handed, which a converter of its own shifts down to
+        // 2471.82 MHz instead.
+        assert_eq!(
+            SatelliteDeliverySystemDescriptor {
+                frequency_khz: 11_976_820,
+                polarisation: 0b10,
+                ..descriptor
+            }
+            .intermediate_frequency_khz(),
+            Some(2_471_820),
+        );
 
         // Nothing the converter can shift down is below its oscillator.
         assert_eq!(

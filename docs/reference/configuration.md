@@ -144,7 +144,9 @@ stream_id = 0x4031
 
 The frequency is the one the converter on the dish hands the tuner, not the one
 the satellite radiates: BS-3 sits at 11 087.84 MHz on air and reaches the tuner
-at 1 087.84 MHz. [`scan --delivery-system ISDB-S`](./cli#scan) walks the BS and
+at 1 087.84 MHz. The two senses of circular polarisation are shifted down by
+converters of their own, so a left-handed transponder lands elsewhere: the 8K on
+BS-14 radiates at 11 976.82 MHz and arrives at 2 471.82 MHz. [`scan --delivery-system ISDB-S`](./cli#scan) walks the BS and
 CS110 transponders and prints these entries, along with the
 [`transport_stream_id`](#channels) and [`services`](#channels-services) that
 `serve` needs before tuning.
@@ -163,6 +165,10 @@ delivery_system = "ISDB-S3"
 frequency = 1318000
 stream_id = 0x40F1
 ```
+
+[`scan --delivery-system ISDB-S3`](./cli#scan) walks the BS transponders for
+these the way the 2K scan does, and needs the [`master_key`](#cas) to read
+them.
 
 ### BonDriver channels
 

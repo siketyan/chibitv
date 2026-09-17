@@ -47,7 +47,7 @@ The library crates map directly to ARIB standard documents and hold the parsing/
 - `chibitv_b10` — SI tables/descriptors for MPEG-2 TS (ISDB-T/ISDB-S) broadcast metadata (STD-B10).
 - `chibitv_b24` — character encoding (ARIB extended 8-bit chars / additional symbols) (STD-B24).
 - `chibitv_b25` — ISDB-T/ISDB-S conditional access: MULTI2 descrambling and the classic CAS card protocol (STD-B25).
-- `chibitv_b60` — MMT/TLV container parsing for ISDB-S3 (BS/CS 4K): TLV packets, compressed IP, MMTP, messages/tables/descriptors, MFU (STD-B60).
+- `chibitv_b60` — MMT/TLV container parsing for ISDB-S3 (BS/CS 4K): TLV packets, TLV-SI, compressed IP, MMTP, messages/tables/descriptors, MFU (STD-B60).
 - `chibitv_b61` — ISDB-S3 conditional access: AES-CTR descrambling and the ACAS card protocol; needs the externally provided _Kd_ master key (STD-B61).
 - `chibitv_bon` — BonDriver, the de-facto tuner interface on Windows; a hand-written binding to its `IBonDriver2` vtable. Empty on other platforms.
 

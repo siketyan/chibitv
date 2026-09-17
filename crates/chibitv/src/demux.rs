@@ -4,6 +4,7 @@ use bytes::Bytes;
 
 use chibitv_b10::table::Table as B10Table;
 use chibitv_b60::message::Message;
+use chibitv_b60::tlv_si::Table as TlvTable;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum TrackType {
@@ -29,8 +30,15 @@ pub enum MediaPacket {
 
 #[derive(Clone, Debug)]
 pub enum SignalingEvent {
-    B10Table { table_id: u8, table: B10Table },
+    B10Table {
+        table_id: u8,
+        table: B10Table,
+    },
     B60Message(Message),
+    /// A table of the TLV-SI, which describes the TLV stream itself rather
+    /// than what it carries. It names itself, unlike the SI tables, so there is
+    /// no table id beside it.
+    TlvTable(TlvTable),
 }
 
 #[derive(Clone, Debug)]
