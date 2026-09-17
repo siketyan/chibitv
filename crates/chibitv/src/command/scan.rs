@@ -628,12 +628,22 @@ impl Scanner {
             watched_stream,
             ..TlvScanState::default()
         };
+        let mut refused = false;
         let deadline = Instant::now() + self.timeout;
 
         while Instant::now() < deadline && !is_done(&state) {
             let packet = match demux.next_packet() {
                 Ok(Some(packet)) => packet,
                 Ok(None) => break,
+                // The signalling is not scrambled, so the scan reads past a
+                // card that will not unscramble the rest of the stream.
+                Err(error) if is_descrambling_refused(&error) => {
+                    if !std::mem::replace(&mut refused, true) {
+                        warn!(channel = label, %error, "Scanning the signalling only");
+                    }
+
+                    continue;
+                }
                 Err(error) => {
                     warn!(channel = label, error = %error, "Could not read TLV stream");
                     continue;
