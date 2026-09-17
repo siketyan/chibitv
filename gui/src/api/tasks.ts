@@ -74,6 +74,11 @@ export function useWatchTasks(): void {
               void queryClient.invalidateQueries({ queryKey: queryKeys.services });
               void queryClient.invalidateQueries({ queryKey: queryKeys.events() });
             }
+
+            // A scan writes down what it found only once it is over.
+            if (task.kind === TaskKind.SCAN_CHANNELS && isTaskFinished(task)) {
+              void queryClient.invalidateQueries({ queryKey: queryKeys.scanResult });
+            }
           }
         } catch {
           // The server went away or the stream broke: it is opened again below,
