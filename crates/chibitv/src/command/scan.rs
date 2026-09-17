@@ -366,7 +366,7 @@ fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
             &label,
             inner,
             Some(tlv_stream_id),
-            TlvScanState::is_complete,
+            TlvScanState::has_service_catalog,
         )?
         else {
             continue;
@@ -776,12 +776,11 @@ struct TlvScanState {
 }
 
 impl TlvScanState {
-    /// Whether everything a TLV stream is scanned for has arrived.
-    fn is_complete(&self) -> bool {
-        self.nit.is_some()
-            && self.sdt_last_section_number.is_some_and(|last_section| {
-                self.sdt_sections.len() == usize::from(last_section) + 1
-            })
+    /// The MMT counterpart of [`ScanState::has_service_catalog`], and all a 4K
+    /// scan waits for once the network has been heard out.
+    fn has_service_catalog(&self) -> bool {
+        self.sdt_last_section_number
+            .is_some_and(|last_section| self.sdt_sections.len() == usize::from(last_section) + 1)
             && !self.services.is_empty()
     }
 
@@ -1330,7 +1329,7 @@ mod tests {
             mh_sdt(0x40F2, vec![mh_service(0x4066, "Elsewhere", 0x01)]),
         );
         assert!(state.service_configs().is_empty());
-        assert!(!state.is_complete());
+        assert!(!state.has_service_catalog());
 
         state.read_m2_table(
             "BS-15",
@@ -1343,15 +1342,15 @@ mod tests {
                 ],
             ),
         );
-        state.read_tlv_table("BS-15", TlvTable::TlvNit(tlv_nit(vec![])));
-
         let services = state.service_configs();
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].id, 0x4065);
         assert_eq!(services[0].name, "NHK BS4K");
         assert_eq!(services[0].provider_name, "NHK");
         assert_eq!(state.channel_name().as_deref(), Some("NHK BS4K"));
-        assert!(state.is_complete());
+        // The network was heard out while the transponder was probed, so there
+        // is nothing left to wait for.
+        assert!(state.has_service_catalog());
     }
 
     #[test]
