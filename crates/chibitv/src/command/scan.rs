@@ -23,23 +23,15 @@ const LAST_UHF_CHANNEL: u8 = 52;
 const FIRST_UHF_FREQUENCY_HZ: u32 = 473_142_857;
 const UHF_CHANNEL_BANDWIDTH_HZ: u32 = 6_000_000;
 
-/// The network every BS transponder belongs to.
 const BS_NETWORK_ID: u16 = 4;
-/// BS-1, as the dish hands it to the tuner, in kHz.
 const FIRST_BS_FREQUENCY_KHZ: u32 = 1_049_480;
-/// How far apart two BS transponders sit, in kHz.
 const BS_FREQUENCY_STEP_KHZ: u32 = 38_360;
-/// BS transponders are the odd numbers up to this one.
 const LAST_BS_TRANSPONDER: u8 = 23;
 
-/// ND2, as the dish hands it to the tuner, in kHz.
 const FIRST_CS110_FREQUENCY_KHZ: u32 = 1_613_000;
-/// How far apart two CS110 transponders sit, in kHz.
 const CS110_FREQUENCY_STEP_KHZ: u32 = 40_000;
-/// CS110 transponders are the even numbers, ND2 up to this one.
 const LAST_CS110_TRANSPONDER: u8 = 24;
 
-/// Digital television, which is the only kind of service worth tuning to.
 const TELEVISION_SERVICE_TYPE: u8 = 0x01;
 
 /// The broadcast a scan walks.

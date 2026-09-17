@@ -84,14 +84,8 @@ impl ServiceListDescriptor {
 /// as the NIT describes it.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SatelliteDeliverySystemDescriptor {
-    /// Downlink frequency in kHz, which is what the satellite radiates rather
-    /// than what reaches the tuner: see
-    /// [`SatelliteDeliverySystemDescriptor::intermediate_frequency_khz`].
     pub frequency_khz: u32,
-    /// Orbital position in tenths of a degree, so that 110.0°E is 1100.
     pub orbital_position: u16,
-    /// Whether the satellite sits east of the prime meridian, as every one
-    /// Japan broadcasts from does.
     pub west_east_flag: bool,
     pub polarisation: u8,
     pub modulation: u8,

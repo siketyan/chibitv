@@ -23,13 +23,9 @@ use crate::channel::ChannelInner;
 use crate::tuner::{Channel, Tuner};
 
 const DVR_BUFFER_SIZE: i32 = 32 * 1024 * 1024;
-
-/// How often the frontend is asked whether it has locked on.
-const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
-
-/// How long the frontend is given to lock on before the channel is given up on.
-const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const DVB_VERBOSE_ENV: &str = "CHIBITV_DVB_VERBOSE";
+const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct DvbDevice {
     dvb: *mut dvb_device,
