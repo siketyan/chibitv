@@ -119,6 +119,15 @@ channel's services are available before tuning.
 2K and 4K share the transponders but not the signalling, so a dish carrying
 both is scanned twice. The 4K scan reaches BS only for now.
 
+A satellite network describes itself in full, so `--fast` writes the same
+entries out of the signalling on one transponder per network instead of tuning
+to every stream. It waits for every stream to be described, so give it a longer
+`--timeout`:
+
+```shell
+cargo run -- scan --delivery-system ISDB-S --fast --timeout 30 > scanned-satellite.toml
+```
+
 ## Starting the server
 
 [`serve`](../reference/cli#serve) runs the HTTP API and the live stream; the
