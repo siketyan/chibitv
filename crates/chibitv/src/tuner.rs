@@ -125,6 +125,7 @@ impl Tuners {
         })
     }
 
+    #[cfg(test)]
     pub fn is_in_use(&self, id: u32) -> Option<bool> {
         self.tuners
             .get(&id)
