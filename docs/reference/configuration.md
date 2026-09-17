@@ -36,10 +36,10 @@ descrambling (B25) derives its keys from the card alone, so a setup without a
 4K channel still needs the key to be present, but never uses its value.
 
 Whichever card is in use, it hands over a key only for a programme it holds a
-contract for. One it does not is on air like any other and its tables are not
-scrambled, so it is scanned, its services are listed and its schedule is
-collected; only the picture and sound stay as they are, and the server says so
-once per stream rather than stopping.
+contract for. Watching or recording one it does not stops with what the card
+answered, rather than playing noise. Such a programme is still on air like any
+other and its tables are not scrambled, so [`scan`](./cli#scan) finds it and
+the programme guide collects its schedule all the same.
 
 ## `[[tuners]]`
 
