@@ -325,6 +325,12 @@ impl Workspace {
         })
     }
 
+    /// The physical channel the service of the key is carried on, when the
+    /// registry has come across that service.
+    pub fn channel_of_key(&self, key: ServiceKey) -> Option<Channel> {
+        self.channel_of(&self.registry.get_service(key)?)
+    }
+
     /// The physical channel the service is carried on.
     ///
     /// The registry only keeps a service under the channel carrying its
