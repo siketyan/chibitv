@@ -3,6 +3,7 @@ import { useEffect } from "react";
 
 import { type Task, TaskKind, TaskState } from "../gen/chibitv/v1/chibitv_pb";
 import { chibitvClient, queryKeys } from ".";
+import type { ServiceKey } from "./services";
 
 /** How long the task stream waits before it is opened again after it drops. */
 const RECONNECT_DELAY = 1000;
@@ -129,14 +130,14 @@ export function useScheduleRecording(): UseMutationResult<Task | undefined, Erro
 
   return useMutation({
     mutationKey: START_TASK_MUTATION_KEY,
-    mutationFn: async ({ serviceId, eventId }: RecordingRequest) =>
-      (await chibitvClient.scheduleRecording({ serviceId, eventId })).task,
+    mutationFn: async ({ service, eventId }: RecordingRequest) =>
+      (await chibitvClient.scheduleRecording({ service, eventId })).task,
     onSuccess: () => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }),
   });
 }
 
 interface RecordingRequest {
-  serviceId: number;
+  service: ServiceKey;
   eventId: number;
 }
 

@@ -6,7 +6,7 @@ import { useStream } from "../api/stream";
 import { bindMediaSession, publishNowPlaying } from "../player/mediaSession";
 import { startPlayback } from "../player/playback";
 import { useIsWaitingForMedia } from "../player/readiness";
-import { useServiceId } from "../router";
+import { useServiceKey } from "../router";
 import { PlayerControls } from "./PlayerControls";
 
 export function Player(): JSX.Element {
@@ -15,7 +15,7 @@ export function Player(): JSX.Element {
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string>();
   const { state, subscribeFmp4, playbackGeneration, reconnect } = useStream();
-  const serviceId = useServiceId();
+  const service = useServiceKey();
   const { data: services = [] } = useServices();
   const isWaitingForMedia = useIsWaitingForMedia(video);
   const serviceName = state?.service?.name;
@@ -62,13 +62,13 @@ export function Player(): JSX.Element {
       {video && <PlayerControls video={video} />}
       {/* Tuning, descrambling and transcoding all happen before the first frame
           arrives, and the picture stays black until then, so say it is coming. */}
-      {serviceId !== undefined && !error && isWaitingForMedia && (
+      {service !== undefined && !error && isWaitingForMedia && (
         // The colour lives on the wrapper because the spinner inherits it.
         <div className="pointer-events-none absolute z-10 text-white/70">
           <Spinner aria-label="Loading the picture" color="current" size="lg" />
         </div>
       )}
-      {serviceId === undefined && services.length === 0 && (
+      {service === undefined && services.length === 0 && (
         <p className="absolute z-10 text-sm text-white/70">No channels are available.</p>
       )}
       {error && (
