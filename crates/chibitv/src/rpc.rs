@@ -31,6 +31,14 @@ impl ChibitvServiceImpl {
     pub fn register(self, router: Router) -> Router {
         Arc::new(self).register(router)
     }
+
+    /// The broadcast wave the service of the key is carried on, when it is one
+    /// of the configured channels that carries it.
+    fn wave_of(&self, key: registry::ServiceKey) -> Option<DeliverySystem> {
+        self.workspace
+            .channel_of_key(key)
+            .map(|channel| delivery_system(&channel.inner))
+    }
 }
 
 #[allow(refining_impl_trait)]
@@ -77,28 +85,43 @@ impl ChibitvService for ChibitvServiceImpl {
         _ctx: RequestContext,
         request: ServiceRequest<'_, ListEventsRequest>,
     ) -> ServiceResult<ListEventsResponse> {
-        let mut events = if let Some(key) = request.service.as_option() {
-            let key = service_key(key)?;
-            self.workspace
-                .registry()
-                .get_events(key)
-                .into_iter()
-                .map(|event| (key, event))
-                .collect::<Vec<_>>()
+        // A wave the request does not name is every one of them, which is what
+        // a guide showing them together asks for.
+        let wave = match request.delivery_system.as_known() {
+            Some(DeliverySystem::Unspecified) => None,
+            Some(known) => Some(known),
+            None => {
+                return Err(ConnectError::invalid_argument(
+                    "delivery_system is not one this server knows",
+                ));
+            }
+        };
+
+        let keys = if let Some(key) = request.service.as_option() {
+            vec![service_key(key)?]
         } else {
             self.workspace
                 .registry()
                 .get_all_services()
                 .into_iter()
-                .flat_map(|service| {
-                    self.workspace
-                        .registry()
-                        .get_events(service.key)
-                        .into_iter()
-                        .map(move |event| (service.key, event))
-                })
-                .collect::<Vec<_>>()
+                .map(|service| service.key)
+                .collect()
         };
+        let mut events = keys
+            .into_iter()
+            // A service the registry has yet to see sits on no known channel,
+            // so a request for one wave leaves it out rather than guessing.
+            .filter(|key| {
+                wave.is_none_or(|wave| self.wave_of(*key).is_some_and(|known| known == wave))
+            })
+            .flat_map(|key| {
+                self.workspace
+                    .registry()
+                    .get_events(key)
+                    .into_iter()
+                    .map(move |event| (key, event))
+            })
+            .collect::<Vec<_>>();
         events.sort_by_key(|(key, event)| (*key, event.start_time, event.id));
         let events = events
             .iter()
@@ -614,7 +637,41 @@ fn timestamp_in<Tz: TimeZone>(value: NaiveDateTime, timezone: &Tz) -> DateTime {
 mod tests {
     use chrono::{FixedOffset, NaiveDate};
 
+    use crate::channel::Channel;
+    use crate::registry::Registry;
+
     use super::*;
+
+    // The workspace starts a scheduler of its own, so it wants a runtime.
+    #[tokio::test]
+    async fn reports_the_wave_a_service_is_carried_on() {
+        const CARRIED: registry::ServiceKey = registry::ServiceKey {
+            stream_id: 0x1234,
+            service_id: 0x5678,
+        };
+        const UNKNOWN: registry::ServiceKey = registry::ServiceKey {
+            stream_id: 0x4321,
+            service_id: 0x8765,
+        };
+
+        let registry = Arc::new(Registry::default());
+        registry.put_cached_service(0, CARRIED, "Service".to_string(), String::new());
+        let channel = Channel {
+            id: 0,
+            name: "UHF 20".to_string(),
+            inner: ChannelInner::IsdbT {
+                frequency: 515_142_857,
+                bandwidth_hz: 6_000_000,
+            },
+        };
+        let service =
+            ChibitvServiceImpl::new(Arc::new(Workspace::new(registry, vec![channel], None)));
+
+        assert_eq!(service.wave_of(CARRIED), Some(DeliverySystem::IsdbT));
+        // A service no channel carries belongs to no wave, rather than to the
+        // first one that happens to be configured.
+        assert_eq!(service.wave_of(UNKNOWN), None);
+    }
 
     #[test]
     fn reports_the_delivery_system_of_every_kind_of_channel() {
