@@ -4,7 +4,7 @@ This file provides guidance to coding agents (Claude Code and others) when worki
 
 chibitv is an experimental implementation of the ARIB broadcasting standards: it tunes Japanese ISDB-T/S/S3
 broadcasts, descrambles them, and remuxes them to MPEG-2 TS / MP4 / fragmented MP4, with an HTTP streaming server and
-a React GUI on top. See `docs/` for the CLI subcommands (`live`, `record`, `remux`, `scan`, `status`, `serve`) and
+a React GUI on top. See `docs/` for the CLI subcommands (`channels`, `live`, `record`, `remux`, `scan`, `status`, `serve`) and
 runtime setup (tuner devices, PC/SC, `config.toml`), and for running the Docker image; README.md only links to it.
 
 ## Setup
@@ -72,9 +72,13 @@ time, which is what a recording booked from the guide (`recorder.rs`) waits in u
 `storage.rs` is where a recording is written: one object per recording, streamed and finished at the end, so
 that a remote store can be added beside the local directory the `[storage]` config section names.
 `store.rs` is the persistence layer: `Store` is one database, made of one trait per kind of thing kept in it
-(`store/event.rs` holds `EventStore` and the writer the demultiplexers queue EIT sections on — the EPG is all that
-is kept so far). The SQLite backend (sqlx, bundled SQLite) is in `store/sqlite.rs`, with its schema in
-`crates/chibitv/migrations/sqlite/`.
+(`store/channel.rs` holds `ChannelStore` for the channels being served, `store/event.rs` holds `EventStore` and the
+writer the demultiplexers queue EIT sections on). The SQLite backend (sqlx, bundled SQLite) is in `store/sqlite.rs`,
+with its schema in `crates/chibitv/migrations/sqlite/`.
+The channels live in the database rather than in the configuration: a scan writes them (`scan --save`, or
+`SaveScanResult` from the GUI), `channel.rs` reads them back — importing the legacy `[[channels]]` entries into a
+database that has none yet — and `Registry::put_channels` is what says which channels are served, so a service on a
+stream no channel carries is refused rather than collected.
 Configuration is loaded from `./config.toml` in the working directory (`config.rs`; template in `config.toml.example`).
 
 Cargo features on `chibitv`:

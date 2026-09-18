@@ -10,8 +10,13 @@ cp config.toml.example config.toml
 
 The file is read into the types in `crates/chibitv/src/config.rs`. Only
 [`[cas]`](#cas) is required; every other table has a default, although a
-[tuner](#tuners) and a [channel](#channels) are needed before anything can be
-tuned.
+[tuner](#tuners) is needed before anything can be tuned.
+
+The channels are not part of it any more: they are kept in the
+[`[database]`](#database), which a [scan](./cli#scan) writes. The
+[`[[channels]]`](#channels) entries an older configuration names are imported
+into a database that holds no channel of its own yet, and can be removed
+afterwards.
 
 ## `[cas]`
 
@@ -90,9 +95,16 @@ type = "stdin"
 
 ## `[[channels]]`
 
-An array of tables, one per channel. The `--channel` option of `live`,
-`record` and `status` is a zero-based index into this array, so the order of
-the entries is the order the GUI and the CLI address them by.
+An array of tables, one per channel, which is how the channels were named
+before they moved into the [`[database]`](#database).
+
+These entries are read once, into a database that keeps no channel of its own
+yet, so that a configuration from before the move carries over; they are
+ignored from then on, and `serve` says so while starting up. Removing them
+changes nothing, and [`scan --save`](./cli#scan) — or the scan of the GUI — is
+what the channels change with from then on.
+[`channels`](./cli#channels) lists what the database keeps, with the
+identifiers the `--channel` option of `live`, `record` and `status` names.
 
 These keys are common to every channel:
 
@@ -123,9 +135,9 @@ frequency = 551142857
 bandwidth_hz = 6000000
 ```
 
-Rather than writing these by hand, let [`scan`](./cli#scan) discover the
-physical channels on air and print the entries, including their `services`, as
-TOML to merge into the file.
+Rather than writing these by hand, let [`scan --save`](./cli#scan) discover the
+physical channels on air and keep them, including their `services`, in the
+database.
 
 ### `delivery_system = "ISDB-S"`
 
@@ -147,7 +159,7 @@ the satellite radiates: BS-3 sits at 11 087.84 MHz on air and reaches the tuner
 at 1 087.84 MHz. The two senses of circular polarisation are shifted down by
 converters of their own, so a left-handed transponder lands elsewhere: the 8K on
 BS-14 radiates at 11 976.82 MHz and arrives at 2 471.82 MHz. [`scan --delivery-system ISDB-S`](./cli#scan) walks the BS and
-CS110 transponders and prints these entries, along with the
+CS110 transponders and finds these channels, along with the
 [`transport_stream_id`](#channels) and [`services`](#channels-services) that
 `serve` needs before tuning.
 
@@ -206,7 +218,12 @@ channel = 0
 
 The services carried on a channel. [`scan`](./cli#scan) writes this catalog,
 and `serve` needs it for the MPEG-2 TS channels, `ISDB-T` and `ISDB-S`, so
-that every configured physical channel's services are known before tuning.
+that the services of every physical channel are known before tuning.
+
+The catalog is also what says which channel a service belongs to: the
+signalling of a network describes the streams of the whole network, and a
+service on a stream no channel is served from is left alone rather than being
+listed as something to watch.
 
 | Key             | Type    | Default    | Description                            |
 | --------------- | ------- | ---------- | -------------------------------------- |
@@ -246,13 +263,17 @@ address = "[::]:3001"
 
 ## `[database]`
 
-Where the server keeps what has to survive a restart, which is the broadcast
-schedule so far: the programme guide is restored before anything is crawled
-again.
+Where chibitv keeps what has to survive a restart: the channels being served,
+and the broadcast schedule so far. A scan writes the channels, and the
+programme guide is restored before anything is crawled again.
 
 | Key   | Type   | Default                 | Description                                        |
 | ----- | ------ | ----------------------- | -------------------------------------------------- |
 | `url` | string | `"sqlite://chibitv.db"` | The database to keep it in, as a URL whose scheme picks the backend. |
+
+Every command reads the channels from it, so `live`, `record`, `scan --save`,
+`status` and `serve` all want it pointed at the same database. It is created
+when it is not there yet.
 
 SQLite is the only backend implemented, and it is bundled, so no database
 server is needed. The path is relative to the working directory; in the Docker

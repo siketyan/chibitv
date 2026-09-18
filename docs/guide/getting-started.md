@@ -61,8 +61,9 @@ should detect the card reader without `sudo`.
 ## Configuring chibitv
 
 Every subcommand loads `./config.toml` from the current directory. Copy the
-example and configure the CAS master key, tuners, and channels before running
-chibitv:
+example and configure the CAS master key and the tuners before running chibitv;
+the channels are kept in the database instead, which
+[scanning](#scanning-channels) writes:
 
 ```shell
 cp config.toml.example config.toml
@@ -74,13 +75,14 @@ Every key of the file is described in the
 ## Running a subcommand
 
 Run a subcommand with `cargo run -- <COMMAND>`. The channel arguments used by
-`live`, `record`, and `status` are zero-based indices into the `[[channels]]`
-entries in `config.toml`. Tuner commands currently use the first entry in
-`[[tuners]]`. Place the global `--verbose` option before the subcommand to
-enable trace logging:
+`live`, `record`, and `status` are the identifiers the database gave the
+channels, which [`channels`](../reference/cli#channels) lists. Tuner commands
+currently use the first entry in `[[tuners]]`. Place the global `--verbose`
+option before the subcommand to enable trace logging:
 
 ```shell
-cargo run -- --verbose live --channel 0
+cargo run -- channels
+cargo run -- --verbose live --channel 1
 ```
 
 Every subcommand and option is described in the [CLI reference](../reference/cli).
@@ -98,23 +100,30 @@ TZ=JST-9 cargo run -- serve
 ## Scanning channels
 
 Let [`scan`](../reference/cli#scan) discover the channels on air rather than
-writing them by hand. It prints `[[channels]]` entries, and their inline
-`services` catalog, as TOML:
+writing them by hand. `--save` keeps what it found in the database, as the
+channels of the broadcast that was scanned:
 
 ```shell
 # The terrestrial UHF channels.
-cargo run -- scan > scanned-channels.toml
+cargo run -- scan --save
 
 # The BS and CS110 transponders.
-cargo run -- scan --delivery-system ISDB-S > scanned-satellite.toml
+cargo run -- scan --delivery-system ISDB-S --save
 
 # The 4K broadcasting on the BS transponders.
-cargo run -- scan --delivery-system ISDB-S3 > scanned-4k.toml
+cargo run -- scan --delivery-system ISDB-S3 --save
 ```
 
-Review the generated file and merge its `[[channels]]` entries into
-`config.toml`. The server needs this catalog so that every configured physical
-channel's services are available before tuning.
+Each of these replaces the channels kept for the broadcast it walked and leaves
+the others alone, so a dish and an aerial are scanned one after another. The
+service catalog comes along, which the server needs so that the services of
+every physical channel are known before tuning. Scanning from the GUI saves the
+same way, without restarting the server.
+
+Without `--save` the channels are printed as `[[channels]]` entries instead,
+which is what the [configuration](../reference/configuration#channels) took
+before they moved into the database. A `config.toml` that still names them has
+them imported once, into a database keeping no channel of its own yet.
 
 2K and 4K share the transponders but not the signalling, so a dish carrying
 both is scanned twice. The 4K scan reaches BS only for now.

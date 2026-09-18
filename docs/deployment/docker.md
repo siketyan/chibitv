@@ -19,9 +19,9 @@ on the clock the SI is expressed in. The container reads `/app/config.toml`
 and needs access to the tuner devices and the PC/SC daemon of the host.
 
 Its working directory is not writable, so the
-[database](../reference/configuration#database) takes a volume to write into
-and a `[database]` URL pointing at it, for example
-`url = "sqlite://data/chibitv.db"`. Note that
+[database](../reference/configuration#database), which keeps the channels and
+the programme guide, takes a volume to write into and a `[database]` URL
+pointing at it, for example `url = "sqlite://data/chibitv.db"`. Note that
 [`server.address`](../reference/configuration#server) has to listen on more
 than the loopback interface of the container, for example
 `address = "[::]:3001"`:
