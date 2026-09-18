@@ -63,7 +63,7 @@ impl ChibitvService for ChibitvServiceImpl {
         _request: ServiceRequest<'_, ListServicesRequest>,
     ) -> ServiceResult<ListServicesResponse> {
         let mut services = self.workspace.registry().get_all_services();
-        services.sort_by_key(|service| service.id);
+        services.sort_by_key(|service| service.key);
         let services = services.iter().map(Service::from).collect();
 
         Response::ok(ListServicesResponse {
@@ -77,14 +77,13 @@ impl ChibitvService for ChibitvServiceImpl {
         _ctx: RequestContext,
         request: ServiceRequest<'_, ListEventsRequest>,
     ) -> ServiceResult<ListEventsResponse> {
-        let mut events = if let Some(service_id) = request.service_id {
-            let service_id = u16::try_from(service_id)
-                .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
+        let mut events = if let Some(key) = request.service.as_option() {
+            let key = service_key(key)?;
             self.workspace
                 .registry()
-                .get_events_by_service_id(service_id)
+                .get_events(key)
                 .into_iter()
-                .map(|event| (service_id, event))
+                .map(|event| (key, event))
                 .collect::<Vec<_>>()
         } else {
             self.workspace
@@ -94,16 +93,16 @@ impl ChibitvService for ChibitvServiceImpl {
                 .flat_map(|service| {
                     self.workspace
                         .registry()
-                        .get_events_by_service_id(service.id)
+                        .get_events(service.key)
                         .into_iter()
-                        .map(move |event| (service.id, event))
+                        .map(move |event| (service.key, event))
                 })
                 .collect::<Vec<_>>()
         };
-        events.sort_by_key(|(service_id, event)| (*service_id, event.start_time, event.id));
+        events.sort_by_key(|(key, event)| (*key, event.start_time, event.id));
         let events = events
             .iter()
-            .map(|(service_id, event)| event_message(*service_id, event))
+            .map(|(key, event)| event_message(*key, event))
             .collect();
 
         Response::ok(ListEventsResponse {
@@ -270,14 +269,18 @@ impl ChibitvService for ChibitvServiceImpl {
         _ctx: RequestContext,
         request: ServiceRequest<'_, ScheduleRecordingRequest>,
     ) -> ServiceResult<ScheduleRecordingResponse> {
-        let service_id = u16::try_from(request.service_id)
-            .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
+        let key = service_key(
+            request
+                .service
+                .as_option()
+                .ok_or_else(|| ConnectError::invalid_argument("service is required"))?,
+        )?;
         let event_id = u16::try_from(request.event_id)
             .map_err(|_| ConnectError::invalid_argument("event_id is out of range"))?;
 
         let task = self
             .workspace
-            .schedule_recording(service_id, event_id)
+            .schedule_recording(key, event_id)
             .map_err(workspace_error)?;
 
         Response::ok(ScheduleRecordingResponse {
@@ -291,8 +294,12 @@ impl ChibitvService for ChibitvServiceImpl {
         _ctx: RequestContext,
         request: ServiceRequest<'_, StreamRequest>,
     ) -> ServiceResult<ServiceStream<StreamResponse>> {
-        let service_id = u16::try_from(request.service_id)
-            .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?;
+        let key = service_key(
+            request
+                .service
+                .as_option()
+                .ok_or_else(|| ConnectError::invalid_argument("service is required"))?,
+        )?;
 
         let StreamSubscription {
             stream,
@@ -301,7 +308,7 @@ impl ChibitvService for ChibitvServiceImpl {
             signals,
         } = self
             .workspace
-            .subscribe_stream(service_id)
+            .subscribe_stream(key)
             .await
             .map_err(workspace_error)?;
 
@@ -313,7 +320,10 @@ impl ChibitvService for ChibitvServiceImpl {
         let fmp4 = fmp4.filter_map(move |data| match data {
             Ok(data) => Some(fmp4_response(data)),
             Err(BroadcastStreamRecvError::Lagged(count)) => {
-                warn!(service_id, count, "An fMP4 stream client fell behind");
+                warn!(
+                    service_id = key.service_id,
+                    count, "An fMP4 stream client fell behind"
+                );
                 None
             }
         });
@@ -394,11 +404,11 @@ fn stream_state(
     stream: &crate::stream::Stream,
     event_id: Option<u16>,
 ) -> StreamResponse {
-    let service_id = stream.service_id();
-    let service = workspace.registry().get_service_by_id(service_id);
+    let key = stream.key();
+    let service = workspace.registry().get_service(key);
     let event = event_id
         .or_else(|| stream.event_id())
-        .and_then(|event_id| workspace.registry().get_event_by_id(service_id, event_id));
+        .and_then(|event_id| workspace.registry().get_event(key, event_id));
 
     StreamResponse {
         payload: Some(stream_response::Payload::State(Box::new(StreamState {
@@ -406,7 +416,7 @@ fn stream_state(
             event: service
                 .as_ref()
                 .zip(event.as_ref())
-                .map(|(service, event)| event_message(service.id, event))
+                .map(|(service, event)| event_message(service.key, event))
                 .into(),
             ..Default::default()
         }))),
@@ -510,10 +520,29 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
     }
 }
 
+/// Reads a service the caller named, which has to fit what the SI numbers a
+/// service with.
+fn service_key(value: &ServiceKeyView<'_>) -> Result<registry::ServiceKey, ConnectError> {
+    Ok(registry::ServiceKey {
+        stream_id: u16::try_from(value.stream_id)
+            .map_err(|_| ConnectError::invalid_argument("stream_id is out of range"))?,
+        service_id: u16::try_from(value.service_id)
+            .map_err(|_| ConnectError::invalid_argument("service_id is out of range"))?,
+    })
+}
+
+fn service_key_message(value: registry::ServiceKey) -> ServiceKey {
+    ServiceKey {
+        stream_id: value.stream_id.into(),
+        service_id: value.service_id.into(),
+        ..Default::default()
+    }
+}
+
 impl From<&registry::Service> for Service {
     fn from(value: &registry::Service) -> Self {
         Self {
-            id: value.id.into(),
+            key: Some(service_key_message(value.key)).into(),
             name: value.name.clone(),
             provider_name: value.provider_name.clone(),
             channel_id: value.channel_id as u32,
@@ -522,7 +551,7 @@ impl From<&registry::Service> for Service {
     }
 }
 
-fn event_message(service_id: u16, value: &registry::Event) -> Event {
+fn event_message(key: registry::ServiceKey, value: &registry::Event) -> Event {
     Event {
         id: value.id.into(),
         title: value.name.clone().unwrap_or_default(),
@@ -545,7 +574,7 @@ fn event_message(service_id: u16, value: &registry::Event) -> Event {
             .zip(value.duration)
             .map(|(start_time, duration)| DateTime::from(start_time + duration))
             .into(),
-        service_id: service_id.into(),
+        service: Some(service_key_message(key)).into(),
         ..Default::default()
     }
 }

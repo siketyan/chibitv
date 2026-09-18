@@ -99,7 +99,7 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::registry::Registry;
+    use crate::registry::{Registry, ServiceKey};
 
     fn empty_workspace() -> Arc<Workspace> {
         Arc::new(Workspace::new(Arc::new(Registry::default()), vec![], None))
@@ -128,15 +128,19 @@ mod tests {
         let registry = Arc::new(Registry::default());
         registry.put_cached_service(
             1,
-            200,
-            201,
+            ServiceKey {
+                stream_id: 200,
+                service_id: 201,
+            },
             "Service B".to_string(),
             "Provider B".to_string(),
         );
         registry.put_cached_service(
             0,
-            100,
-            101,
+            ServiceKey {
+                stream_id: 100,
+                service_id: 101,
+            },
             "Service A".to_string(),
             "Provider A".to_string(),
         );
@@ -166,15 +170,18 @@ mod tests {
     async fn lists_events_from_all_services_when_service_id_is_omitted() {
         let registry = Arc::new(Registry::default());
         for (channel_id, service_id, event_id) in [(0, 101, 1001), (1, 201, 2001)] {
+            let key = ServiceKey {
+                stream_id: channel_id as u16,
+                service_id,
+            };
             registry.put_cached_service(
                 channel_id,
-                channel_id as u16,
-                service_id,
+                key,
                 format!("Service {service_id}"),
                 String::new(),
             );
             registry.put_b10_events(
-                service_id,
+                key,
                 None,
                 &[EventInformation {
                     event_id,
@@ -269,7 +276,9 @@ mod tests {
                 Request::post("/api/chibitv.v1.ChibitvService/ScheduleRecording")
                     .header(header::CONTENT_TYPE, "application/json")
                     .header("connect-protocol-version", "1")
-                    .body(Body::from(r#"{"serviceId":101,"eventId":1}"#))
+                    .body(Body::from(
+                        r#"{"service":{"streamId":100,"serviceId":101},"eventId":1}"#,
+                    ))
                     .unwrap(),
             )
             .await

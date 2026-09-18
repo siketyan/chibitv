@@ -8,7 +8,7 @@ use chibitv_b60::message::{M2SectionMessage, Message};
 use chibitv_b60::table::{MhBit, MhEit, MhSdt, Table};
 
 use crate::demux::SignalingEvent;
-use crate::registry::Registry;
+use crate::registry::{Registry, ServiceKey};
 use crate::store::SectionId;
 
 const SDT_ACTUAL_TABLE_ID: u8 = 0x42;
@@ -44,6 +44,16 @@ struct SectionKey {
 struct SectionVersion {
     version_number: u8,
     crc_32: u32,
+}
+
+impl SectionKey {
+    /// The service the section carries the schedule of.
+    fn service(&self) -> ServiceKey {
+        ServiceKey {
+            stream_id: self.stream_id,
+            service_id: self.service_id,
+        }
+    }
 }
 
 impl From<SectionKey> for SectionId {
@@ -171,7 +181,7 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
-            |registry| registry.put_b10_events(table.service_id, section, &table.events),
+            |registry| registry.put_b10_events(key.service(), section, &table.events),
         );
 
         if !self.is_watched_service(table.service_id) {
@@ -180,7 +190,7 @@ impl ServiceInformationProcessor {
 
         for event in &table.events {
             self.process_event(
-                table.service_id,
+                key.service(),
                 event.event_id,
                 event.start_time,
                 event.duration,
@@ -221,7 +231,7 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
-            |registry| registry.put_events(table.service_id, section, &table.events),
+            |registry| registry.put_events(key.service(), section, &table.events),
         );
 
         if !self.is_watched_service(table.service_id) {
@@ -230,7 +240,7 @@ impl ServiceInformationProcessor {
 
         for event in &table.events {
             self.process_event(
-                table.service_id,
+                key.service(),
                 event.event_id,
                 event.start_time,
                 event.duration,
@@ -286,7 +296,7 @@ impl ServiceInformationProcessor {
 
     fn process_event(
         &mut self,
-        service_id: u16,
+        key: ServiceKey,
         event_id: u16,
         start_time: Option<chrono::NaiveDateTime>,
         duration: Option<chrono::TimeDelta>,
@@ -310,7 +320,7 @@ impl ServiceInformationProcessor {
         // section keeps the announced event resolvable by whoever receives
         // the signal, instead of latching onto one nobody can look up.
         if let Some(registry) = &self.registry
-            && registry.get_event_by_id(service_id, event_id).is_none()
+            && registry.get_event(key, event_id).is_none()
         {
             return Ok(());
         }
@@ -345,6 +355,9 @@ mod tests {
     const SERVICE_ID: u16 = 0x0400;
     const OTHER_SERVICE_ID: u16 = 0x0401;
 
+    /// The stream the tables below belong to.
+    const STREAM_ID: u16 = 1;
+
     /// An EIT[p/f] announcing an event that started a minute ago.
     fn eit_on_air(service_id: u16, event_id: u16) -> Eit {
         let now = chrono::Local::now().naive_local();
@@ -357,7 +370,7 @@ mod tests {
             current_next_indicator: true,
             section_number: 0,
             last_section_number: 0,
-            transport_stream_id: 1,
+            transport_stream_id: STREAM_ID,
             original_network_id: 1,
             segment_last_section_number: 0,
             last_table_id: EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID,
@@ -385,15 +398,22 @@ mod tests {
         eit
     }
 
+    fn service_key(service_id: u16) -> ServiceKey {
+        ServiceKey {
+            stream_id: STREAM_ID,
+            service_id,
+        }
+    }
+
     fn event_name_of(registry: &Registry, event_id: u16) -> Option<String> {
-        registry.get_event_by_id(SERVICE_ID, event_id)?.name
+        registry.get_event(service_key(SERVICE_ID), event_id)?.name
     }
 
     fn sdt_of(service_id: u16) -> Sdt {
         Sdt {
             section_syntax_indicator: true,
             section_length: 0,
-            transport_stream_id: 1,
+            transport_stream_id: STREAM_ID,
             version_number: 0,
             current_next_indicator: true,
             section_number: 0,
@@ -488,7 +508,11 @@ mod tests {
         assert!(matches!(signal_rx.try_recv(), Err(TryRecvError::Empty)));
 
         // The schedule of the other service is still collected.
-        assert!(registry.get_event_by_id(OTHER_SERVICE_ID, 0x0002).is_some());
+        assert!(
+            registry
+                .get_event(service_key(OTHER_SERVICE_ID), 0x0002)
+                .is_some()
+        );
     }
 
     #[test]

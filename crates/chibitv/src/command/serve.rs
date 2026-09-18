@@ -12,7 +12,7 @@ use crate::channel_scanner::ChannelScanner;
 use crate::config::{ChannelConfig, Config};
 use crate::event_crawler::EventCrawler;
 use crate::recorder::Recorder;
-use crate::registry::Registry;
+use crate::registry::{Registry, ServiceKey};
 use crate::storage;
 use crate::store::{self, EventWriter};
 use crate::stream::Streams;
@@ -127,14 +127,16 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
 
 fn seed_registry(registry: &Registry, channels: &[ChannelConfig]) {
     for (channel_id, channel) in channels.iter().enumerate() {
-        let Some(transport_stream_id) = channel.transport_stream_id else {
+        let Some(stream_id) = channel.transport_stream_id else {
             continue;
         };
         for service in &channel.services {
             registry.put_cached_service(
                 channel_id,
-                transport_stream_id,
-                service.id,
+                ServiceKey {
+                    stream_id,
+                    service_id: service.id,
+                },
                 service.name.clone(),
                 service.provider_name.clone(),
             );
@@ -183,11 +185,19 @@ mod tests {
         seed_registry(&registry, &channels);
 
         assert_eq!(registry.get_all_services().len(), 2);
-        let first = registry.get_service_by_id(101).unwrap();
+        let first = registry
+            .get_service(ServiceKey {
+                stream_id: 100,
+                service_id: 101,
+            })
+            .unwrap();
         assert_eq!(first.channel_id, 0);
-        assert_eq!(first.transport_stream_id, 100);
-        let second = registry.get_service_by_id(201).unwrap();
+        let second = registry
+            .get_service(ServiceKey {
+                stream_id: 200,
+                service_id: 201,
+            })
+            .unwrap();
         assert_eq!(second.channel_id, 1);
-        assert_eq!(second.transport_stream_id, 200);
     }
 }

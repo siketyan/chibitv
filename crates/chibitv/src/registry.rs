@@ -25,12 +25,23 @@ pub struct Broadcaster {
     pub name: String,
 }
 
+/// Identifies one service among the ones on air.
+///
+/// A service id alone does not tell a service apart from every other: BS 2K
+/// and BS 4K number theirs alike, so the stream carrying one goes with it.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct ServiceKey {
+    /// The TLV stream id on ISDB-S3, the transport stream id on ISDB-T and
+    /// ISDB-S.
+    pub stream_id: u16,
+    pub service_id: u16,
+}
+
 #[derive(Clone, Debug)]
 pub struct Service {
-    pub id: u16,
+    pub key: ServiceKey,
     pub name: String,
     pub provider_name: String,
-    pub transport_stream_id: u16,
     pub channel_id: usize,
 
     events: Arc<HashMap<u16, Event>>,
@@ -73,7 +84,7 @@ impl Event {
 #[derive(Default)]
 pub struct Registry {
     broadcasters: HashMap<u8, Broadcaster>,
-    services: HashMap<u16, Service>,
+    services: HashMap<ServiceKey, Service>,
     events: Option<EventWriter>,
 }
 
@@ -97,7 +108,7 @@ impl Registry {
             .into_iter()
             .filter(|event| {
                 let services = self.services.pin();
-                let Some(service) = services.get(&event.service_id) else {
+                let Some(service) = services.get(&event.key) else {
                     return false;
                 };
 
@@ -120,14 +131,14 @@ impl Registry {
         services.values().cloned().collect()
     }
 
-    pub fn get_service_by_id(&self, service_id: u16) -> Option<Service> {
+    pub fn get_service(&self, key: ServiceKey) -> Option<Service> {
         let services = self.services.pin();
-        services.get(&service_id).cloned()
+        services.get(&key).cloned()
     }
 
-    pub fn get_events_by_service_id(&self, service_id: u16) -> Vec<Event> {
+    pub fn get_events(&self, key: ServiceKey) -> Vec<Event> {
         let services = self.services.pin();
-        let Some(service) = services.get(&service_id) else {
+        let Some(service) = services.get(&key) else {
             return vec![];
         };
 
@@ -136,9 +147,9 @@ impl Registry {
         events.values().cloned().collect()
     }
 
-    pub fn get_event_by_id(&self, service_id: u16, event_id: u16) -> Option<Event> {
+    pub fn get_event(&self, key: ServiceKey, event_id: u16) -> Option<Event> {
         let services = self.services.pin();
-        let events = services.get(&service_id)?.events.pin();
+        let events = services.get(&key)?.events.pin();
 
         events.get(&event_id).cloned()
     }
@@ -170,15 +181,13 @@ impl Registry {
         broadcasters.insert(broadcaster_id, broadcaster);
     }
 
-    pub fn put_service(
-        &self,
-        channel_id: usize,
-        transport_stream_id: u16,
-        service: &ServiceInformation,
-    ) {
-        let service_id = service.service_id;
+    pub fn put_service(&self, channel_id: usize, stream_id: u16, service: &ServiceInformation) {
+        let key = ServiceKey {
+            stream_id,
+            service_id: service.service_id,
+        };
         let services = self.services.pin();
-        if services.contains_key(&service_id) {
+        if services.contains_key(&key) {
             return;
         }
 
@@ -198,26 +207,28 @@ impl Registry {
         }
 
         let service = Service {
-            id: service_id,
+            key,
             name: String::from_utf8_lossy(&descriptor.service_name).to_string(),
             provider_name: String::from_utf8_lossy(&descriptor.service_provider_name).to_string(),
-            transport_stream_id,
             channel_id,
             events: Arc::new(HashMap::new()),
         };
 
         debug!(?service, "Added a new service");
 
-        services.insert(service_id, service);
+        services.insert(key, service);
     }
 
     pub fn put_b10_service(
         &self,
         channel_id: usize,
-        transport_stream_id: u16,
+        stream_id: u16,
         service: &B10ServiceInformation,
     ) {
-        let service_id = service.service_id;
+        let key = ServiceKey {
+            stream_id,
+            service_id: service.service_id,
+        };
         let services = self.services.pin();
 
         let Some(descriptor) = service.descriptors.iter().find_map(|descriptor| {
@@ -236,42 +247,39 @@ impl Registry {
         }
 
         let events = services
-            .get(&service_id)
+            .get(&key)
             .map(|service| Arc::clone(&service.events))
             .unwrap_or_default();
         let service = Service {
-            id: service_id,
+            key,
             name: decode_b24(&descriptor.service_name),
             provider_name: decode_b24(&descriptor.service_provider_name),
-            transport_stream_id,
             channel_id,
             events,
         };
 
         debug!(?service, "Added a new ISDB-T service");
-        services.insert(service_id, service);
+        services.insert(key, service);
     }
 
     pub fn put_cached_service(
         &self,
         channel_id: usize,
-        transport_stream_id: u16,
-        service_id: u16,
+        key: ServiceKey,
         name: String,
         provider_name: String,
     ) {
         let services = self.services.pin();
-        if services.contains_key(&service_id) {
+        if services.contains_key(&key) {
             return;
         }
 
         services.insert(
-            service_id,
+            key,
             Service {
-                id: service_id,
+                key,
                 name,
                 provider_name,
-                transport_stream_id,
                 channel_id,
                 events: Arc::new(HashMap::new()),
             },
@@ -287,7 +295,7 @@ impl Registry {
     /// — stays in memory only.
     pub fn put_events(
         &self,
-        service_id: u16,
+        key: ServiceKey,
         section: Option<SectionId>,
         events: &[EventInformation],
     ) -> bool {
@@ -296,34 +304,34 @@ impl Registry {
         let mut stored = Vec::with_capacity(events.len());
         let mut complete = true;
         for event in events {
-            if self.put_event(service_id, event) {
+            if self.put_event(key, event) {
                 stored.push(event.event_id);
             } else {
                 complete = false;
             }
         }
 
-        complete && self.keep_events(service_id, section, &stored)
+        complete && self.keep_events(key, section, &stored)
     }
 
     /// The ISDB-T counterpart of [`Registry::put_events`].
     pub fn put_b10_events(
         &self,
-        service_id: u16,
+        key: ServiceKey,
         section: Option<SectionId>,
         events: &[B10EventInformation],
     ) -> bool {
         let mut stored = Vec::with_capacity(events.len());
         let mut complete = true;
         for event in events {
-            if self.put_b10_event(service_id, event) {
+            if self.put_b10_event(key, event) {
                 stored.push(event.event_id);
             } else {
                 complete = false;
             }
         }
 
-        complete && self.keep_events(service_id, section, &stored)
+        complete && self.keep_events(key, section, &stored)
     }
 
     /// Queues the events for the store, reporting whether it took them.
@@ -331,15 +339,15 @@ impl Registry {
     /// The events are read back rather than taken from the section, as the
     /// registry is the one that assembled them out of everything the
     /// descriptors of a service carried.
-    fn keep_events(&self, service_id: u16, section: Option<SectionId>, event_ids: &[u16]) -> bool {
+    fn keep_events(&self, key: ServiceKey, section: Option<SectionId>, event_ids: &[u16]) -> bool {
         let (Some(section), Some(writer)) = (section, &self.events) else {
             return true;
         };
 
         let events = event_ids
             .iter()
-            .filter_map(|event_id| self.get_event_by_id(service_id, *event_id))
-            .map(|event| StoredEvent::of_service(service_id, &event))
+            .filter_map(|event_id| self.get_event(key, *event_id))
+            .map(|event| StoredEvent::of_service(key, &event))
             .collect();
 
         writer.enqueue(SectionUpdate { section, events })
@@ -350,9 +358,9 @@ impl Registry {
     /// An event of a service the registry does not know yet — an EIT ahead of
     /// the SDT describes one — is dropped, and `false` tells the caller the
     /// schedule it carried is still missing.
-    fn put_event(&self, service_id: u16, event: &EventInformation) -> bool {
+    fn put_event(&self, key: ServiceKey, event: &EventInformation) -> bool {
         let services = self.services.pin();
-        let Some(service) = services.get(&service_id) else {
+        let Some(service) = services.get(&key) else {
             return false;
         };
 
@@ -422,9 +430,9 @@ impl Registry {
 
     /// Stores an ISDB-T event of a service, reporting whether it could be
     /// stored. See [`Registry::put_event`].
-    fn put_b10_event(&self, service_id: u16, event: &B10EventInformation) -> bool {
+    fn put_b10_event(&self, key: ServiceKey, event: &B10EventInformation) -> bool {
         let services = self.services.pin();
-        let Some(service) = services.get(&service_id) else {
+        let Some(service) = services.get(&key) else {
             return false;
         };
 
@@ -514,6 +522,11 @@ mod tests {
 
     use super::*;
 
+    const SERVICE: ServiceKey = ServiceKey {
+        stream_id: 0x1234,
+        service_id: 0x5678,
+    };
+
     #[tokio::test]
     async fn restores_the_schedule_of_the_services_it_knows() {
         let store = crate::store::open("sqlite::memory:").await.unwrap();
@@ -528,31 +541,38 @@ mod tests {
             .replace_section(
                 section,
                 &[
-                    stored_event(0x5678, 0x0001, "Programme"),
+                    stored_event(SERVICE, 0x0001, "Programme"),
                     // The configuration knows nothing of this service, so its
                     // schedule has nowhere to go.
-                    stored_event(0x9ABC, 0x0002, "Elsewhere"),
+                    stored_event(
+                        ServiceKey {
+                            service_id: 0x9ABC,
+                            ..SERVICE
+                        },
+                        0x0002,
+                        "Elsewhere",
+                    ),
                 ],
             )
             .await
             .unwrap();
 
         let registry = Registry::default();
-        registry.put_cached_service(0, 0x1234, 0x5678, "Channel".to_string(), String::new());
+        registry.put_cached_service(0, SERVICE, "Channel".to_string(), String::new());
 
         assert_eq!(registry.restore_events(&store).await.unwrap(), 1);
         assert_eq!(
             registry
-                .get_event_by_id(0x5678, 0x0001)
+                .get_event(SERVICE, 0x0001)
                 .and_then(|event| event.name)
                 .as_deref(),
             Some("Programme")
         );
     }
 
-    fn stored_event(service_id: u16, event_id: u16, name: &str) -> StoredEvent {
+    fn stored_event(key: ServiceKey, event_id: u16, name: &str) -> StoredEvent {
         StoredEvent {
-            service_id,
+            key,
             event_id,
             start_time: None,
             duration: None,
@@ -584,9 +604,46 @@ mod tests {
             },
         );
 
-        let service = registry.get_service_by_id(0x5678).unwrap();
+        let service = registry.get_service(SERVICE).unwrap();
         assert_eq!(service.channel_id, 4);
-        assert_eq!(service.transport_stream_id, 0x1234);
+        assert_eq!(service.key.stream_id, 0x1234);
+    }
+
+    #[test]
+    fn tells_the_services_of_two_streams_apart() {
+        // BS 2K and BS 4K both carry a service numbered 101, on streams of
+        // their own.
+        let registry = Registry::default();
+        registry.put_cached_service(
+            0,
+            ServiceKey {
+                stream_id: 0x40F1,
+                service_id: 101,
+            },
+            "BS Channel".to_string(),
+            String::new(),
+        );
+        registry.put_cached_service(
+            1,
+            ServiceKey {
+                stream_id: 0xB071,
+                service_id: 101,
+            },
+            "BS 4K Channel".to_string(),
+            String::new(),
+        );
+
+        assert_eq!(registry.get_all_services().len(), 2);
+        assert_eq!(
+            registry
+                .get_service(ServiceKey {
+                    stream_id: 0xB071,
+                    service_id: 101,
+                })
+                .map(|service| service.name)
+                .as_deref(),
+            Some("BS 4K Channel")
+        );
     }
 
     #[test]
@@ -620,7 +677,7 @@ mod tests {
         };
 
         registry.put_event(
-            0x5678,
+            SERVICE,
             &event(vec![B60Descriptor::MhExtendedEvent(
                 MhExtendedEventDescriptor {
                     descriptor_number: 1,
@@ -635,7 +692,7 @@ mod tests {
             )]),
         );
         registry.put_event(
-            0x5678,
+            SERVICE,
             &event(vec![
                 B60Descriptor::MhShortEvent(MhShortEventDescriptor {
                     iso_639_language_code: *b"jpn",
@@ -655,7 +712,7 @@ mod tests {
             ]),
         );
 
-        let event = registry.get_event_by_id(0x5678, 0x9ABC).unwrap();
+        let event = registry.get_event(SERVICE, 0x9ABC).unwrap();
         assert_eq!(event.name.as_deref(), Some("Program"));
         assert_eq!(event.text.as_deref(), Some("Summary"));
         assert_eq!(
@@ -669,8 +726,10 @@ mod tests {
         let registry = Registry::default();
         registry.put_cached_service(
             3,
-            0x1234,
-            0x5678,
+            ServiceKey {
+                stream_id: 0x1234,
+                service_id: 0x5678,
+            },
             "Cached Channel".to_string(),
             "Cached Provider".to_string(),
         );
@@ -692,10 +751,10 @@ mod tests {
             },
         );
 
-        let service = registry.get_service_by_id(0x5678).unwrap();
+        let service = registry.get_service(SERVICE).unwrap();
         assert_eq!(service.name, "Channel");
         assert_eq!(service.provider_name, "Provider");
-        assert_eq!(service.transport_stream_id, 0x1234);
+        assert_eq!(service.key.stream_id, 0x1234);
         assert_eq!(service.channel_id, 3);
 
         let start_time = NaiveDate::from_ymd_opt(2026, 7, 11)
@@ -703,7 +762,7 @@ mod tests {
             .and_hms_opt(12, 0, 0)
             .unwrap();
         registry.put_b10_event(
-            0x5678,
+            SERVICE,
             &B10EventInformation {
                 event_id: 0x9ABC,
                 start_time: Some(start_time),
@@ -718,7 +777,7 @@ mod tests {
             },
         );
 
-        let event = registry.get_event_by_id(0x5678, 0x9ABC).unwrap();
+        let event = registry.get_event(SERVICE, 0x9ABC).unwrap();
         assert_eq!(event.name.as_deref(), Some("Program"));
         assert_eq!(event.language_code.as_deref(), Some("jpn"));
         assert_eq!(event.start_time, Some(start_time));
@@ -730,7 +789,7 @@ mod tests {
     #[test]
     fn collects_isdb_t_event_details_from_every_extended_event_descriptor() {
         let registry = Registry::default();
-        registry.put_cached_service(0, 0x1234, 0x5678, "Channel".to_string(), String::new());
+        registry.put_cached_service(0, SERVICE, "Channel".to_string(), String::new());
 
         let extended_event = |descriptor_number, items: Vec<(&[u8], &[u8])>| B10EventInformation {
             event_id: 0x9ABC,
@@ -755,16 +814,16 @@ mod tests {
 
         // The second descriptor may well arrive first, and its leading item
         // continues the last item of the first one.
-        registry.put_b10_event(0x5678, &extended_event(1, vec![(b"", b"\x0e Bob")]));
+        registry.put_b10_event(SERVICE, &extended_event(1, vec![(b"", b"\x0e Bob")]));
         registry.put_b10_event(
-            0x5678,
+            SERVICE,
             &extended_event(
                 0,
                 vec![(b"\x0eDetails", b"\x0eA show"), (b"\x0eCast", b"\x0eAlice")],
             ),
         );
 
-        let event = registry.get_event_by_id(0x5678, 0x9ABC).unwrap();
+        let event = registry.get_event(SERVICE, 0x9ABC).unwrap();
         assert_eq!(
             event.description_items(),
             vec![
@@ -777,9 +836,9 @@ mod tests {
     #[test]
     fn keeps_the_isdb_t_summary_when_only_the_schedule_is_known() {
         let registry = Registry::default();
-        registry.put_cached_service(0, 0x1234, 0x5678, "Channel".to_string(), String::new());
+        registry.put_cached_service(0, SERVICE, "Channel".to_string(), String::new());
         registry.put_b10_event(
-            0x5678,
+            SERVICE,
             &B10EventInformation {
                 event_id: 0x9ABC,
                 start_time: None,
@@ -794,7 +853,7 @@ mod tests {
             },
         );
         registry.put_b10_event(
-            0x5678,
+            SERVICE,
             &B10EventInformation {
                 event_id: 0x9ABC,
                 start_time: None,
@@ -805,7 +864,7 @@ mod tests {
             },
         );
 
-        let event = registry.get_event_by_id(0x5678, 0x9ABC).unwrap();
+        let event = registry.get_event(SERVICE, 0x9ABC).unwrap();
         assert_eq!(event.text.as_deref(), Some("Summary"));
     }
 }

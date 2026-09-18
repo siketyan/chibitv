@@ -6,20 +6,22 @@ use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
+use crate::registry::ServiceKey;
+
 use super::{EventStore, SectionId, Store, StoredEvent};
 
 /// How long a statement waits for the database to be free again.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The columns of an event, in the order they are written in.
-const COLUMNS: &str = "service_id, event_id, original_network_id, stream_id, table_id, \
+const COLUMNS: &str = "stream_id, service_id, event_id, original_network_id, table_id, \
                        section_number, start_time, duration_seconds, language_code, name, text, \
                        description";
 
 /// Reading them back goes by name, so this needs to name them all rather than
 /// keep the order above.
-const SELECT_EVENTS: &str = "SELECT service_id, event_id, start_time, duration_seconds, \
-                             language_code, name, text, description FROM events";
+const SELECT_EVENTS: &str = "SELECT stream_id, service_id, event_id, start_time, \
+                             duration_seconds, language_code, name, text, description FROM events";
 
 /// The state chibitv keeps in a SQLite database.
 ///
@@ -94,10 +96,10 @@ impl EventStore for SqliteStore {
             ));
 
             insert.push_values(events, |mut row, event| {
-                row.push_bind(i64::from(event.service_id))
+                row.push_bind(i64::from(event.key.stream_id))
+                    .push_bind(i64::from(event.key.service_id))
                     .push_bind(i64::from(event.event_id))
                     .push_bind(i64::from(section.original_network_id))
-                    .push_bind(i64::from(section.stream_id))
                     .push_bind(i64::from(section.table_id))
                     .push_bind(i64::from(section.section_number))
                     .push_bind(event.start_time.map(to_timestamp))
@@ -138,7 +140,10 @@ fn read_event(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<StoredEvent> {
     let description: String = row.try_get("description")?;
 
     Ok(StoredEvent {
-        service_id: row.try_get::<i64, _>("service_id")?.try_into()?,
+        key: ServiceKey {
+            stream_id: row.try_get::<i64, _>("stream_id")?.try_into()?,
+            service_id: row.try_get::<i64, _>("service_id")?.try_into()?,
+        },
         event_id: row.try_get::<i64, _>("event_id")?.try_into()?,
         start_time: row
             .try_get::<Option<i64>, _>("start_time")?
@@ -173,7 +178,10 @@ mod tests {
 
     fn event(event_id: u16, name: &str, hour: u32) -> StoredEvent {
         StoredEvent {
-            service_id: SECTION.service_id,
+            key: ServiceKey {
+                stream_id: SECTION.stream_id,
+                service_id: SECTION.service_id,
+            },
             event_id,
             start_time: NaiveDate::from_ymd_opt(2026, 7, 11)
                 .unwrap()

@@ -15,6 +15,7 @@ use tokio::sync::mpsc;
 use tracing::{debug, error};
 
 use crate::registry;
+use crate::registry::ServiceKey;
 
 use super::Store;
 
@@ -39,7 +40,7 @@ pub struct SectionId {
 /// carrying them and their event id.
 #[derive(Clone, Debug, PartialEq)]
 pub struct StoredEvent {
-    pub service_id: u16,
+    pub key: ServiceKey,
     pub event_id: u16,
     pub start_time: Option<NaiveDateTime>,
     pub duration: Option<TimeDelta>,
@@ -50,9 +51,9 @@ pub struct StoredEvent {
 }
 
 impl StoredEvent {
-    pub fn of_service(service_id: u16, event: &registry::Event) -> Self {
+    pub fn of_service(key: ServiceKey, event: &registry::Event) -> Self {
         Self {
-            service_id,
+            key,
             event_id: event.id,
             start_time: event.start_time,
             duration: event.duration,
@@ -152,7 +153,10 @@ mod tests {
 
     fn stored_event() -> StoredEvent {
         StoredEvent {
-            service_id: 0x0400,
+            key: ServiceKey {
+                stream_id: 0x1234,
+                service_id: 0x0400,
+            },
             event_id: 0x0001,
             start_time: NaiveDate::from_ymd_opt(2026, 7, 11)
                 .unwrap()
@@ -169,8 +173,7 @@ mod tests {
     fn converts_an_event_to_the_registry_and_back() {
         let event = stored_event();
 
-        let restored =
-            StoredEvent::of_service(event.service_id, &registry::Event::from(event.clone()));
+        let restored = StoredEvent::of_service(event.key, &registry::Event::from(event.clone()));
 
         assert_eq!(restored, event);
     }
