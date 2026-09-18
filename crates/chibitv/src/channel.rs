@@ -6,13 +6,13 @@
 //! before that still names are imported once, by [`load_channels`], into a
 //! database that has none of its own yet.
 
-use std::fmt::{Display, Formatter};
+use std::fmt::{Display, Formatter, Write as _};
 use std::sync::Arc;
 
 use anyhow::bail;
 use tracing::{info, warn};
 
-use crate::config::{ChannelConfig, ChannelConfigInner};
+use crate::config::{ChannelConfig, ChannelConfigInner, Config};
 use crate::store::{ChannelScope, NewChannel, Store, StoredChannel};
 
 /// The broadcast a channel is carried on.
@@ -188,6 +188,44 @@ pub async fn load_channels(
     );
 
     store.load_channels().await
+}
+
+/// The channel of the identifier, out of the channels the database keeps.
+///
+/// This is what the `--channel` option of the commands names, and the
+/// `channels` command is what lists the identifiers to choose from.
+pub async fn find_channel(config: &Config, id: usize) -> anyhow::Result<Channel> {
+    let store = crate::store::open(&config.database.url).await?;
+    let channels = load_channels(&store, &config.channels).await?;
+
+    let Some(channel) = channels.iter().find(|channel| channel.id == id) else {
+        bail!(
+            "Could not find the channel {id} in the database; `chibitv channels` lists the ones it keeps"
+        );
+    };
+
+    Ok(channel.into())
+}
+
+/// The channels as the `channels` command and a saved scan list them, one line
+/// per channel and one per service of it.
+pub fn format_channel_list(channels: &[StoredChannel]) -> String {
+    let mut output = String::new();
+    for channel in channels {
+        let _ = writeln!(
+            output,
+            "{:>4}  {:<7}  {}",
+            channel.id,
+            channel.inner.delivery_system(),
+            channel.name,
+        );
+
+        for service in &channel.services {
+            let _ = writeln!(output, "      {:>5}  {}", service.id, service.name);
+        }
+    }
+
+    output
 }
 
 #[cfg(test)]
