@@ -12,10 +12,10 @@ use tracing::warn;
 
 use crate::channel::ChannelInner;
 use crate::channel_scanner::{ScanDeliverySystem, ScanRequest};
-use crate::config::{ChannelConfig, ChannelConfigInner};
 use crate::proto::chibitv::v1::*;
 use crate::registry;
 use crate::service_information::Signal;
+use crate::store::NewChannel;
 use crate::task;
 use crate::workspace::{StreamSubscription, Workspace, WorkspaceError};
 
@@ -453,21 +453,21 @@ fn delivery_system(inner: &ChannelInner) -> DeliverySystem {
     }
 }
 
-fn scanned_channel(channel: &ChannelConfig) -> ScannedChannel {
+fn scanned_channel(channel: &NewChannel) -> ScannedChannel {
     let (delivery_system, frequency, stream_id) = match channel.inner {
-        ChannelConfigInner::IsdbT { frequency, .. } => (DeliverySystem::IsdbT, frequency, None),
-        ChannelConfigInner::IsdbS {
+        ChannelInner::IsdbT { frequency, .. } => (DeliverySystem::IsdbT, frequency, None),
+        ChannelInner::IsdbS {
             frequency,
             stream_id,
         } => (DeliverySystem::IsdbS, frequency, Some(stream_id)),
-        ChannelConfigInner::IsdbS3 {
+        ChannelInner::IsdbS3 {
             frequency,
             stream_id,
         } => (DeliverySystem::IsdbS3, frequency, Some(stream_id)),
         // A scan finds no BonDriver channel: the driver enumerates those.
-        ChannelConfigInner::BonIsdbT { .. } => (DeliverySystem::IsdbT, 0, None),
-        ChannelConfigInner::BonIsdbS { .. } => (DeliverySystem::IsdbS, 0, None),
-        ChannelConfigInner::BonIsdbS3 { .. } => (DeliverySystem::IsdbS3, 0, None),
+        ChannelInner::BonIsdbT { .. } => (DeliverySystem::IsdbT, 0, None),
+        ChannelInner::BonIsdbS { .. } => (DeliverySystem::IsdbS, 0, None),
+        ChannelInner::BonIsdbS3 { .. } => (DeliverySystem::IsdbS3, 0, None),
     };
 
     ScannedChannel {

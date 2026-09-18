@@ -12,54 +12,9 @@ frontend_num = 0
 type = "bon"
 path = 'C:\BonDriver\BonDriver_BDA.dll'
 
-# The channels are kept in the [database], where a scan writes them: run
-# `chibitv scan --save`, or scan from the GUI and save what it found. The
-# `[[channels]]` entries below are only read into a database holding no channel
-# of its own yet, which is how a configuration from before that carries over,
-# and can be removed once they have been imported.
-[[channels]]
-name = "Terrestrial Example"
-delivery_system = "ISDB-T"
-frequency = 551142857
-# Optional. Defaults to 6000000.
-bandwidth_hz = 6000000
-
-[[channels]]
-name = "BS Example"
-delivery_system = "ISDB-S"
-frequency = 1087840
-stream_id = 0x4031
-
-[[channels]]
-name = "BS 4K Example"
-delivery_system = "ISDB-S3"
-frequency = 1318000
-stream_id = 0x40F1
-
-# A BonDriver holds the tuning parameters itself, so a channel only names the
-# tuning space and channel numbers it enumerates. The delivery system still has
-# to be named: ISDB-T and ISDB-S carry MPEG-2 TS while ISDB-S3 carries MMT/TLV.
-[[channels]]
-name = "BonDriver Terrestrial Example"
-delivery_system = "Bon-ISDB-T"
-space = 0
-channel = 0
-
-[[channels]]
-name = "BonDriver BS Example"
-delivery_system = "Bon-ISDB-S"
-space = 1
-channel = 0
-
-[[channels]]
-name = "BonDriver BS 4K Example"
-delivery_system = "Bon-ISDB-S3"
-space = 2
-channel = 0
-
 [database]
-# Where the channels and the programme guide are kept. Defaults to a SQLite
-# database in the working directory; the scheme picks the backend.
+# Where the channels a scan found and the programme guide are kept. Defaults to
+# a SQLite database in the working directory; the scheme picks the backend.
 url = "sqlite://chibitv.db"
 
 [storage]

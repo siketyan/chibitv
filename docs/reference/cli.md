@@ -36,7 +36,7 @@ from `RUST_LOG`, which `--verbose` only changes the default of.
 | [`live`](#live)         | Watch a channel as a remuxed M2TS stream written to stdout. |
 | [`record`](#record)     | Record a MMT/TLV stream from a tuner.                   |
 | [`remux`](#remux)       | Demux a MMT/TLV stream and mux a M2TS stream.           |
-| [`scan`](#scan)         | Scan physical channels, and keep or print what was found. |
+| [`scan`](#scan)         | Scan physical channels and keep what was found in the database. |
 | [`status`](#status)     | Show current broadcast status from B10 SI tables.       |
 | [`serve`](#serve)       | Run the chibitv server.                                 |
 
@@ -63,10 +63,16 @@ cargo run -- channels
        4011  BS日テレ
 ```
 
-The channels are what [`scan --save`](#scan) writes, and the
-[`[[channels]]`](./configuration#channels) entries of an older `config.toml`
-are imported into a database holding none of its own yet, so this is also how
-to check that an import landed.
+A channel carries its name, the broadcast it is on and how to tune to it, and
+the service catalog a scan read off it. The broadcast is what decides how the
+stream is demultiplexed and descrambled: `ISDB-T` and `ISDB-S`, the 2K
+satellite broadcasting, carry MPEG-2 TS and are descrambled with B25, while
+`ISDB-S3`, the 4K one, carries MMT/TLV and is descrambled with B61.
+
+[`scan`](#scan) is what writes them, and it is the only thing that does: a
+channel a BonDriver tunes, which names the tuning space and channel numbers the
+driver enumerates rather than a frequency, is not something a scan can find, so
+one has to be written into the database by hand for now.
 
 ## `live`
 
@@ -149,11 +155,10 @@ Two limits are worth knowing before picking a format:
 
 ## `scan`
 
-Scan the physical channels on air. `--save` keeps what was found in the
+Scan the physical channels on air and keep what was found in the
 [`[database]`](./configuration#database), as the channels of the broadcast that
-was scanned; without it the discovered
-[`[[channels]]`](./configuration#channels) entries, and their inline `services`
-catalog, are printed as TOML on stdout instead.
+was scanned, along with the service catalog of each one. What the database now
+keeps is printed the way [`channels`](#channels) prints it.
 
 | Option                        | Type    | Default  | Description                                    |
 | ----------------------------- | ------- | -------- | ---------------------------------------------- |
@@ -162,12 +167,17 @@ catalog, are printed as TOML on stdout instead.
 | `--end-channel <N>`           | integer | `52`     | Last UHF physical channel to scan. ISDB-T only. |
 | `--timeout <SECONDS>`         | integer | `12`     | Maximum time to wait on each channel.          |
 | `--fast`                      | flag    | off      | Read the channel list out of the signalling on one transponder per network. Satellite only. |
-| `--save`                      | flag    | off      | Keep what was found in the database instead of printing it as TOML. |
 
 A terrestrial scan walks the UHF physical channels in order. The range has to
 lie within 13 to 52, and the start must not exceed the end; anything else is
 rejected before tuning. Scanning the full range waits up to the timeout on
 every channel that carries nothing, so a complete scan takes a while.
+
+A satellite frequency is the one the converter on the dish hands the tuner, not
+the one the satellite radiates: BS-3 sits at 11 087.84 MHz on air and reaches
+the tuner at 1 087.84 MHz, and the two senses of circular polarisation are
+shifted down by converters of their own, so a left-handed transponder lands
+elsewhere again.
 
 A satellite scan works the other way round, because a satellite stream is
 picked by its id rather than by a channel number and which ids are on air
@@ -203,33 +213,29 @@ every stream to be described on the transponder it is listening to, so give it
 a longer `--timeout` than a walk needs.
 
 ```shell
-# Keep the terrestrial channels found, replacing the ones kept for terrestrial.
-cargo run -- scan --save
+# The terrestrial channels, replacing the ones kept for terrestrial.
+cargo run -- scan
 
 # Scan a smaller range and wait up to 5 seconds per channel.
-cargo run -- scan --start-channel 20 --end-channel 30 --timeout 5 --save
+cargo run -- scan --start-channel 20 --end-channel 30 --timeout 5
 
 # Scan the BS and CS110 transponders instead.
-cargo run -- scan --delivery-system ISDB-S --save
+cargo run -- scan --delivery-system ISDB-S
 
 # The 4K broadcasting on the BS transponders.
-cargo run -- scan --delivery-system ISDB-S3 --save
+cargo run -- scan --delivery-system ISDB-S3
 
 # The same, read off one transponder per network rather than tuning to each.
-cargo run -- scan --delivery-system ISDB-S --fast --timeout 30 --save
-
-# Print what was found as TOML rather than keeping it.
-cargo run -- scan > scanned-channels.toml
+cargo run -- scan --delivery-system ISDB-S --fast --timeout 30
 ```
 
-`--save` replaces the channels kept for the broadcast that was scanned, so one
-that has left the air stops being served, and leaves the channels of the other
-broadcasts alone. It prints what the database now keeps, the way
-[`channels`](#channels) does, and this is also how a channel gets the service
-catalog that [`serve`](#serve) needs.
+A scan replaces the channels kept for the broadcast it walked, so one that has
+left the air stops being served, and leaves the channels of the other
+broadcasts alone. This is also how a channel gets the service catalog that
+[`serve`](#serve) needs.
 
 A server that is already running holds the channels it started with, so it has
-to be restarted to serve what `--save` wrote — scanning from the GUI instead
+to be restarted to serve what a scan wrote — scanning from the GUI instead
 saves them without a restart. Either way a running server is holding the tuner,
 which a scan needs for itself.
 

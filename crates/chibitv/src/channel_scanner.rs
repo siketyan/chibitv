@@ -1,9 +1,9 @@
 //! Finding the channels on air.
 //!
 //! A scan tunes to what it is told to look at and reads the signalling there
-//! into [`ChannelConfig`] entries, which are kept in the database as the
-//! channels of the broadcast that was walked once whoever asked for the scan
-//! says so — `scan --save` on the command line, `SaveScanResult` over the API.
+//! into [`NewChannel`] entries, which are kept in the database as the channels
+//! of the broadcast that was walked: the `scan` command writes them itself,
+//! while the server waits for `SaveScanResult` to say so.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufReader, Read};
@@ -12,7 +12,6 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use clap::ValueEnum;
-use toml_edit::{Array, ArrayOfTables, DocumentMut, InlineTable, Item, Table as TomlTable, Value};
 use tracing::{info, warn};
 
 use chibitv_b10::descriptor::Descriptor;
@@ -27,10 +26,11 @@ use chibitv_b61::Descrambler;
 
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
-use crate::config::{ChannelConfig, ChannelConfigInner, Config, ServiceConfig};
+use crate::config::Config;
 use crate::demux::{Demux, Packet, SignalingEvent, is_descrambling_refused};
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
+use crate::store::{NewChannel, StoredService};
 use crate::task::TaskHandle;
 use crate::tuner::{TunerLease, Tuners};
 
@@ -188,7 +188,7 @@ impl ChannelScanner {
         &self,
         request: &ScanRequest,
         task: Option<&TaskHandle>,
-    ) -> anyhow::Result<Vec<ChannelConfig>> {
+    ) -> anyhow::Result<Vec<NewChannel>> {
         request.validate()?;
 
         let tuner = self.tuners.try_acquire()?;
@@ -239,10 +239,7 @@ impl Scanner<'_> {
 }
 
 /// Walks the terrestrial UHF band, one physical channel at a time.
-fn scan_terrestrial(
-    scanner: &Scanner,
-    request: &ScanRequest,
-) -> anyhow::Result<Vec<ChannelConfig>> {
+fn scan_terrestrial(scanner: &Scanner, request: &ScanRequest) -> anyhow::Result<Vec<NewChannel>> {
     let channels_to_scan = request.uhf_channels.clone();
     let scanned = channels_to_scan.clone().count();
     let mut channels = Vec::new();
@@ -269,11 +266,11 @@ fn scan_terrestrial(
             continue;
         };
 
-        channels.push(ChannelConfig {
+        channels.push(NewChannel {
             name,
             transport_stream_id: state.transport_stream_id,
-            services: state.service_configs(state.transport_stream_id),
-            inner: ChannelConfigInner::IsdbT {
+            services: state.services(state.transport_stream_id),
+            inner: ChannelInner::IsdbT {
                 frequency,
                 bandwidth_hz: UHF_CHANNEL_BANDWIDTH_HZ,
             },
@@ -291,7 +288,7 @@ fn scan_terrestrial(
 /// over its network's NIT, which names every transport stream of that network
 /// and the transponder each one sits on. What is left is to tune to the ones
 /// carrying television and read their service catalog.
-fn scan_satellite(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
+fn scan_satellite(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
     let streams = discover_satellite_streams(scanner)?;
     if streams.is_empty() {
         warn!("No satellite network answered: is the dish connected and its converter powered?");
@@ -333,11 +330,11 @@ fn scan_satellite(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
             continue;
         };
 
-        channels.push(ChannelConfig {
+        channels.push(NewChannel {
             name,
             transport_stream_id: Some(transport_stream_id),
-            services: state.service_configs(Some(transport_stream_id)),
-            inner: ChannelConfigInner::IsdbS {
+            services: state.services(Some(transport_stream_id)),
+            inner: ChannelInner::IsdbS {
                 frequency,
                 stream_id: u32::from(transport_stream_id),
             },
@@ -354,7 +351,7 @@ fn scan_satellite(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
 /// is made of and the transponder each one sits on, and every stream carries
 /// the service description of the others beside its own. So one that answers is
 /// enough to write the lot down, without tuning to a single one of them.
-fn scan_satellite_fast(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
+fn scan_satellite_fast(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
     let mut channels = Vec::new();
 
     for transponder in
@@ -382,11 +379,11 @@ fn scan_satellite_fast(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> 
                 continue;
             };
 
-            channels.push(ChannelConfig {
+            channels.push(NewChannel {
                 name,
                 transport_stream_id: Some(transport_stream_id),
-                services: state.service_configs(Some(transport_stream_id)),
-                inner: ChannelConfigInner::IsdbS {
+                services: state.services(Some(transport_stream_id)),
+                inner: ChannelInner::IsdbS {
                     frequency: stream.frequency_khz,
                     stream_id: u32::from(transport_stream_id),
                 },
@@ -398,7 +395,7 @@ fn scan_satellite_fast(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> 
 }
 
 /// The MMT/TLV counterpart of [`scan_satellite_fast`].
-fn scan_satellite_4k_fast(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
+fn scan_satellite_4k_fast(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
     let mut channels = Vec::new();
 
     for transponder in
@@ -419,11 +416,11 @@ fn scan_satellite_4k_fast(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig
                 continue;
             };
 
-            channels.push(ChannelConfig {
+            channels.push(NewChannel {
                 name,
                 transport_stream_id: Some(tlv_stream_id),
-                services: state.service_configs(Some(tlv_stream_id)),
-                inner: ChannelConfigInner::IsdbS3 {
+                services: state.services(Some(tlv_stream_id)),
+                inner: ChannelInner::IsdbS3 {
                     frequency: stream.frequency_khz,
                     stream_id: u32::from(tlv_stream_id),
                 },
@@ -535,7 +532,7 @@ fn carries_television(descriptors: &[Descriptor]) -> bool {
 /// network naming the rest, but over MMT/TLV: the transmission control signal
 /// of a TLV stream carries the TLV-NIT, which names every TLV stream of the
 /// network, and the services of one are named by its own MH-SDT.
-fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
+fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
     let streams = discover_tlv_streams(scanner)?;
     if streams.is_empty() {
         warn!("No 4K network answered: is the dish connected and its converter powered?");
@@ -574,11 +571,11 @@ fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<ChannelConfig>> {
             continue;
         };
 
-        channels.push(ChannelConfig {
+        channels.push(NewChannel {
             name,
             transport_stream_id: Some(tlv_stream_id),
-            services: state.service_configs(Some(tlv_stream_id)),
-            inner: ChannelConfigInner::IsdbS3 {
+            services: state.services(Some(tlv_stream_id)),
+            inner: ChannelInner::IsdbS3 {
                 frequency,
                 stream_id: u32::from(tlv_stream_id),
             },
@@ -1072,12 +1069,12 @@ impl ScanState {
             .or_else(|| self.nit.as_ref().and_then(network_name))
     }
 
-    fn service_configs(&self, transport_stream_id: Option<u16>) -> Vec<ServiceConfig> {
+    fn services(&self, transport_stream_id: Option<u16>) -> Vec<StoredService> {
         self.services_of(transport_stream_id)
             .filter_map(|service| {
                 let descriptor = service_descriptor(service)?;
                 (descriptor.service_type == Some(TELEVISION_SERVICE_TYPE)).then_some(
-                    ServiceConfig {
+                    StoredService {
                         id: service.service_id,
                         name: descriptor.service_name,
                         provider_name: descriptor.provider_name,
@@ -1204,12 +1201,12 @@ impl TlvScanState {
             .or_else(|| self.nit.as_ref().and_then(tlv_network_name))
     }
 
-    fn service_configs(&self, tlv_stream_id: Option<u16>) -> Vec<ServiceConfig> {
+    fn services(&self, tlv_stream_id: Option<u16>) -> Vec<StoredService> {
         self.services_of(tlv_stream_id)
             .filter_map(|service| {
                 let descriptor = mmt_service_descriptor(service)?;
                 (descriptor.service_type == Some(TELEVISION_SERVICE_TYPE)).then_some(
-                    ServiceConfig {
+                    StoredService {
                         id: service.service_id,
                         name: descriptor.service_name,
                         provider_name: descriptor.provider_name,
@@ -1298,93 +1295,6 @@ fn non_empty_text(bytes: &[u8]) -> Option<String> {
 
 fn text_bytes(bytes: &[u8]) -> String {
     decode_b24(bytes)
-}
-
-/// The channels a scan found, as the `[[channels]]` entries of a
-/// configuration, which is how `scan` prints them when it is not saving them.
-pub fn format_scan_output(channels: &[ChannelConfig]) -> String {
-    let mut channel_tables = ArrayOfTables::new();
-
-    for channel in channels {
-        let mut table = TomlTable::new();
-        table["name"] = toml_edit::value(&channel.name);
-        if let Some(transport_stream_id) = channel.transport_stream_id {
-            table["transport_stream_id"] = toml_edit::value(i64::from(transport_stream_id));
-        }
-
-        match channel.inner {
-            ChannelConfigInner::IsdbT {
-                frequency,
-                bandwidth_hz,
-            } => {
-                table["delivery_system"] = toml_edit::value("ISDB-T");
-                table["frequency"] = toml_edit::value(i64::from(frequency));
-                if bandwidth_hz != UHF_CHANNEL_BANDWIDTH_HZ {
-                    table["bandwidth_hz"] = toml_edit::value(i64::from(bandwidth_hz));
-                }
-            }
-            ChannelConfigInner::IsdbS {
-                frequency,
-                stream_id,
-            } => {
-                table["delivery_system"] = toml_edit::value("ISDB-S");
-                table["frequency"] = toml_edit::value(i64::from(frequency));
-                table["stream_id"] = toml_edit::value(i64::from(stream_id));
-            }
-            ChannelConfigInner::IsdbS3 {
-                frequency,
-                stream_id,
-            } => {
-                table["delivery_system"] = toml_edit::value("ISDB-S3");
-                table["frequency"] = toml_edit::value(i64::from(frequency));
-                table["stream_id"] = toml_edit::value(i64::from(stream_id));
-            }
-            ChannelConfigInner::BonIsdbT {
-                space,
-                channel: number,
-            } => {
-                table["delivery_system"] = toml_edit::value("Bon-ISDB-T");
-                table["space"] = toml_edit::value(i64::from(space));
-                table["channel"] = toml_edit::value(i64::from(number));
-            }
-            ChannelConfigInner::BonIsdbS {
-                space,
-                channel: number,
-            } => {
-                table["delivery_system"] = toml_edit::value("Bon-ISDB-S");
-                table["space"] = toml_edit::value(i64::from(space));
-                table["channel"] = toml_edit::value(i64::from(number));
-            }
-            ChannelConfigInner::BonIsdbS3 {
-                space,
-                channel: number,
-            } => {
-                table["delivery_system"] = toml_edit::value("Bon-ISDB-S3");
-                table["space"] = toml_edit::value(i64::from(space));
-                table["channel"] = toml_edit::value(i64::from(number));
-            }
-        }
-
-        if !channel.services.is_empty() {
-            let mut services = Array::new();
-            for service in &channel.services {
-                let mut inline = InlineTable::new();
-                inline.insert("id", Value::from(i64::from(service.id)));
-                inline.insert("name", Value::from(service.name.clone()));
-                if !service.provider_name.is_empty() {
-                    inline.insert("provider_name", Value::from(service.provider_name.clone()));
-                }
-                services.push(inline);
-            }
-            table["services"] = Item::Value(Value::Array(services));
-        }
-
-        channel_tables.push(table);
-    }
-
-    let mut document = DocumentMut::new();
-    document["channels"] = Item::ArrayOfTables(channel_tables);
-    document.to_string()
 }
 
 #[cfg(test)]
@@ -1720,7 +1630,7 @@ mod tests {
             "BS-7",
             mh_sdt(0xB071, vec![mh_service(0x4066, "Elsewhere", 0x01)]),
         );
-        assert!(state.service_configs(Some(0xB070)).is_empty());
+        assert!(state.services(Some(0xB070)).is_empty());
         assert!(!state.has_service_catalog());
 
         state.read_m2_table(
@@ -1734,7 +1644,7 @@ mod tests {
                 ],
             ),
         );
-        let services = state.service_configs(Some(0xB070));
+        let services = state.services(Some(0xB070));
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].id, 0x4065);
         assert_eq!(services[0].name, "NHK BS4K");
@@ -1852,7 +1762,7 @@ mod tests {
         // The names go through the encoding the SI spells them in, so what
         // matters here is that they reached the stream they belong to.
         assert!(state.channel_name(Some(0x4031)).is_some());
-        let services = state.service_configs(Some(0x4031));
+        let services = state.services(Some(0x4031));
         assert_eq!(services.len(), 1);
         assert_eq!(services[0].id, 0x0400);
         // The stream being tuned said nothing about itself, and a description
@@ -1871,79 +1781,6 @@ mod tests {
             Table::Sdt(sdt(0x4031, vec![television_service(0x0400, "Elsewhere")])),
         );
 
-        assert!(state.service_configs(Some(0x4031)).is_empty());
-    }
-
-    #[test]
-    fn serializes_service_catalog_under_physical_channel() {
-        let channels = vec![ChannelConfig {
-            name: "TOKYO MX".to_string(),
-            transport_stream_id: Some(0x1234),
-            services: vec![ServiceConfig {
-                id: 0x5678,
-                name: "TOKYO MX1".to_string(),
-                provider_name: "TOKYO MX".to_string(),
-            }],
-            inner: ChannelConfigInner::IsdbT {
-                frequency: 515_142_857,
-                bandwidth_hz: 6_000_000,
-            },
-        }];
-
-        let toml = format_scan_output(&channels);
-
-        assert!(toml.contains("[[channels]]"));
-        assert!(toml.contains("transport_stream_id = 4660"));
-        assert!(!toml.contains("bandwidth_hz"));
-        assert!(!toml.contains("[[channels.services]]"));
-        assert!(toml.contains(
-            "services = [{ id = 22136, name = \"TOKYO MX1\", provider_name = \"TOKYO MX\" }]"
-        ));
-    }
-
-    #[test]
-    fn serializes_a_satellite_channel_with_the_stream_it_is_picked_by() {
-        let channels = vec![ChannelConfig {
-            name: "NHK BS".to_string(),
-            transport_stream_id: Some(0x4031),
-            services: vec![ServiceConfig {
-                id: 101,
-                name: "NHK BS".to_string(),
-                provider_name: "NHK".to_string(),
-            }],
-            inner: ChannelConfigInner::IsdbS {
-                frequency: 1_087_840,
-                stream_id: 0x4031,
-            },
-        }];
-
-        let toml = format_scan_output(&channels);
-
-        assert!(toml.contains("delivery_system = \"ISDB-S\""));
-        assert!(toml.contains("frequency = 1087840"));
-        assert!(toml.contains("stream_id = 16433"));
-    }
-
-    #[test]
-    fn serializes_a_4k_channel_with_the_tlv_stream_it_is_picked_by() {
-        let channels = vec![ChannelConfig {
-            name: "NHK BS4K".to_string(),
-            transport_stream_id: Some(0x40F1),
-            services: vec![ServiceConfig {
-                id: 0x4065,
-                name: "NHK BS4K".to_string(),
-                provider_name: "NHK".to_string(),
-            }],
-            inner: ChannelConfigInner::IsdbS3 {
-                frequency: 1_318_000,
-                stream_id: 0x40F1,
-            },
-        }];
-
-        let toml = format_scan_output(&channels);
-
-        assert!(toml.contains("delivery_system = \"ISDB-S3\""));
-        assert!(toml.contains("frequency = 1318000"));
-        assert!(toml.contains("stream_id = 16625"));
+        assert!(state.services(Some(0x4031)).is_empty());
     }
 }

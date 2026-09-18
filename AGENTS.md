@@ -75,10 +75,10 @@ that a remote store can be added beside the local directory the `[storage]` conf
 (`store/channel.rs` holds `ChannelStore` for the channels being served, `store/event.rs` holds `EventStore` and the
 writer the demultiplexers queue EIT sections on). The SQLite backend (sqlx, bundled SQLite) is in `store/sqlite.rs`,
 with its schema in `crates/chibitv/migrations/sqlite/`.
-The channels live in the database rather than in the configuration: a scan writes them (`scan --save`, or
-`SaveScanResult` from the GUI), `channel.rs` reads them back — importing the legacy `[[channels]]` entries into a
-database that has none yet — and `Registry::put_channels` is what says which channels are served, so a service on a
-stream no channel carries is refused rather than collected.
+The channels live in the database rather than in the configuration, which has no channel keys at all: a scan is what
+writes them (the `scan` command, or `SaveScanResult` from the GUI), `channel.rs` is where a command looks one up by
+the identifier the database gave it, and `Registry::put_channels` is what says which channels are served, so a
+service on a stream no channel carries is refused rather than collected.
 Configuration is loaded from `./config.toml` in the working directory (`config.rs`; template in `config.toml.example`).
 
 Cargo features on `chibitv`:

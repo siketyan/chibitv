@@ -13,8 +13,8 @@ use crate::channel::{ChannelInner, DeliverySystem};
 use crate::registry::ServiceKey;
 
 use super::{
-    ChannelScope, ChannelStore, EventStore, NewChannel, SectionId, Store, StoredChannel,
-    StoredEvent, StoredService,
+    ChannelStore, EventStore, NewChannel, SectionId, Store, StoredChannel, StoredEvent,
+    StoredService,
 };
 
 /// How long a statement waits for the database to be free again.
@@ -180,24 +180,15 @@ impl ChannelStore for SqliteStore {
 
     async fn replace_channels(
         &self,
-        scope: ChannelScope,
+        delivery_system: DeliverySystem,
         channels: &[NewChannel],
     ) -> anyhow::Result<()> {
         let mut transaction = self.pool.begin().await?;
 
-        match scope {
-            ChannelScope::All => {
-                sqlx::query("DELETE FROM channels")
-                    .execute(&mut *transaction)
-                    .await?;
-            }
-            ChannelScope::DeliverySystem(delivery_system) => {
-                sqlx::query("DELETE FROM channels WHERE delivery_system = ?")
-                    .bind(delivery_system.as_str())
-                    .execute(&mut *transaction)
-                    .await?;
-            }
-        }
+        sqlx::query("DELETE FROM channels WHERE delivery_system = ?")
+            .bind(delivery_system.as_str())
+            .execute(&mut *transaction)
+            .await?;
 
         for channel in channels {
             let tuning = Tuning::of(&channel.inner);
@@ -469,10 +460,15 @@ mod tests {
             ),
         ];
 
-        store
-            .replace_channels(ChannelScope::All, &channels)
-            .await
-            .unwrap();
+        for channel in &channels {
+            store
+                .replace_channels(
+                    channel.inner.delivery_system(),
+                    std::slice::from_ref(channel),
+                )
+                .await
+                .unwrap();
+        }
         let stored = store.load_channels().await.unwrap();
 
         assert_eq!(
@@ -495,25 +491,29 @@ mod tests {
         let store = store().await;
         store
             .replace_channels(
-                ChannelScope::All,
-                &[
-                    new_channel(
-                        "UHF 20",
-                        ChannelInner::IsdbT {
-                            frequency: 515_142_857,
-                            bandwidth_hz: 6_000_000,
-                        },
-                        Some(0x1234),
-                    ),
-                    new_channel(
-                        "BS",
-                        ChannelInner::IsdbS {
-                            frequency: 1_049_480,
-                            stream_id: 0x4031,
-                        },
-                        Some(0x4031),
-                    ),
-                ],
+                DeliverySystem::IsdbT,
+                &[new_channel(
+                    "UHF 20",
+                    ChannelInner::IsdbT {
+                        frequency: 515_142_857,
+                        bandwidth_hz: 6_000_000,
+                    },
+                    Some(0x1234),
+                )],
+            )
+            .await
+            .unwrap();
+        store
+            .replace_channels(
+                DeliverySystem::IsdbS,
+                &[new_channel(
+                    "BS",
+                    ChannelInner::IsdbS {
+                        frequency: 1_049_480,
+                        stream_id: 0x4031,
+                    },
+                    Some(0x4031),
+                )],
             )
             .await
             .unwrap();
@@ -521,7 +521,7 @@ mod tests {
         // A terrestrial scan says nothing about the satellite channels.
         store
             .replace_channels(
-                ChannelScope::DeliverySystem(DeliverySystem::IsdbT),
+                DeliverySystem::IsdbT,
                 &[new_channel(
                     "UHF 21",
                     ChannelInner::IsdbT {

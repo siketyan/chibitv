@@ -7,13 +7,12 @@ use tokio_stream::wrappers::BroadcastStream;
 
 use crate::channel::{Channel, DeliverySystem};
 use crate::channel_scanner::{ChannelScanner, ScanRequest};
-use crate::config::ChannelConfig;
 use crate::event_crawler::EventCrawler;
 use crate::recorder::{Recorder, Recording};
 use crate::registry::{Registry, Service, ServiceKey};
 use crate::scheduler::Scheduler;
 use crate::service_information::Signal;
-use crate::store::{ChannelScope, NewChannel, Store};
+use crate::store::{NewChannel, Store};
 use crate::stream::{Stream, Streams, SubscribeError};
 use crate::task::{CancelError, DeleteError, SpawnError, Task, TaskId, TaskKind, Tasks};
 
@@ -71,7 +70,7 @@ pub struct StreamSubscription {
 #[derive(Clone, Debug)]
 struct ScanOutcome {
     delivery_system: DeliverySystem,
-    channels: Vec<ChannelConfig>,
+    channels: Vec<NewChannel>,
 }
 
 pub struct Workspace {
@@ -201,7 +200,7 @@ impl Workspace {
     }
 
     /// What the last scan found, which is empty until one has finished.
-    pub fn scan_result(&self) -> Vec<ChannelConfig> {
+    pub fn scan_result(&self) -> Vec<NewChannel> {
         self.scan_result
             .lock()
             .unwrap()
@@ -229,16 +228,8 @@ impl Workspace {
             .clone()
             .ok_or(WorkspaceError::ScanResultUnavailable)?;
 
-        let found = outcome
-            .channels
-            .iter()
-            .map(NewChannel::from)
-            .collect::<Vec<_>>();
         store
-            .replace_channels(
-                ChannelScope::DeliverySystem(outcome.delivery_system),
-                &found,
-            )
+            .replace_channels(outcome.delivery_system, &outcome.channels)
             .await
             .map_err(WorkspaceError::Internal)?;
 
@@ -257,7 +248,7 @@ impl Workspace {
     /// Hands the workspace a scan outcome, for a test that has no tuner to
     /// run a scan with.
     #[cfg(test)]
-    fn put_scan_result(&self, delivery_system: DeliverySystem, channels: Vec<ChannelConfig>) {
+    fn put_scan_result(&self, delivery_system: DeliverySystem, channels: Vec<NewChannel>) {
         *self.scan_result.lock().unwrap() = Some(ScanOutcome {
             delivery_system,
             channels,
@@ -478,18 +469,18 @@ mod tests {
             .with_channel_store(Arc::clone(&store));
         workspace.put_scan_result(
             DeliverySystem::IsdbT,
-            vec![ChannelConfig {
+            vec![NewChannel {
                 name: "UHF 20".to_string(),
+                inner: ChannelInner::IsdbT {
+                    frequency: 515_142_857,
+                    bandwidth_hz: 6_000_000,
+                },
                 transport_stream_id: Some(SERVICE.stream_id),
-                services: vec![crate::config::ServiceConfig {
+                services: vec![crate::store::StoredService {
                     id: SERVICE.service_id,
                     name: "Service".to_string(),
                     provider_name: "Provider".to_string(),
                 }],
-                inner: crate::config::ChannelConfigInner::IsdbT {
-                    frequency: 515_142_857,
-                    bandwidth_hz: 6_000_000,
-                },
             }],
         );
 

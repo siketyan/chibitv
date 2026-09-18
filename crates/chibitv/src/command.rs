@@ -24,7 +24,7 @@ pub(super) enum Command {
     /// Demux a MMT/TLV stream and mux a M2TS stream.
     Remux(remux::Options),
 
-    /// Scan physical channels, and keep or print what was found.
+    /// Scan physical channels and keep what was found in the database.
     Scan(scan::Options),
 
     /// Run the chibitv server.

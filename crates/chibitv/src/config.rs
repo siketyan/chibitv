@@ -2,7 +2,7 @@ use std::net::{Ipv6Addr, SocketAddr};
 use std::path::Path;
 
 use serde::de::Error;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer};
 
 #[derive(Copy, Clone, Debug)]
 pub struct CasMasterKey([u8; 32]);
@@ -103,75 +103,6 @@ pub enum TunerConfig {
     },
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(tag = "delivery_system")]
-pub enum ChannelConfigInner {
-    #[serde(rename = "ISDB-T")]
-    IsdbT {
-        frequency: u32,
-
-        #[serde(
-            default = "default_isdb_t_bandwidth_hz",
-            skip_serializing_if = "is_default_isdb_t_bandwidth_hz"
-        )]
-        bandwidth_hz: u32,
-    },
-
-    /// Satellite 2K (BS/CS) broadcasting, which carries MPEG-2 TS.
-    /// `stream_id` is the transport stream id of the channel.
-    #[serde(rename = "ISDB-S")]
-    IsdbS { frequency: u32, stream_id: u32 },
-
-    /// Satellite 4K (BS/CS) broadcasting, which carries MMT/TLV.
-    /// `stream_id` is the TLV stream id of the channel.
-    #[serde(rename = "ISDB-S3")]
-    IsdbS3 { frequency: u32, stream_id: u32 },
-
-    /// A channel identified by the tuning space and channel numbers a
-    /// BonDriver enumerates, rather than by tuning parameters, which a
-    /// BonDriver holds in its own configuration. The delivery system still
-    /// has to be named, because it decides how the stream is demultiplexed.
-    #[serde(rename = "Bon-ISDB-T")]
-    BonIsdbT { space: u32, channel: u32 },
-
-    #[serde(rename = "Bon-ISDB-S")]
-    BonIsdbS { space: u32, channel: u32 },
-
-    #[serde(rename = "Bon-ISDB-S3")]
-    BonIsdbS3 { space: u32, channel: u32 },
-}
-
-fn default_isdb_t_bandwidth_hz() -> u32 {
-    6_000_000
-}
-
-fn is_default_isdb_t_bandwidth_hz(value: &u32) -> bool {
-    *value == default_isdb_t_bandwidth_hz()
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ChannelConfig {
-    pub name: String,
-
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transport_stream_id: Option<u16>,
-
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub services: Vec<ServiceConfig>,
-
-    #[serde(flatten)]
-    pub inner: ChannelConfigInner,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ServiceConfig {
-    pub id: u16,
-    pub name: String,
-
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub provider_name: String,
-}
-
 #[derive(Clone, Debug, Deserialize)]
 pub struct Config {
     pub cas: CasConfig,
@@ -187,9 +118,6 @@ pub struct Config {
 
     #[serde(default)]
     pub tuners: Vec<TunerConfig>,
-
-    #[serde(default)]
-    pub channels: Vec<ChannelConfig>,
 }
 
 impl Config {
@@ -206,72 +134,6 @@ mod tests {
     use serde::Deserialize;
 
     use super::*;
-
-    #[derive(Deserialize)]
-    struct ChannelList {
-        channels: Vec<ChannelConfig>,
-    }
-
-    #[test]
-    fn reads_scanned_services_from_channel_config() {
-        let config = toml::from_str::<ChannelList>(
-            r#"
-                [[channels]]
-                name = "TOKYO MX"
-                delivery_system = "ISDB-T"
-                frequency = 515142857
-                bandwidth_hz = 6000000
-                transport_stream_id = 12345
-
-                [[channels.services]]
-                id = 23608
-                name = "TOKYO MX1"
-                provider_name = "TOKYO MX"
-            "#,
-        )
-        .unwrap();
-
-        let channel = &config.channels[0];
-        assert_eq!(channel.transport_stream_id, Some(12345));
-        assert_eq!(channel.services.len(), 1);
-        assert_eq!(channel.services[0].id, 23608);
-        assert_eq!(channel.services[0].name, "TOKYO MX1");
-    }
-
-    #[test]
-    fn tells_the_satellite_delivery_systems_apart() {
-        let config = toml::from_str::<ChannelList>(
-            r#"
-                [[channels]]
-                name = "BS 2K"
-                delivery_system = "ISDB-S"
-                frequency = 1049480
-                stream_id = 0x4031
-
-                [[channels]]
-                name = "BS 4K"
-                delivery_system = "ISDB-S3"
-                frequency = 1318000
-                stream_id = 0x40F1
-            "#,
-        )
-        .unwrap();
-
-        assert!(matches!(
-            config.channels[0].inner,
-            ChannelConfigInner::IsdbS {
-                frequency: 1_049_480,
-                stream_id: 0x4031,
-            }
-        ));
-        assert!(matches!(
-            config.channels[1].inner,
-            ChannelConfigInner::IsdbS3 {
-                frequency: 1_318_000,
-                stream_id: 0x40F1,
-            }
-        ));
-    }
 
     #[test]
     fn stores_recordings_in_the_configured_directory() {
@@ -294,22 +156,5 @@ mod tests {
 
         let StorageConfig::Directory { path } = toml::from_str::<Storage>("").unwrap().storage;
         assert_eq!(path, std::path::Path::new("./recordings"));
-    }
-
-    #[test]
-    fn keeps_legacy_channel_config_compatible() {
-        let config = toml::from_str::<ChannelList>(
-            r#"
-                [[channels]]
-                name = "Legacy"
-                delivery_system = "ISDB-T"
-                frequency = 515142857
-            "#,
-        )
-        .unwrap();
-
-        let channel = &config.channels[0];
-        assert_eq!(channel.transport_stream_id, None);
-        assert!(channel.services.is_empty());
     }
 }

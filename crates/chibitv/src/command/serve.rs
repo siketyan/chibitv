@@ -7,7 +7,7 @@ use clap::Parser;
 use tracing::warn;
 
 use crate::cas::PcscCasModule;
-use crate::channel::{self, Channel, ChannelInner};
+use crate::channel::{Channel, ChannelInner};
 use crate::channel_scanner::ChannelScanner;
 use crate::config::Config;
 use crate::event_crawler::EventCrawler;
@@ -47,10 +47,15 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let registry =
         Arc::new(Registry::default().storing_events(EventWriter::spawn(Arc::clone(&store))));
 
-    // The channels are the database's, and the `[[channels]]` entries a
-    // configuration from before that still names are imported into one holding
-    // none of its own yet.
-    let stored_channels = channel::load_channels(&store, &config.channels).await?;
+    // The channels are the database's, which a scan writes: nothing is served
+    // until one has found something.
+    let stored_channels = store.load_channels().await?;
+    if stored_channels.is_empty() {
+        warn!(
+            "No channel is stored yet, so there is nothing to watch; scan for the channels on air with `chibitv scan` or from the app"
+        );
+    }
+
     registry.put_channels(&stored_channels);
 
     // The schedule of the previous run is restored before anything is tuned,

@@ -62,7 +62,7 @@ should detect the card reader without `sudo`.
 
 Every subcommand loads `./config.toml` from the current directory. Copy the
 example and configure the CAS master key and the tuners before running chibitv;
-the channels are kept in the database instead, which
+the channels are not part of the file — they are kept in the database, which
 [scanning](#scanning-channels) writes:
 
 ```shell
@@ -99,19 +99,18 @@ TZ=JST-9 cargo run -- serve
 
 ## Scanning channels
 
-Let [`scan`](../reference/cli#scan) discover the channels on air rather than
-writing them by hand. `--save` keeps what it found in the database, as the
-channels of the broadcast that was scanned:
+[`scan`](../reference/cli#scan) is what puts the channels on air into the
+database, so nothing can be watched until one has run:
 
 ```shell
 # The terrestrial UHF channels.
-cargo run -- scan --save
+cargo run -- scan
 
 # The BS and CS110 transponders.
-cargo run -- scan --delivery-system ISDB-S --save
+cargo run -- scan --delivery-system ISDB-S
 
 # The 4K broadcasting on the BS transponders.
-cargo run -- scan --delivery-system ISDB-S3 --save
+cargo run -- scan --delivery-system ISDB-S3
 ```
 
 Each of these replaces the channels kept for the broadcast it walked and leaves
@@ -119,11 +118,6 @@ the others alone, so a dish and an aerial are scanned one after another. The
 service catalog comes along, which the server needs so that the services of
 every physical channel are known before tuning. Scanning from the GUI saves the
 same way, without restarting the server.
-
-Without `--save` the channels are printed as `[[channels]]` entries instead,
-which is what the [configuration](../reference/configuration#channels) took
-before they moved into the database. A `config.toml` that still names them has
-them imported once, into a database keeping no channel of its own yet.
 
 2K and 4K share the transponders but not the signalling, so a dish carrying
 both is scanned twice. The 4K scan reaches BS only for now.

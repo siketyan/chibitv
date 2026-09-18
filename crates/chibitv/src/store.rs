@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use anyhow::bail;
 
-pub use channel::{ChannelScope, ChannelStore, NewChannel, StoredChannel, StoredService};
+pub use channel::{ChannelStore, NewChannel, StoredChannel, StoredService};
 pub use event::{EventStore, EventWriter, SectionId, SectionUpdate, StoredEvent};
 pub use sqlite::SqliteStore;
 
