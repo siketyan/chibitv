@@ -1,8 +1,9 @@
 //! Finding the channels on air.
 //!
 //! A scan tunes to what it is told to look at and reads the signalling there
-//! into [`ChannelConfig`] entries: the CLI prints them as TOML to merge into
-//! the configuration, and the server hands them to whoever asked for the scan.
+//! into [`ChannelConfig`] entries, which are kept in the database as the
+//! channels of the broadcast that was walked once whoever asked for the scan
+//! says so — `scan --save` on the command line, `SaveScanResult` over the API.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufReader, Read};
@@ -25,7 +26,7 @@ use chibitv_b60::tlv_si::{Descriptor as TlvDescriptor, Table as TlvTable, TlvNit
 use chibitv_b61::Descrambler;
 
 use crate::cas::PcscCasModule;
-use crate::channel::{Channel, ChannelInner};
+use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::config::{ChannelConfig, ChannelConfigInner, Config, ServiceConfig};
 use crate::demux::{Demux, Packet, SignalingEvent, is_descrambling_refused};
 use crate::m2ts::M2tsDemuxer;
@@ -57,7 +58,6 @@ const SDT_ACTUAL_TABLE_ID: u8 = 0x42;
 const SDT_OTHER_TABLE_ID: u8 = 0x46;
 
 /// The broadcast a scan walks.
-/// The broadcast a scan walks.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 pub enum ScanDeliverySystem {
     /// The terrestrial UHF physical channels.
@@ -71,6 +71,16 @@ pub enum ScanDeliverySystem {
     /// The BS transponders carrying 4K.
     #[value(name = "ISDB-S3")]
     IsdbS3,
+}
+
+impl From<ScanDeliverySystem> for DeliverySystem {
+    fn from(value: ScanDeliverySystem) -> Self {
+        match value {
+            ScanDeliverySystem::IsdbT => Self::IsdbT,
+            ScanDeliverySystem::IsdbS => Self::IsdbS,
+            ScanDeliverySystem::IsdbS3 => Self::IsdbS3,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1290,8 +1300,8 @@ fn text_bytes(bytes: &[u8]) -> String {
     decode_b24(bytes)
 }
 
-/// The `[[channels]]` entries a scan found, as TOML to merge into the
-/// configuration.
+/// The channels a scan found, as the `[[channels]]` entries of a
+/// configuration, which is how `scan` prints them when it is not saving them.
 pub fn format_scan_output(channels: &[ChannelConfig]) -> String {
     let mut channel_tables = ArrayOfTables::new();
 

@@ -22,6 +22,12 @@ service ChibitvService {
   // has finished.
   rpc GetScanResult(GetScanResultRequest) returns (GetScanResultResponse);
 
+  // SaveScanResult keeps what the last scan found, as the channels of the
+  // broadcast it walked: the ones that were on air replace the channels kept
+  // for that broadcast, while the channels of the other broadcasts are left
+  // alone. The channels served change at once, so nothing has to be restarted.
+  rpc SaveScanResult(SaveScanResultRequest) returns (SaveScanResultResponse);
+
   // ListTasks returns every background task the server keeps, the running ones
   // and the recently finished ones alike.
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
@@ -57,6 +63,7 @@ message ListChannelsResponse {
 }
 
 message Channel {
+  // The identifier the database gave the channel.
   uint32 id = 1;
   string name = 2;
   DeliverySystem delivery_system = 3;
@@ -140,9 +147,13 @@ message GetScanResultRequest {}
 message GetScanResultResponse {
   // The channels the last scan found, in the order it found them.
   repeated ScannedChannel channels = 1;
+}
 
-  // The same, as the TOML to merge into the configuration.
-  string toml = 2;
+message SaveScanResultRequest {}
+
+message SaveScanResultResponse {
+  // The channels being served now that the scan has been kept.
+  repeated Channel channels = 1;
 }
 
 // ScannedChannel is one channel a scan found.

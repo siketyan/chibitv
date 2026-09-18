@@ -11,7 +11,7 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tracing::warn;
 
 use crate::channel::ChannelInner;
-use crate::channel_scanner::{ScanDeliverySystem, ScanRequest, format_scan_output};
+use crate::channel_scanner::{ScanDeliverySystem, ScanRequest};
 use crate::config::{ChannelConfig, ChannelConfigInner};
 use crate::proto::chibitv::v1::*;
 use crate::registry;
@@ -40,19 +40,8 @@ impl ChibitvService for ChibitvServiceImpl {
         _ctx: RequestContext,
         _request: ServiceRequest<'_, ListChannelsRequest>,
     ) -> ServiceResult<ListChannelsResponse> {
-        let channels = self
-            .workspace
-            .channels()
-            .map(|(id, channel)| Channel {
-                id: id as u32,
-                name: channel.name.to_string(),
-                delivery_system: delivery_system(&channel.inner).into(),
-                ..Default::default()
-            })
-            .collect();
-
         Response::ok(ListChannelsResponse {
-            channels,
+            channels: self.workspace.channels().iter().map(channel).collect(),
             ..Default::default()
         })
     }
@@ -195,7 +184,23 @@ impl ChibitvService for ChibitvServiceImpl {
 
         Response::ok(GetScanResultResponse {
             channels: found.iter().map(scanned_channel).collect(),
-            toml: format_scan_output(&found),
+            ..Default::default()
+        })
+    }
+
+    async fn save_scan_result(
+        &self,
+        _ctx: RequestContext,
+        _request: ServiceRequest<'_, SaveScanResultRequest>,
+    ) -> ServiceResult<SaveScanResultResponse> {
+        let channels = self
+            .workspace
+            .save_scan_result()
+            .await
+            .map_err(workspace_error)?;
+
+        Response::ok(SaveScanResultResponse {
+            channels: channels.iter().map(channel).collect(),
             ..Default::default()
         })
     }
@@ -431,6 +436,15 @@ fn fmp4_response(data: bytes::Bytes) -> StreamResponse {
     }
 }
 
+fn channel(channel: &crate::channel::Channel) -> Channel {
+    Channel {
+        id: channel.id as u32,
+        name: channel.name.clone(),
+        delivery_system: delivery_system(&channel.inner).into(),
+        ..Default::default()
+    }
+}
+
 fn delivery_system(inner: &ChannelInner) -> DeliverySystem {
     match inner {
         ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => DeliverySystem::IsdbT,
@@ -489,6 +503,12 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
         }
         WorkspaceError::ChannelScannerUnavailable => {
             ConnectError::failed_precondition("scanning is unavailable")
+        }
+        WorkspaceError::ChannelStoreUnavailable => {
+            ConnectError::failed_precondition("no database is configured to keep the channels in")
+        }
+        WorkspaceError::ScanResultUnavailable => {
+            ConnectError::failed_precondition("no scan has finished, so there is nothing to keep")
         }
         WorkspaceError::ScanNotPossible(error) => {
             ConnectError::invalid_argument(format!("{error:#}"))

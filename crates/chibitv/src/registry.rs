@@ -13,7 +13,7 @@ use chibitv_b24::decode as decode_b24;
 use chibitv_b60::descriptor::Descriptor;
 use chibitv_b60::table::{BroadcasterInformation, EventInformation, ServiceInformation};
 
-use crate::store::{EventWriter, SectionId, SectionUpdate, Store, StoredEvent};
+use crate::store::{EventWriter, SectionId, SectionUpdate, Store, StoredChannel, StoredEvent};
 
 #[derive(Clone, Debug)]
 #[expect(
@@ -83,6 +83,14 @@ impl Event {
 
 #[derive(Default)]
 pub struct Registry {
+    /// The channels being served, and the stream each one carries when that is
+    /// known.
+    ///
+    /// This is what a service has to belong to before it is kept: the
+    /// signalling of a network describes every stream of it, and a service on
+    /// one that is not a channel being served cannot be watched or recorded,
+    /// so it has no business in the registry.
+    channels: HashMap<usize, Option<u16>>,
     broadcasters: HashMap<u8, Broadcaster>,
     services: HashMap<ServiceKey, Service>,
     events: Option<EventWriter>,
@@ -95,6 +103,74 @@ impl Registry {
         self
     }
 
+    /// Serves the channels the store keeps, with the service catalog each one
+    /// was scanned with.
+    ///
+    /// This is what says which channels are being served, so it is also what
+    /// decides whose services are kept. A channel that is no longer served
+    /// takes its services, and the schedule collected for them, with it.
+    pub fn put_channels(&self, channels: &[StoredChannel]) {
+        let served = self.channels.pin();
+        served.clear();
+        for channel in channels {
+            served.insert(channel.id, channel.stream_id());
+        }
+
+        // A catalog is keyed by the stream it was scanned under, so a channel
+        // whose stream nothing has recorded yet has nothing to seed.
+        for channel in channels {
+            let Some(stream_id) = channel.stream_id() else {
+                continue;
+            };
+
+            for service in &channel.services {
+                self.put_cached_service(
+                    channel.id,
+                    ServiceKey {
+                        stream_id,
+                        service_id: service.id,
+                    },
+                    service.name.clone(),
+                    service.provider_name.clone(),
+                );
+            }
+        }
+
+        self.services
+            .pin()
+            .retain(|_, service| served.contains_key(&service.channel_id));
+    }
+
+    /// Serves one channel carrying the stream, for a test that has no store to
+    /// read the channels from.
+    #[cfg(test)]
+    pub fn put_channel(&self, channel_id: usize, stream_id: Option<u16>) {
+        self.channels.pin().insert(channel_id, stream_id);
+    }
+
+    /// The channel a service of the stream belongs to, if any is served.
+    ///
+    /// The stream a channel carries is what says so, rather than the channel
+    /// being demultiplexed: a satellite stream describes the services of the
+    /// others beside its own, and those belong to the channels carrying them.
+    /// A channel whose stream is not recorded — one configured without ever
+    /// having been scanned — takes the services of the stream it is
+    /// demultiplexed from, as that is the only stream it can be carrying.
+    fn serving_channel(&self, channel_id: usize, stream_id: u16) -> Option<usize> {
+        let channels = self.channels.pin();
+        if let Some((id, _)) = channels
+            .iter()
+            .find(|(_, carried)| **carried == Some(stream_id))
+        {
+            return Some(*id);
+        }
+
+        channels
+            .get(&channel_id)
+            .is_some_and(|carried| carried.is_none())
+            .then_some(channel_id)
+    }
+
     /// Fills the registry with the schedule of the previous run.
     pub async fn restore_events(&self, store: &Arc<dyn Store>) -> anyhow::Result<usize> {
         let events = store
@@ -102,8 +178,8 @@ impl Registry {
             .await
             .context("Could not read the stored schedule")?;
 
-        // The services come from the configuration while starting up, so the
-        // schedule of one that has never been scanned has nowhere to go.
+        // The services come from the channels being served, so the schedule of
+        // one that has never been scanned has nowhere to go.
         let restored = events
             .into_iter()
             .filter(|event| {
@@ -182,6 +258,10 @@ impl Registry {
     }
 
     pub fn put_service(&self, channel_id: usize, stream_id: u16, service: &ServiceInformation) {
+        let Some(channel_id) = self.serving_channel(channel_id, stream_id) else {
+            return;
+        };
+
         let key = ServiceKey {
             stream_id,
             service_id: service.service_id,
@@ -225,6 +305,10 @@ impl Registry {
         stream_id: u16,
         service: &B10ServiceInformation,
     ) {
+        let Some(channel_id) = self.serving_channel(channel_id, stream_id) else {
+            return;
+        };
+
         let key = ServiceKey {
             stream_id,
             service_id: service.service_id,
@@ -262,6 +346,13 @@ impl Registry {
         services.insert(key, service);
     }
 
+    /// Adds a service from the catalog of the channel carrying it, which is
+    /// what [`Registry::put_channels`] seeds the registry with.
+    ///
+    /// A service already known keeps the schedule collected for it and takes
+    /// the catalog's name and channel, so that a scan renaming a service, or
+    /// giving it a channel of a new identifier, is followed rather than
+    /// ignored.
     pub fn put_cached_service(
         &self,
         channel_id: usize,
@@ -270,9 +361,10 @@ impl Registry {
         provider_name: String,
     ) {
         let services = self.services.pin();
-        if services.contains_key(&key) {
-            return;
-        }
+        let events = services
+            .get(&key)
+            .map(|service| Arc::clone(&service.events))
+            .unwrap_or_default();
 
         services.insert(
             key,
@@ -281,7 +373,7 @@ impl Registry {
                 name,
                 provider_name,
                 channel_id,
-                events: Arc::new(HashMap::new()),
+                events,
             },
         );
     }
@@ -521,6 +613,8 @@ mod tests {
     };
 
     use super::*;
+    use crate::channel::ChannelInner;
+    use crate::store::StoredService;
 
     const SERVICE: ServiceKey = ServiceKey {
         stream_id: 0x1234,
@@ -570,6 +664,75 @@ mod tests {
         );
     }
 
+    fn stored_channel(id: usize, stream_id: u16, service_id: u16, name: &str) -> StoredChannel {
+        StoredChannel {
+            id,
+            name: format!("Channel {id}"),
+            inner: ChannelInner::IsdbT {
+                frequency: 515_142_857,
+                bandwidth_hz: 6_000_000,
+            },
+            transport_stream_id: Some(stream_id),
+            services: vec![StoredService {
+                id: service_id,
+                name: name.to_string(),
+                provider_name: "Provider".to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn seeds_the_services_of_every_channel_served() {
+        let registry = Registry::default();
+
+        registry.put_channels(&[
+            stored_channel(1, 100, 101, "Service A"),
+            stored_channel(2, 200, 201, "Service B"),
+        ]);
+
+        assert_eq!(registry.get_all_services().len(), 2);
+        assert_eq!(
+            registry
+                .get_service(ServiceKey {
+                    stream_id: 100,
+                    service_id: 101,
+                })
+                .map(|service| service.channel_id),
+            Some(1)
+        );
+        assert_eq!(
+            registry
+                .get_service(ServiceKey {
+                    stream_id: 200,
+                    service_id: 201,
+                })
+                .map(|service| service.channel_id),
+            Some(2)
+        );
+    }
+
+    #[test]
+    fn forgets_the_services_of_a_channel_no_longer_served() {
+        let registry = Registry::default();
+        registry.put_channels(&[
+            stored_channel(1, 100, 101, "Service A"),
+            stored_channel(2, 200, 201, "Service B"),
+        ]);
+
+        // A scan that no longer finds the second channel replaces the list
+        // with the first one alone.
+        registry.put_channels(&[stored_channel(1, 100, 101, "Renamed")]);
+
+        assert_eq!(
+            registry
+                .get_all_services()
+                .iter()
+                .map(|service| service.name.clone())
+                .collect::<Vec<_>>(),
+            ["Renamed"]
+        );
+    }
+
     fn stored_event(key: ServiceKey, event_id: u16, name: &str) -> StoredEvent {
         StoredEvent {
             key,
@@ -586,6 +749,7 @@ mod tests {
     #[test]
     fn registers_isdb_s3_service_with_channel_id() {
         let registry = Registry::default();
+        registry.put_channel(4, Some(0x1234));
         registry.put_service(
             4,
             0x1234,
@@ -647,8 +811,84 @@ mod tests {
     }
 
     #[test]
+    fn refuses_a_service_of_a_stream_no_channel_carries() {
+        let registry = Registry::default();
+        registry.put_channels(&[stored_channel(1, 100, 101, "Service A")]);
+
+        // The signalling of a network describes every stream of it, including
+        // the ones no channel is served from.
+        registry.put_b10_service(
+            1,
+            200,
+            &B10ServiceInformation {
+                service_id: 201,
+                eit_user_defined_flags: 0,
+                eit_schedule_flag: true,
+                eit_present_following_flag: true,
+                running_status: 4,
+                free_ca_mode: false,
+                descriptors: vec![B10Descriptor::Service(ServiceDescriptor {
+                    service_type: 0x01,
+                    service_provider_name: b"\x0eProvider".to_vec(),
+                    service_name: b"\x0eElsewhere".to_vec(),
+                })],
+            },
+        );
+
+        assert_eq!(registry.get_all_services().len(), 1);
+        assert!(
+            registry
+                .get_service(ServiceKey {
+                    stream_id: 200,
+                    service_id: 201,
+                })
+                .is_none()
+        );
+    }
+
+    /// A stream of a channel other than the one being demultiplexed still
+    /// belongs to a channel, and its services go to that one.
+    #[test]
+    fn keeps_a_service_under_the_channel_carrying_its_stream() {
+        let registry = Registry::default();
+        registry.put_channels(&[
+            stored_channel(1, 100, 101, "Service A"),
+            stored_channel(2, 200, 201, "Service B"),
+        ]);
+
+        registry.put_b10_service(
+            1,
+            200,
+            &B10ServiceInformation {
+                service_id: 202,
+                eit_user_defined_flags: 0,
+                eit_schedule_flag: true,
+                eit_present_following_flag: true,
+                running_status: 4,
+                free_ca_mode: false,
+                descriptors: vec![B10Descriptor::Service(ServiceDescriptor {
+                    service_type: 0x01,
+                    service_provider_name: b"\x0eProvider".to_vec(),
+                    service_name: b"\x0eAnother".to_vec(),
+                })],
+            },
+        );
+
+        assert_eq!(
+            registry
+                .get_service(ServiceKey {
+                    stream_id: 200,
+                    service_id: 202,
+                })
+                .map(|service| service.channel_id),
+            Some(2)
+        );
+    }
+
+    #[test]
     fn collects_isdb_s3_event_summary_and_details() {
         let registry = Registry::default();
+        registry.put_channel(0, Some(0x1234));
         registry.put_service(
             0,
             0x1234,
@@ -724,6 +964,7 @@ mod tests {
     #[test]
     fn registers_isdb_t_service_and_event() {
         let registry = Registry::default();
+        registry.put_channel(3, Some(0x1234));
         registry.put_cached_service(
             3,
             ServiceKey {

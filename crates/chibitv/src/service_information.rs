@@ -398,6 +398,15 @@ mod tests {
         eit
     }
 
+    /// A registry serving the one channel the tables below belong to, which a
+    /// service has to belong to before it is kept.
+    fn registry_serving_the_stream() -> Registry {
+        let registry = Registry::default();
+        registry.put_channel(0, Some(STREAM_ID));
+
+        registry
+    }
+
     fn service_key(service_id: u16) -> ServiceKey {
         ServiceKey {
             stream_id: STREAM_ID,
@@ -471,7 +480,7 @@ mod tests {
     #[test]
     fn tracks_the_watched_service_only() {
         let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel(2);
-        let registry = Arc::new(Registry::default());
+        let registry = Arc::new(registry_serving_the_stream());
         let mut processor =
             ServiceInformationProcessor::new(0, Some(Arc::clone(&registry)), Some(signal_tx))
                 .watching_service(Some(SERVICE_ID));
@@ -517,7 +526,7 @@ mod tests {
 
     #[test]
     fn stores_a_section_once_per_version() {
-        let registry = Arc::new(Registry::default());
+        let registry = Arc::new(registry_serving_the_stream());
         let mut processor = ServiceInformationProcessor::new(0, Some(Arc::clone(&registry)), None);
 
         processor
@@ -562,7 +571,7 @@ mod tests {
     #[test]
     fn stores_the_schedule_but_not_what_is_on_air() {
         let (writer, mut sections) = EventWriter::for_test();
-        let registry = Arc::new(Registry::default().storing_events(writer));
+        let registry = Arc::new(registry_serving_the_stream().storing_events(writer));
         let mut processor = ServiceInformationProcessor::new(0, Some(registry), None);
 
         processor
@@ -621,7 +630,7 @@ mod tests {
     #[test]
     fn waits_for_the_service_the_event_belongs_to() {
         let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel(2);
-        let registry = Arc::new(Registry::default());
+        let registry = Arc::new(registry_serving_the_stream());
         let mut processor = ServiceInformationProcessor::new(0, Some(registry), Some(signal_tx))
             .watching_service(Some(SERVICE_ID));
 
