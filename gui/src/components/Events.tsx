@@ -245,10 +245,29 @@ export function Events(): JSX.Element {
     );
   };
 
-  return (
-    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-      <div className="flex shrink-0 items-center gap-3 border-b border-white/10 px-3 py-2">
-        <h2 className="mr-auto font-semibold">Program guide</h2>
+  // The wave tabs sit in the title bar rather than on a row of their own, which
+  // would eat into the little height the guide has. The columns beside them are
+  // of one width, which is what centres them. A panel too narrow for all three
+  // drops the title rather than the tabs or the day it is showing, both of
+  // which are what the guide is steered by.
+  const titleBar = (
+    <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-white/10 px-3 py-2 sm:grid-cols-[1fr_minmax(0,auto)_1fr]">
+      <h2 className="hidden min-w-0 truncate font-semibold sm:block">Program guide</h2>
+      {waves.length === 0 ? (
+        <div />
+      ) : (
+        <Tabs.ListContainer className="min-w-0">
+          <Tabs.List aria-label="Broadcast waves">
+            {waves.map((wave) => (
+              <Tabs.Tab key={wave.id} id={wave.id}>
+                <Tabs.Indicator />
+                {wave.label}
+              </Tabs.Tab>
+            ))}
+          </Tabs.List>
+        </Tabs.ListContainer>
+      )}
+      <div className="flex items-center justify-end gap-3">
         <Button
           aria-label="Refresh events"
           isDisabled={isRefreshing || refreshEvents.isPending}
@@ -283,44 +302,45 @@ export function Events(): JSX.Element {
           <ChevronRightIcon />
         </Button>
       </div>
-
-      {selectedEvent && (
-        <EventDetails
-          event={selectedEvent.event}
-          serviceName={
-            services.find((service) => service.key && serviceKeyId(service.key) === serviceKeyId(selectedEvent.service))
-              ?.name
-          }
-          onClose={() => setSelectedEvent(undefined)}
-        />
-      )}
-
-      {waves.length === 0 ? (
-        <p className="p-3 text-sm text-muted">No channels are available.</p>
-      ) : (
-        <Tabs
-          className="min-h-0 flex-1"
-          selectedKey={selectedWave}
-          onSelectionChange={(key) => setRequestedDeliverySystem(Number(key) as DeliverySystem)}
-        >
-          <Tabs.ListContainer className="shrink-0">
-            <Tabs.List aria-label="Broadcast waves">
-              {waves.map((wave) => (
-                <Tabs.Tab key={wave.id} id={wave.id}>
-                  <Tabs.Indicator />
-                  {wave.label}
-                </Tabs.Tab>
-              ))}
-            </Tabs.List>
-          </Tabs.ListContainer>
-          {waves.map((wave) => (
-            <Tabs.Panel key={wave.id} id={wave.id} className="min-h-0 flex-1 overflow-auto p-0">
-              {renderGuide(wave.channels)}
-            </Tabs.Panel>
-          ))}
-        </Tabs>
-      )}
     </div>
+  );
+
+  const details = selectedEvent && (
+    <EventDetails
+      event={selectedEvent.event}
+      serviceName={
+        services.find((service) => service.key && serviceKeyId(service.key) === serviceKeyId(selectedEvent.service))
+          ?.name
+      }
+      onClose={() => setSelectedEvent(undefined)}
+    />
+  );
+
+  if (waves.length === 0) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {titleBar}
+        <p className="p-3 text-sm text-muted">No channels are available.</p>
+      </div>
+    );
+  }
+
+  return (
+    // The tabs hold the title bar as well as the guide, the list of them being
+    // part of it. Their own gap would show as a seam under it, so it goes.
+    <Tabs
+      className="min-h-0 flex-1 gap-0 overflow-hidden"
+      selectedKey={selectedWave}
+      onSelectionChange={(key) => setRequestedDeliverySystem(Number(key) as DeliverySystem)}
+    >
+      {titleBar}
+      {details}
+      {waves.map((wave) => (
+        <Tabs.Panel key={wave.id} id={wave.id} className="min-h-0 flex-1 overflow-auto p-0">
+          {renderGuide(wave.channels)}
+        </Tabs.Panel>
+      ))}
+    </Tabs>
   );
 }
 
