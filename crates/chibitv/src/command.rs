@@ -1,3 +1,4 @@
+mod channels;
 mod live;
 mod record;
 mod remux;
@@ -11,6 +12,9 @@ use crate::config::Config;
 
 #[derive(Clone, Debug, Parser)]
 pub(super) enum Command {
+    /// List the channels the database keeps.
+    Channels(channels::Options),
+
     /// Watch a channel as a remuxed M2TS stream written to stdout.
     Live(live::Options),
 
@@ -20,7 +24,7 @@ pub(super) enum Command {
     /// Demux a MMT/TLV stream and mux a M2TS stream.
     Remux(remux::Options),
 
-    /// Scan physical channels and print the channel config as TOML.
+    /// Scan physical channels and keep what was found in the database.
     Scan(scan::Options),
 
     /// Run the chibitv server.
@@ -33,6 +37,7 @@ pub(super) enum Command {
 impl Command {
     pub(crate) async fn run(&self, config: &Config) -> anyhow::Result<()> {
         match self {
+            Self::Channels(options) => channels::channels(options, config).await,
             Self::Live(options) => live::live(options, config).await,
             Self::Record(options) => record::record(options, config).await,
             Self::Remux(options) => remux::remux(options, config).await,

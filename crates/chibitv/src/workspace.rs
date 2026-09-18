@@ -1,18 +1,18 @@
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use bytes::Bytes;
 use chrono::{DateTime, Local, NaiveDateTime, TimeDelta};
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::channel::{Channel, ChannelInner};
+use crate::channel::Channel;
 use crate::channel_scanner::{ChannelScanner, ScanRequest};
-use crate::config::ChannelConfig;
 use crate::event_crawler::EventCrawler;
 use crate::recorder::{Recorder, Recording};
 use crate::registry::{Registry, Service, ServiceKey};
 use crate::scheduler::Scheduler;
 use crate::service_information::Signal;
+use crate::store::{NewChannel, Store};
 use crate::stream::{Stream, Streams, SubscribeError};
 use crate::task::{CancelError, DeleteError, SpawnError, Task, TaskId, TaskKind, Tasks};
 
@@ -33,6 +33,8 @@ pub enum WorkspaceError {
     EventCrawlerUnavailable,
     /// No channel scanner is configured, so nothing can be scanned for.
     ChannelScannerUnavailable,
+    /// No database is configured, so the channels cannot be written.
+    ChannelStoreUnavailable,
     /// The scan was asked for something it cannot walk.
     ScanNotPossible(anyhow::Error),
     /// No storage is configured, so nothing can be recorded.
@@ -60,12 +62,14 @@ pub struct StreamSubscription {
 
 pub struct Workspace {
     registry: Arc<Registry>,
-    channels: Vec<Channel>,
+    /// The channels being served, which a saved scan replaces.
+    channels: RwLock<Vec<Channel>>,
+    store: Option<Arc<dyn Store>>,
     streams: Option<Streams>,
     event_crawler: Option<Arc<EventCrawler>>,
     channel_scanner: Option<Arc<ChannelScanner>>,
     /// What the last scan found, kept for whoever asked for it to read back.
-    scan_result: Arc<Mutex<Vec<ChannelConfig>>>,
+    scan_result: Arc<Mutex<Vec<NewChannel>>>,
     recorder: Option<Arc<Recorder>>,
     tasks: Arc<Tasks>,
     scheduler: Arc<Scheduler>,
@@ -77,7 +81,8 @@ impl Workspace {
 
         Self {
             registry,
-            channels,
+            channels: RwLock::new(channels),
+            store: None,
             streams,
             event_crawler: None,
             channel_scanner: None,
@@ -86,6 +91,13 @@ impl Workspace {
             scheduler: Scheduler::spawn(Arc::clone(&tasks)),
             tasks,
         }
+    }
+
+    /// Keeps the channels in the database, which is what a saved scan writes
+    /// them to.
+    pub fn with_channel_store(mut self, store: Arc<dyn Store>) -> Self {
+        self.store = Some(store);
+        self
     }
 
     pub fn with_event_crawler(mut self, crawler: EventCrawler) -> Self {
@@ -103,8 +115,9 @@ impl Workspace {
         self
     }
 
-    pub fn channels(&self) -> impl Iterator<Item = (usize, &Channel)> {
-        self.channels.iter().enumerate()
+    /// The channels being served, in the order the database keeps them.
+    pub fn channels(&self) -> Vec<Channel> {
+        self.channels.read().unwrap().clone()
     }
 
     pub fn registry(&self) -> &Registry {
@@ -122,7 +135,7 @@ impl Workspace {
             .event_crawler
             .clone()
             .ok_or(WorkspaceError::EventCrawlerUnavailable)?;
-        let channels = self.channels.clone();
+        let channels = self.channels();
         let registry = Arc::clone(&self.registry);
 
         self.tasks
@@ -139,8 +152,9 @@ impl Workspace {
     /// Starts looking for the channels on air in the background.
     ///
     /// What the scan finds replaces what the last one did, and is read back
-    /// with [`Workspace::scan_result`]. The channels the server is serving are
-    /// left alone: they come from the configuration, which this does not write.
+    /// with [`Workspace::scan_result`]. The channels being served are left
+    /// alone until the channels to keep of what was found are handed to
+    /// [`Workspace::create_channels`].
     pub fn scan_channels(&self, request: ScanRequest) -> Result<Task, WorkspaceError> {
         let scanner = self
             .channel_scanner
@@ -157,8 +171,7 @@ impl Workspace {
                 TaskKind::ScanChannels,
                 "Scanning for channels",
                 move |task| {
-                    let channels = scanner.scan(&request, Some(task))?;
-                    *result.lock().unwrap() = channels;
+                    *result.lock().unwrap() = scanner.scan(&request, Some(task))?;
 
                     Ok(())
                 },
@@ -169,8 +182,41 @@ impl Workspace {
     }
 
     /// What the last scan found, which is empty until one has finished.
-    pub fn scan_result(&self) -> Vec<ChannelConfig> {
+    pub fn scan_result(&self) -> Vec<NewChannel> {
         self.scan_result.lock().unwrap().clone()
+    }
+
+    /// Keeps the channels given, and serves them from now on.
+    ///
+    /// This is what a scan comes to: whoever asked for one hands back the
+    /// channels of it worth keeping, edited or picked over first if they like.
+    /// Nothing has to be restarted, as the registry is seeded with the service
+    /// catalogs that come along and the channels served are swapped for the
+    /// ones now stored.
+    pub async fn create_channels(
+        &self,
+        channels: &[NewChannel],
+    ) -> Result<Vec<Channel>, WorkspaceError> {
+        let store = self
+            .store
+            .clone()
+            .ok_or(WorkspaceError::ChannelStoreUnavailable)?;
+
+        store
+            .create_channels(channels)
+            .await
+            .map_err(WorkspaceError::Internal)?;
+
+        let stored = store
+            .load_channels()
+            .await
+            .map_err(WorkspaceError::Internal)?;
+        self.registry.put_channels(&stored);
+
+        let channels = stored.iter().map(Channel::from).collect::<Vec<_>>();
+        *self.channels.write().unwrap() = channels.clone();
+
+        Ok(channels)
     }
 
     /// Books a recording of the event, which starts shortly before the
@@ -190,8 +236,7 @@ impl Workspace {
             .ok_or(WorkspaceError::ServiceNotFound)?;
         let channel = self
             .channel_of(&service)
-            .ok_or(WorkspaceError::ChannelNotFound)?
-            .clone();
+            .ok_or(WorkspaceError::ChannelNotFound)?;
         let event = self
             .registry
             .get_event(key, event_id)
@@ -246,22 +291,21 @@ impl Workspace {
 
     /// The physical channel the service of the key is carried on, when the
     /// registry has come across that service.
-    pub fn channel_of_key(&self, key: ServiceKey) -> Option<&Channel> {
+    pub fn channel_of_key(&self, key: ServiceKey) -> Option<Channel> {
         self.channel_of(&self.registry.get_service(key)?)
     }
 
     /// The physical channel the service is carried on.
-    fn channel_of(&self, service: &Service) -> Option<&Channel> {
-        self.channels.iter().find(|channel| match &channel.inner {
-            ChannelInner::IsdbS3 { stream_id, .. } => {
-                *stream_id == u32::from(service.key.stream_id)
-            }
-            ChannelInner::IsdbT { .. }
-            | ChannelInner::IsdbS { .. }
-            | ChannelInner::BonIsdbT { .. }
-            | ChannelInner::BonIsdbS { .. }
-            | ChannelInner::BonIsdbS3 { .. } => service.channel_id == channel.id,
-        })
+    ///
+    /// The registry only keeps a service under the channel carrying its
+    /// stream, so the identifier it holds is the one to look for.
+    fn channel_of(&self, service: &Service) -> Option<Channel> {
+        self.channels
+            .read()
+            .unwrap()
+            .iter()
+            .find(|channel| channel.id == service.channel_id)
+            .cloned()
     }
 
     /// Attaches to the shared stream of the service, tuning to it first when
@@ -285,7 +329,7 @@ impl Workspace {
             .ok_or(WorkspaceError::StreamingUnavailable)?;
 
         let stream = streams
-            .subscribe(key, channel)
+            .subscribe(key, &channel)
             .await
             .map_err(|error| match error {
                 SubscribeError::TunerBusy => WorkspaceError::TunerBusy,
@@ -315,6 +359,7 @@ fn broadcast_time(value: NaiveDateTime) -> Result<DateTime<Local>, WorkspaceErro
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::channel::ChannelInner;
 
     const SERVICE: ServiceKey = ServiceKey {
         stream_id: 0x1234,
@@ -360,6 +405,54 @@ mod tests {
         let result = workspace.schedule_recording(SERVICE, 1);
 
         assert!(matches!(result, Err(WorkspaceError::RecordingUnavailable)));
+    }
+
+    #[tokio::test]
+    async fn keeping_channels_without_a_database_fails() {
+        let workspace = Workspace::new(Arc::new(Registry::default()), vec![channel()], None);
+
+        let result = workspace.create_channels(&[]).await;
+
+        assert!(matches!(
+            result,
+            Err(WorkspaceError::ChannelStoreUnavailable)
+        ));
+    }
+
+    #[tokio::test]
+    async fn serves_the_channels_it_is_told_to_keep() {
+        let store = crate::store::open("sqlite::memory:").await.unwrap();
+        let registry = Arc::new(Registry::default());
+        let workspace = Workspace::new(Arc::clone(&registry), vec![], None)
+            .with_channel_store(Arc::clone(&store));
+
+        let Ok(channels) = workspace
+            .create_channels(&[NewChannel {
+                name: "UHF 20".to_string(),
+                inner: ChannelInner::IsdbT {
+                    frequency: 515_142_857,
+                    bandwidth_hz: 6_000_000,
+                },
+                transport_stream_id: Some(SERVICE.stream_id),
+                services: vec![crate::store::StoredService {
+                    id: SERVICE.service_id,
+                    name: "Service".to_string(),
+                    provider_name: "Provider".to_string(),
+                }],
+            }])
+            .await
+        else {
+            panic!("the channels could not be kept");
+        };
+
+        assert_eq!(channels.len(), 1);
+        assert_eq!(workspace.channels().len(), 1);
+        assert_eq!(store.load_channels().await.unwrap().len(), 1);
+
+        // The services that came along are there to be watched without the
+        // server having been restarted.
+        let service = registry.get_service(SERVICE).unwrap();
+        assert_eq!(service.channel_id, channels[0].id);
     }
 
     #[tokio::test]

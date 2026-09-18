@@ -1,6 +1,12 @@
-import { type UseQueryResult, useQuery } from "@tanstack/react-query";
+import {
+  type UseMutationResult,
+  type UseQueryResult,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
-import { type Channel, DeliverySystem } from "../gen/chibitv/v1/chibitv_pb";
+import { type Channel, DeliverySystem, type NewChannel } from "../gen/chibitv/v1/chibitv_pb";
 import { chibitvClient, queryKeys } from ".";
 
 /**
@@ -33,5 +39,25 @@ export function useChannels(): UseQueryResult<Channel[]> {
   return useQuery({
     queryKey: queryKeys.channels,
     queryFn: async () => (await chibitvClient.listChannels({})).channels,
+  });
+}
+
+/**
+ * Keeps the channels given, which is how what a scan found becomes something
+ * to watch.
+ *
+ * The server serves them at once, so the channels and the services it lists
+ * are read again rather than waiting for a restart.
+ */
+export function useCreateChannels(): UseMutationResult<Channel[], Error, NewChannel[]> {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async (channels: NewChannel[]) => (await chibitvClient.bulkCreateChannels({ channels })).channels,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channels });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.services });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.events() });
+    },
   });
 }

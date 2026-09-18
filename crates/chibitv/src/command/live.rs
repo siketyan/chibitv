@@ -7,7 +7,7 @@ use mpeg2ts::ts::TsPacketWriter;
 use tracing::info;
 
 use crate::cas::PcscCasModule;
-use crate::channel::{Channel, ChannelInner};
+use crate::channel::{self, ChannelInner};
 use crate::config::Config;
 use crate::demux::Demux;
 use crate::m2ts::{M2tsDemuxer, M2tsMuxer};
@@ -18,6 +18,7 @@ use crate::tuner::Tuners;
 
 #[derive(Clone, Debug, Parser)]
 pub struct Options {
+    /// Identifier of the channel to tune to, as `channels` lists it.
     #[clap(short, long)]
     channel: usize,
 }
@@ -30,13 +31,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     let tuner = tuners.try_acquire_by_id(0)?;
 
-    let Some(channel) = config.channels.get(options.channel).map(|channel| Channel {
-        id: options.channel,
-        name: channel.name.to_string(),
-        inner: (&channel.inner).into(),
-    }) else {
-        anyhow::bail!("Could not find the channel in the config");
-    };
+    let channel = channel::find_channel(config, options.channel).await?;
 
     info!("Tuning to the channel: {:?}", channel);
 

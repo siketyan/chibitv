@@ -1,10 +1,12 @@
-import { ClipboardDocumentIcon, MagnifyingGlassIcon } from "@heroicons/react/24/outline";
+import { MagnifyingGlassIcon } from "@heroicons/react/24/outline";
 import { Button, Modal, ProgressBar } from "@heroui/react";
+import type { UseMutationResult } from "@tanstack/react-query";
 import { type JSX, useState } from "react";
 
+import { useCreateChannels } from "../api/channels";
 import { useRunningScan, useScanChannels, useScanResult } from "../api/scan";
 import { useStartTaskError } from "../api/tasks";
-import { DeliverySystem, type ScannedChannel } from "../gen/chibitv/v1/chibitv_pb";
+import { type Channel, DeliverySystem, type NewChannel } from "../gen/chibitv/v1/chibitv_pb";
 
 const DELIVERY_SYSTEMS: { id: DeliverySystem; label: string }[] = [
   { id: DeliverySystem.ISDB_T, label: "Terrestrial" },
@@ -24,6 +26,7 @@ export function ScanChannels(): JSX.Element {
   const [deliverySystem, setDeliverySystem] = useState(DeliverySystem.ISDB_T);
   const [isFast, setIsFast] = useState(false);
   const scanChannels = useScanChannels();
+  const createChannels = useCreateChannels();
   const runningScan = useRunningScan();
   const startError = useStartTaskError();
   const result = useScanResult();
@@ -78,13 +81,16 @@ export function ScanChannels(): JSX.Element {
                 </p>
                 <Button
                   isDisabled={runningScan !== undefined || scanChannels.isPending}
-                  onPress={() =>
+                  onPress={() => {
+                    // What the last scan was kept as says nothing about what
+                    // this one is about to find.
+                    createChannels.reset();
                     scanChannels.mutate({
                       deliverySystem,
                       fast,
                       timeoutSeconds: fast ? FAST_TIMEOUT_SECONDS : TIMEOUT_SECONDS,
-                    })
-                  }
+                    });
+                  }}
                 >
                   {runningScan === undefined ? "Start scanning" : "Scanning"}
                 </Button>
@@ -107,7 +113,9 @@ export function ScanChannels(): JSX.Element {
                   </div>
                 )}
                 {startError && <p className="text-xs text-danger">Could not start the scan: {startError}</p>}
-                {result && result.channels.length > 0 && <ScanResult channels={result.channels} toml={result.toml} />}
+                {result && result.channels.length > 0 && (
+                  <ScanResult channels={result.channels} keep={createChannels} />
+                )}
               </div>
             </Modal.Body>
           </Modal.Dialog>
@@ -117,33 +125,34 @@ export function ScanChannels(): JSX.Element {
   );
 }
 
-function ScanResult({ channels, toml }: { channels: ScannedChannel[]; toml: string }): JSX.Element {
-  const [isCopied, setIsCopied] = useState(false);
-
-  const copy = async () => {
-    await navigator.clipboard.writeText(toml);
-    setIsCopied(true);
-    setTimeout(() => setIsCopied(false), 2000);
-  };
-
+function ScanResult({
+  channels,
+  keep,
+}: {
+  channels: NewChannel[];
+  keep: UseMutationResult<Channel[], Error, NewChannel[]>;
+}): JSX.Element {
   return (
     <div className="flex min-h-0 flex-col gap-2">
       <div className="flex items-center gap-2">
         <h3 className="mr-auto text-sm font-medium">
           {channels.length} channel{channels.length === 1 ? "" : "s"} found
         </h3>
-        <Button size="sm" variant="ghost" onPress={() => void copy()}>
-          <ClipboardDocumentIcon className="size-4" />
-          {isCopied ? "Copied" : "Copy TOML"}
+        <Button isDisabled={keep.isPending} size="sm" onPress={() => keep.mutate(channels)}>
+          {keep.isPending ? "Saving" : "Save channels"}
         </Button>
       </div>
-      {/* The server serves the channels its configuration names, so what a scan
-          found is there to be merged into that file rather than applied here. */}
-      <p className="text-xs text-muted">Merge these into config.toml and restart the server to watch them.</p>
+      {/* Keeping a channel tuned the way one already kept is tuned writes over
+          it, so saving the same scan twice changes nothing. */}
+      <p className="text-xs text-muted">
+        Saving these keeps them alongside the channels already kept, and writes over the ones found again.
+      </p>
+      {keep.isSuccess && <p className="text-xs text-success">Saved. These channels are being served now.</p>}
+      {keep.error && <p className="text-xs text-danger">Could not save the channels: {keep.error.message}</p>}
       <ul className="flex max-h-48 flex-col gap-1 overflow-auto">
         {channels.map((channel) => (
           <li
-            key={`${channel.deliverySystem}-${channel.frequency}-${channel.streamId ?? 0}`}
+            key={`${channel.deliverySystem}-${channelKey(channel)}`}
             className="rounded-lg border border-white/10 bg-white/5 px-3 py-2"
           >
             <p className="truncate text-sm font-medium">{channel.name}</p>
@@ -155,4 +164,16 @@ function ScanResult({ channels, toml }: { channels: ScannedChannel[]; toml: stri
       </ul>
     </div>
   );
+}
+
+/** What tells a channel a scan found apart from the others it found. */
+function channelKey(channel: NewChannel): string {
+  switch (channel.tuning.case) {
+    case "parameters":
+      return `${channel.tuning.value.frequency}-${channel.tuning.value.streamId ?? 0}`;
+    case "bondriver":
+      return `${channel.tuning.value.space}-${channel.tuning.value.channel}`;
+    default:
+      return channel.name;
+  }
 }

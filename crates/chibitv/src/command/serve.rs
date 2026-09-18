@@ -9,10 +9,10 @@ use tracing::warn;
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
 use crate::channel_scanner::ChannelScanner;
-use crate::config::{ChannelConfig, Config};
+use crate::config::Config;
 use crate::event_crawler::EventCrawler;
 use crate::recorder::Recorder;
-use crate::registry::{Registry, ServiceKey};
+use crate::registry::Registry;
 use crate::storage;
 use crate::store::{self, EventWriter};
 use crate::stream::Streams;
@@ -46,21 +46,25 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
 
     let registry =
         Arc::new(Registry::default().storing_events(EventWriter::spawn(Arc::clone(&store))));
-    seed_registry(&registry, &config.channels);
+
+    // The channels are the database's, which a scan writes: nothing is served
+    // until one has found something.
+    let stored_channels = store.load_channels().await?;
+    if stored_channels.is_empty() {
+        warn!(
+            "No channel is stored yet, so there is nothing to watch; scan for the channels on air with `chibitv scan` or from the app"
+        );
+    }
+
+    registry.put_channels(&stored_channels);
 
     // The schedule of the previous run is restored before anything is tuned,
     // so the programme guide is there without crawling first.
     registry.restore_events(&store).await?;
 
-    let channels = config
-        .channels
+    let channels = stored_channels
         .iter()
-        .enumerate()
-        .map(|(id, channel)| Channel {
-            id,
-            name: channel.name.to_string(),
-            inner: (&channel.inner).into(),
-        })
+        .map(Channel::from)
         .collect::<Vec<_>>();
 
     let cas = PcscCasModule::open_shared()?;
@@ -117,87 +121,11 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     );
     let state = Arc::new(
         Workspace::new(registry, channels, Some(streams))
+            .with_channel_store(Arc::clone(&store))
             .with_event_crawler(event_crawler)
             .with_channel_scanner(channel_scanner)
             .with_recorder(recorder),
     );
 
     crate::server::serve(address, state).await
-}
-
-fn seed_registry(registry: &Registry, channels: &[ChannelConfig]) {
-    for (channel_id, channel) in channels.iter().enumerate() {
-        let Some(stream_id) = channel.transport_stream_id else {
-            continue;
-        };
-        for service in &channel.services {
-            registry.put_cached_service(
-                channel_id,
-                ServiceKey {
-                    stream_id,
-                    service_id: service.id,
-                },
-                service.name.clone(),
-                service.provider_name.clone(),
-            );
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::config::{ChannelConfigInner, ServiceConfig};
-
-    use super::*;
-
-    #[test]
-    fn seeds_services_from_every_configured_physical_channel() {
-        let channels = [
-            ChannelConfig {
-                name: "UHF 20".to_string(),
-                transport_stream_id: Some(100),
-                services: vec![ServiceConfig {
-                    id: 101,
-                    name: "Service A".to_string(),
-                    provider_name: "Provider A".to_string(),
-                }],
-                inner: ChannelConfigInner::IsdbT {
-                    frequency: 515_142_857,
-                    bandwidth_hz: 6_000_000,
-                },
-            },
-            ChannelConfig {
-                name: "UHF 21".to_string(),
-                transport_stream_id: Some(200),
-                services: vec![ServiceConfig {
-                    id: 201,
-                    name: "Service B".to_string(),
-                    provider_name: "Provider B".to_string(),
-                }],
-                inner: ChannelConfigInner::IsdbT {
-                    frequency: 521_142_857,
-                    bandwidth_hz: 6_000_000,
-                },
-            },
-        ];
-        let registry = Registry::default();
-
-        seed_registry(&registry, &channels);
-
-        assert_eq!(registry.get_all_services().len(), 2);
-        let first = registry
-            .get_service(ServiceKey {
-                stream_id: 100,
-                service_id: 101,
-            })
-            .unwrap();
-        assert_eq!(first.channel_id, 0);
-        let second = registry
-            .get_service(ServiceKey {
-                stream_id: 200,
-                service_id: 201,
-            })
-            .unwrap();
-        assert_eq!(second.channel_id, 1);
-    }
 }

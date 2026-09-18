@@ -21,7 +21,7 @@ cargo run -- <COMMAND>
 The global options go before the subcommand:
 
 ```shell
-cargo run -- --verbose live --channel 0
+cargo run -- --verbose live --channel 1
 ```
 
 Logs are written to stderr, which leaves stdout free for the stream a
@@ -30,19 +30,49 @@ from `RUST_LOG`, which `--verbose` only changes the default of.
 
 ## Commands
 
-| Command             | Description                                             |
-| ------------------- | ------------------------------------------------------- |
-| [`live`](#live)     | Watch a channel as a remuxed M2TS stream written to stdout. |
-| [`record`](#record) | Record a MMT/TLV stream from a tuner.                   |
-| [`remux`](#remux)   | Demux a MMT/TLV stream and mux a M2TS stream.           |
-| [`scan`](#scan)     | Scan physical channels and print the channel config as TOML. |
-| [`status`](#status) | Show current broadcast status from B10 SI tables.       |
-| [`serve`](#serve)   | Run the chibitv server.                                 |
+| Command                 | Description                                             |
+| ----------------------- | ------------------------------------------------------- |
+| [`channels`](#channels) | List the channels the database keeps.                   |
+| [`live`](#live)         | Watch a channel as a remuxed M2TS stream written to stdout. |
+| [`record`](#record)     | Record a MMT/TLV stream from a tuner.                   |
+| [`remux`](#remux)       | Demux a MMT/TLV stream and mux a M2TS stream.           |
+| [`scan`](#scan)         | Scan physical channels and keep what was found in the database. |
+| [`status`](#status)     | Show current broadcast status from B10 SI tables.       |
+| [`serve`](#serve)       | Run the chibitv server.                                 |
 
-The `--channel` option of `live`, `record` and `status` is a zero-based index
-into the [`[[channels]]`](./configuration#channels) entries of the
-configuration. Tuner commands currently use the first entry in
+The `--channel` option of `live`, `record` and `status` is the identifier the
+[`[database]`](./configuration#database) gave the channel, which
+[`channels`](#channels) lists. Tuner commands currently use the first entry in
 [`[[tuners]]`](./configuration#tuners).
+
+## `channels`
+
+Print the channels the database keeps, one line per channel with the identifier
+`--channel` names it by, its delivery system and its name, followed by a line
+per service of it. Takes no options.
+
+```shell
+cargo run -- channels
+```
+
+```
+   1  ISDB-T   TOKYO MX
+      23608  TOKYO MX1
+      23610  TOKYO MX2
+   2  ISDB-S   BS NTV
+       4011  BS日テレ
+```
+
+A channel carries its name, the broadcast it is on and how to tune to it, and
+the service catalog a scan read off it. The broadcast is what decides how the
+stream is demultiplexed and descrambled: `ISDB-T` and `ISDB-S`, the 2K
+satellite broadcasting, carry MPEG-2 TS and are descrambled with B25, while
+`ISDB-S3`, the 4K one, carries MMT/TLV and is descrambled with B61.
+
+[`scan`](#scan) is what writes them, and it is the only thing that does: a
+channel a BonDriver tunes, which names the tuning space and channel numbers the
+driver enumerates rather than a frequency, is not something a scan can find, so
+one has to be written into the database by hand for now.
 
 ## `live`
 
@@ -50,16 +80,16 @@ Tune to a configured channel, descramble it, remux it to MPEG-2 Transport
 Stream, and write the result to stdout. The stream continues until interrupted
 with <kbd>Ctrl</kbd>+<kbd>C</kbd>.
 
-| Option                    | Type    | Default    | Description                    |
-| ------------------------- | ------- | ---------- | ------------------------------ |
-| `-c`, `--channel <INDEX>` | integer | _required_ | Index of the channel to tune to. |
+| Option                 | Type    | Default    | Description                                           |
+| ---------------------- | ------- | ---------- | ----------------------------------------------------- |
+| `-c`, `--channel <ID>` | integer | _required_ | Identifier of the channel to tune to, as [`channels`](#channels) lists it. |
 
 ```shell
-# Watch the first configured channel with a player that accepts stdin.
-cargo run -- live --channel 0 | mpv -
+# Watch the first channel the database keeps with a player that accepts stdin.
+cargo run -- live --channel 1 | mpv -
 
 # Alternatively, save the remuxed stream.
-cargo run -- live --channel 0 > live.m2ts
+cargo run -- live --channel 1 > live.m2ts
 ```
 
 Every delivery system is supported; the one the channel names picks the
@@ -73,16 +103,16 @@ Tune to a configured channel and copy the raw tuner stream, without
 descrambling or remuxing it. The stream continues until interrupted with
 <kbd>Ctrl</kbd>+<kbd>C</kbd>.
 
-| Option                    | Type    | Default    | Description                                       |
-| ------------------------- | ------- | ---------- | ------------------------------------------------- |
-| `-c`, `--channel <INDEX>` | integer | _required_ | Index of the channel to tune to.                  |
-| `-o`, `--output <PATH>`   | string  | stdout     | Destination path of the output stream. `-` means stdout. |
+| Option                  | Type    | Default    | Description                                       |
+| ----------------------- | ------- | ---------- | ------------------------------------------------- |
+| `-c`, `--channel <ID>`  | integer | _required_ | Identifier of the channel to tune to, as [`channels`](#channels) lists it. |
+| `-o`, `--output <PATH>` | string  | stdout     | Destination path of the output stream. `-` means stdout. |
 
 ```shell
-cargo run -- record --channel 0 --output capture.mmts
+cargo run -- record --channel 1 --output capture.mmts
 
 # The explicit output value `-` also means stdout.
-cargo run -- record --channel 0 --output - > capture.mmts
+cargo run -- record --channel 1 --output - > capture.mmts
 ```
 
 What is written is the scrambled stream as the tuner produced it, so
@@ -125,9 +155,10 @@ Two limits are worth knowing before picking a format:
 
 ## `scan`
 
-Scan the physical channels on air and print the discovered
-[`[[channels]]`](./configuration#channels) entries, and their inline
-`services` catalog, as TOML on stdout.
+Scan the physical channels on air and keep what was found in the
+[`[database]`](./configuration#database), as the channels of the broadcast that
+was scanned, along with the service catalog of each one. What the database now
+keeps is printed the way [`channels`](#channels) prints it.
 
 | Option                        | Type    | Default  | Description                                    |
 | ----------------------------- | ------- | -------- | ---------------------------------------------- |
@@ -141,6 +172,12 @@ A terrestrial scan walks the UHF physical channels in order. The range has to
 lie within 13 to 52, and the start must not exceed the end; anything else is
 rejected before tuning. Scanning the full range waits up to the timeout on
 every channel that carries nothing, so a complete scan takes a while.
+
+A satellite frequency is the one the converter on the dish hands the tuner, not
+the one the satellite radiates: BS-3 sits at 11 087.84 MHz on air and reaches
+the tuner at 1 087.84 MHz, and the two senses of circular polarisation are
+shifted down by converters of their own, so a left-handed transponder lands
+elsewhere again.
 
 A satellite scan works the other way round, because a satellite stream is
 picked by its id rather than by a channel number and which ids are on air
@@ -176,24 +213,33 @@ every stream to be described on the transponder it is listening to, so give it
 a longer `--timeout` than a walk needs.
 
 ```shell
-cargo run -- scan > scanned-channels.toml
+# The terrestrial channels, replacing the ones kept for terrestrial.
+cargo run -- scan
 
 # Scan a smaller range and wait up to 5 seconds per channel.
-cargo run -- scan --start-channel 20 --end-channel 30 --timeout 5 > scanned-channels.toml
+cargo run -- scan --start-channel 20 --end-channel 30 --timeout 5
 
 # Scan the BS and CS110 transponders instead.
-cargo run -- scan --delivery-system ISDB-S > scanned-channels.toml
+cargo run -- scan --delivery-system ISDB-S
 
 # The 4K broadcasting on the BS transponders.
-cargo run -- scan --delivery-system ISDB-S3 > scanned-4k-channels.toml
+cargo run -- scan --delivery-system ISDB-S3
 
 # The same, read off one transponder per network rather than tuning to each.
-cargo run -- scan --delivery-system ISDB-S --fast --timeout 30 > scanned-channels.toml
+cargo run -- scan --delivery-system ISDB-S --fast --timeout 30
 ```
 
-Review the generated file and merge its `[[channels]]` entries into
-`config.toml`. This is also how a channel gets the service catalog that
+A scan replaces the channels kept for the broadcast it walked, so one that has
+left the air stops being served, and leaves the channels of the other
+broadcasts alone. This is also how a channel gets the service catalog that
 [`serve`](#serve) needs.
+
+A server that is already running holds the channels it started with, so it has
+to be restarted to serve what a scan wrote. Scanning from the app instead hands
+what was found back to be kept, which takes effect without a restart and keeps
+the channels picked from it beside the ones already kept rather than replacing
+a whole broadcast. Either way a running server is holding the tuner, which a
+scan needs for itself.
 
 ## `status`
 

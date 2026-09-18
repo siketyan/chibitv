@@ -24,7 +24,7 @@ features:
     details: Prerequisites, device permissions on Linux, configuring config.toml, and running the server with the GUI.
     link: /guide/getting-started
   - title: Configuration
-    details: Every key of config.toml, from the CAS master key to tuners, channels, the server address, the database and where recordings are kept.
+    details: Every key of config.toml, from the CAS master key to tuners, the server address, the database the channels and the guide are kept in, and where recordings are kept.
     link: /reference/configuration
   - title: CLI
     details: Every subcommand and option of the chibitv binary — live, record, remux, scan, status and serve.

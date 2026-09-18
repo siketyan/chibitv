@@ -1,14 +1,21 @@
 use std::str::FromStr;
 use std::time::Duration;
 
+use anyhow::bail;
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, TimeDelta, Utc};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow, SqliteSynchronous,
+};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 
+use crate::channel::{ChannelInner, DeliverySystem};
 use crate::registry::ServiceKey;
 
-use super::{EventStore, SectionId, Store, StoredEvent};
+use super::{
+    ChannelStore, EventStore, NewChannel, SectionId, Store, StoredChannel, StoredEvent,
+    StoredService,
+};
 
 /// How long a statement waits for the database to be free again.
 const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
@@ -22,6 +29,23 @@ const COLUMNS: &str = "stream_id, service_id, event_id, original_network_id, tab
 /// keep the order above.
 const SELECT_EVENTS: &str = "SELECT stream_id, service_id, event_id, start_time, \
                              duration_seconds, language_code, name, text, description FROM events";
+
+/// The channels in the order they are served in, which is the order they were
+/// stored in.
+const SELECT_CHANNELS: &str = "SELECT id, name, delivery_system, tuning, frequency, bandwidth_hz, \
+                               stream_id, space, channel_number, transport_stream_id FROM \
+                               channels ORDER BY id";
+
+/// The service catalogs of every channel, read alongside the channels.
+const SELECT_CHANNEL_SERVICES: &str = "SELECT channel_id, service_id, name, provider_name FROM \
+                                       channel_services ORDER BY channel_id, service_id";
+
+/// A channel tuned by the parameters the row carries.
+const TUNING_PARAMETERS: &str = "parameters";
+
+/// A channel named by the numbers a BonDriver enumerates, which holds the
+/// tuning parameters itself.
+const TUNING_BONDRIVER: &str = "bondriver";
 
 /// The state chibitv keeps in a SQLite database.
 ///
@@ -42,6 +66,9 @@ impl SqliteStore {
             // last few sections to a crash only costs one more crawl.
             .journal_mode(SqliteJournalMode::Wal)
             .synchronous(SqliteSynchronous::Normal)
+            // The service catalog of a channel goes with the channel, which is
+            // what the cascade of its foreign key does.
+            .foreign_keys(true)
             .busy_timeout(BUSY_TIMEOUT);
 
         // SQLite takes one writer at a time and this store has one writer, so
@@ -120,6 +147,268 @@ impl EventStore for SqliteStore {
     }
 }
 
+#[async_trait]
+impl ChannelStore for SqliteStore {
+    async fn load_channels(&self) -> anyhow::Result<Vec<StoredChannel>> {
+        let mut channels = sqlx::query(SELECT_CHANNELS)
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(read_channel)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        // The catalogs are read in one statement rather than one per channel,
+        // and handed to the channel each row names.
+        for row in sqlx::query(SELECT_CHANNEL_SERVICES)
+            .fetch_all(&self.pool)
+            .await?
+        {
+            let channel_id = usize::try_from(row.try_get::<i64, _>("channel_id")?)?;
+            let Some(channel) = channels.iter_mut().find(|channel| channel.id == channel_id) else {
+                continue;
+            };
+
+            channel.services.push(StoredService {
+                id: row.try_get::<i64, _>("service_id")?.try_into()?,
+                name: row.try_get("name")?,
+                provider_name: row.try_get("provider_name")?,
+            });
+        }
+
+        Ok(channels)
+    }
+
+    async fn create_channels(&self, channels: &[NewChannel]) -> anyhow::Result<()> {
+        let mut transaction = self.pool.begin().await?;
+
+        // A channel is told apart by the tuning it is reached with, so keeping
+        // one that is already kept writes over it rather than beside it.
+        let kept = sqlx::query(SELECT_CHANNELS)
+            .fetch_all(&mut *transaction)
+            .await?
+            .iter()
+            .map(read_channel)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        for channel in channels {
+            match kept.iter().find(|kept| kept.inner == channel.inner) {
+                Some(kept) => {
+                    let id = i64::try_from(kept.id)?;
+                    sqlx::query(
+                        "UPDATE channels SET name = ?, transport_stream_id = ? WHERE id = ?",
+                    )
+                    .bind(channel.name.as_str())
+                    .bind(channel.transport_stream_id.map(i64::from))
+                    .bind(id)
+                    .execute(&mut *transaction)
+                    .await?;
+
+                    // The catalog is written as a whole, so a service the
+                    // channel no longer carries goes with it.
+                    sqlx::query("DELETE FROM channel_services WHERE channel_id = ?")
+                        .bind(id)
+                        .execute(&mut *transaction)
+                        .await?;
+
+                    insert_services(&mut transaction, id, &channel.services).await?;
+                }
+                None => {
+                    let id = insert_channel(&mut transaction, channel).await?;
+
+                    insert_services(&mut transaction, id, &channel.services).await?;
+                }
+            }
+        }
+
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
+    async fn replace_channels(
+        &self,
+        delivery_system: DeliverySystem,
+        channels: &[NewChannel],
+    ) -> anyhow::Result<()> {
+        let mut transaction = self.pool.begin().await?;
+
+        sqlx::query("DELETE FROM channels WHERE delivery_system = ?")
+            .bind(delivery_system.as_str())
+            .execute(&mut *transaction)
+            .await?;
+
+        for channel in channels {
+            let id = insert_channel(&mut transaction, channel).await?;
+
+            insert_services(&mut transaction, id, &channel.services).await?;
+        }
+
+        transaction.commit().await?;
+
+        Ok(())
+    }
+}
+
+/// Writes a channel that is not kept yet, reporting the identifier the
+/// database gave it, which its services are written under.
+async fn insert_channel(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    channel: &NewChannel,
+) -> anyhow::Result<i64> {
+    let tuning = Tuning::of(&channel.inner);
+    let id = sqlx::query(
+        "INSERT INTO channels (name, delivery_system, tuning, frequency, bandwidth_hz, \
+         stream_id, space, channel_number, transport_stream_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(channel.name.as_str())
+    .bind(tuning.delivery_system.as_str())
+    .bind(tuning.tuning)
+    .bind(tuning.frequency)
+    .bind(tuning.bandwidth_hz)
+    .bind(tuning.stream_id)
+    .bind(tuning.space)
+    .bind(tuning.channel_number)
+    .bind(channel.transport_stream_id.map(i64::from))
+    .fetch_one(&mut **transaction)
+    .await?
+    .try_get("id")?;
+
+    Ok(id)
+}
+
+async fn insert_services(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    channel_id: i64,
+    services: &[StoredService],
+) -> anyhow::Result<()> {
+    for service in services {
+        sqlx::query(
+            "INSERT OR REPLACE INTO channel_services (channel_id, service_id, name, \
+             provider_name) VALUES (?, ?, ?, ?)",
+        )
+        .bind(channel_id)
+        .bind(i64::from(service.id))
+        .bind(service.name.as_str())
+        .bind(service.provider_name.as_str())
+        .execute(&mut **transaction)
+        .await?;
+    }
+
+    Ok(())
+}
+
+/// The tuning of a channel, as the columns of its row.
+///
+/// Which columns are used is what `tuning` says: a channel a BonDriver tunes
+/// carries the numbers it enumerates instead of tuning parameters, so the
+/// columns of the other tuning are left null.
+struct Tuning {
+    delivery_system: DeliverySystem,
+    tuning: &'static str,
+    frequency: Option<i64>,
+    bandwidth_hz: Option<i64>,
+    stream_id: Option<i64>,
+    space: Option<i64>,
+    channel_number: Option<i64>,
+}
+
+impl Tuning {
+    fn of(inner: &ChannelInner) -> Self {
+        let mut tuning = Self {
+            delivery_system: inner.delivery_system(),
+            tuning: TUNING_PARAMETERS,
+            frequency: None,
+            bandwidth_hz: None,
+            stream_id: None,
+            space: None,
+            channel_number: None,
+        };
+
+        match *inner {
+            ChannelInner::IsdbT {
+                frequency,
+                bandwidth_hz,
+            } => {
+                tuning.frequency = Some(i64::from(frequency));
+                tuning.bandwidth_hz = Some(i64::from(bandwidth_hz));
+            }
+            ChannelInner::IsdbS {
+                frequency,
+                stream_id,
+            }
+            | ChannelInner::IsdbS3 {
+                frequency,
+                stream_id,
+            } => {
+                tuning.frequency = Some(i64::from(frequency));
+                tuning.stream_id = Some(i64::from(stream_id));
+            }
+            ChannelInner::BonIsdbT { space, channel }
+            | ChannelInner::BonIsdbS { space, channel }
+            | ChannelInner::BonIsdbS3 { space, channel } => {
+                tuning.tuning = TUNING_BONDRIVER;
+                tuning.space = Some(i64::from(space));
+                tuning.channel_number = Some(i64::from(channel));
+            }
+        }
+
+        tuning
+    }
+}
+
+fn read_channel(row: &SqliteRow) -> anyhow::Result<StoredChannel> {
+    let delivery_system = DeliverySystem::parse(row.try_get("delivery_system")?)?;
+    let tuning: String = row.try_get("tuning")?;
+    let inner = match (tuning.as_str(), delivery_system) {
+        (TUNING_PARAMETERS, DeliverySystem::IsdbT) => ChannelInner::IsdbT {
+            frequency: tuning_column(row, "frequency")?,
+            bandwidth_hz: tuning_column(row, "bandwidth_hz")?,
+        },
+        (TUNING_PARAMETERS, DeliverySystem::IsdbS) => ChannelInner::IsdbS {
+            frequency: tuning_column(row, "frequency")?,
+            stream_id: tuning_column(row, "stream_id")?,
+        },
+        (TUNING_PARAMETERS, DeliverySystem::IsdbS3) => ChannelInner::IsdbS3 {
+            frequency: tuning_column(row, "frequency")?,
+            stream_id: tuning_column(row, "stream_id")?,
+        },
+        (TUNING_BONDRIVER, DeliverySystem::IsdbT) => ChannelInner::BonIsdbT {
+            space: tuning_column(row, "space")?,
+            channel: tuning_column(row, "channel_number")?,
+        },
+        (TUNING_BONDRIVER, DeliverySystem::IsdbS) => ChannelInner::BonIsdbS {
+            space: tuning_column(row, "space")?,
+            channel: tuning_column(row, "channel_number")?,
+        },
+        (TUNING_BONDRIVER, DeliverySystem::IsdbS3) => ChannelInner::BonIsdbS3 {
+            space: tuning_column(row, "space")?,
+            channel: tuning_column(row, "channel_number")?,
+        },
+        (tuning, _) => bail!("`{tuning}` is not a way of tuning chibitv knows"),
+    };
+
+    Ok(StoredChannel {
+        id: usize::try_from(row.try_get::<i64, _>("id")?)?,
+        name: row.try_get("name")?,
+        inner,
+        transport_stream_id: row
+            .try_get::<Option<i64>, _>("transport_stream_id")?
+            .map(u16::try_from)
+            .transpose()?,
+        services: vec![],
+    })
+}
+
+/// One of the tuning columns, which the tuning the row names has to carry.
+fn tuning_column(row: &SqliteRow, column: &str) -> anyhow::Result<u32> {
+    let Some(value) = row.try_get::<Option<i64>, _>(column)? else {
+        bail!("the channel is stored without its `{column}`");
+    };
+
+    Ok(value.try_into()?)
+}
+
 /// The wall clock the SI carries, as the seconds a database column holds.
 ///
 /// Which zone it is read in never changes, so it round trips whatever the
@@ -192,6 +481,206 @@ mod tests {
             text: Some("Summary".to_string()),
             description: vec![vec![("Cast".to_string(), "Someone".to_string())]],
         }
+    }
+
+    fn new_channel(name: &str, inner: ChannelInner, stream_id: Option<u16>) -> NewChannel {
+        NewChannel {
+            name: name.to_string(),
+            inner,
+            transport_stream_id: stream_id,
+            services: vec![StoredService {
+                id: 0x0400,
+                name: "Service".to_string(),
+                provider_name: "Provider".to_string(),
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn reads_back_every_channel_with_its_tuning_and_services() {
+        let store = store().await;
+        let channels = [
+            new_channel(
+                "UHF 20",
+                ChannelInner::IsdbT {
+                    frequency: 515_142_857,
+                    bandwidth_hz: 6_000_000,
+                },
+                Some(0x1234),
+            ),
+            new_channel(
+                "BS 4K",
+                ChannelInner::IsdbS3 {
+                    frequency: 1_318_000,
+                    stream_id: 0x40F1,
+                },
+                Some(0x40F1),
+            ),
+            new_channel(
+                "BonDriver BS",
+                ChannelInner::BonIsdbS {
+                    space: 1,
+                    channel: 2,
+                },
+                None,
+            ),
+        ];
+
+        for channel in &channels {
+            store
+                .replace_channels(
+                    channel.inner.delivery_system(),
+                    std::slice::from_ref(channel),
+                )
+                .await
+                .unwrap();
+        }
+        let stored = store.load_channels().await.unwrap();
+
+        assert_eq!(
+            stored
+                .iter()
+                .map(|channel| (channel.name.as_str(), channel.inner.clone()))
+                .collect::<Vec<_>>(),
+            channels
+                .iter()
+                .map(|channel| (channel.name.as_str(), channel.inner.clone()))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(stored[0].transport_stream_id, Some(0x1234));
+        assert_eq!(stored[2].transport_stream_id, None);
+        assert_eq!(stored[1].services, channels[1].services);
+    }
+
+    #[tokio::test]
+    async fn keeps_a_channel_tuned_the_same_way_once() {
+        let store = store().await;
+        let tuning = ChannelInner::IsdbT {
+            frequency: 515_142_857,
+            bandwidth_hz: 6_000_000,
+        };
+        store
+            .create_channels(&[new_channel("UHF 20", tuning.clone(), Some(0x1234))])
+            .await
+            .unwrap();
+        let first = store.load_channels().await.unwrap();
+
+        // The same channel under another name, as someone who edited what a
+        // scan found would hand it back.
+        let mut renamed = new_channel("TOKYO MX", tuning, Some(0x1234));
+        renamed.services.clear();
+        store.create_channels(&[renamed]).await.unwrap();
+
+        let kept = store.load_channels().await.unwrap();
+
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, first[0].id);
+        assert_eq!(kept[0].name, "TOKYO MX");
+        // The catalog is written as a whole, so a service that came with the
+        // channel before and does not now is gone.
+        assert!(kept[0].services.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keeps_a_channel_beside_the_ones_already_kept() {
+        let store = store().await;
+        store
+            .create_channels(&[new_channel(
+                "UHF 20",
+                ChannelInner::IsdbT {
+                    frequency: 515_142_857,
+                    bandwidth_hz: 6_000_000,
+                },
+                Some(0x1234),
+            )])
+            .await
+            .unwrap();
+
+        store
+            .create_channels(&[new_channel(
+                "BS",
+                ChannelInner::IsdbS {
+                    frequency: 1_049_480,
+                    stream_id: 0x4031,
+                },
+                Some(0x4031),
+            )])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store
+                .load_channels()
+                .await
+                .unwrap()
+                .iter()
+                .map(|channel| channel.name.clone())
+                .collect::<Vec<_>>(),
+            ["UHF 20", "BS"],
+        );
+    }
+
+    #[tokio::test]
+    async fn replaces_the_channels_of_one_broadcast_only() {
+        let store = store().await;
+        store
+            .replace_channels(
+                DeliverySystem::IsdbT,
+                &[new_channel(
+                    "UHF 20",
+                    ChannelInner::IsdbT {
+                        frequency: 515_142_857,
+                        bandwidth_hz: 6_000_000,
+                    },
+                    Some(0x1234),
+                )],
+            )
+            .await
+            .unwrap();
+        store
+            .replace_channels(
+                DeliverySystem::IsdbS,
+                &[new_channel(
+                    "BS",
+                    ChannelInner::IsdbS {
+                        frequency: 1_049_480,
+                        stream_id: 0x4031,
+                    },
+                    Some(0x4031),
+                )],
+            )
+            .await
+            .unwrap();
+
+        // A terrestrial scan says nothing about the satellite channels.
+        store
+            .replace_channels(
+                DeliverySystem::IsdbT,
+                &[new_channel(
+                    "UHF 21",
+                    ChannelInner::IsdbT {
+                        frequency: 521_142_857,
+                        bandwidth_hz: 6_000_000,
+                    },
+                    Some(0x5678),
+                )],
+            )
+            .await
+            .unwrap();
+
+        let stored = store.load_channels().await.unwrap();
+
+        assert_eq!(
+            stored
+                .iter()
+                .map(|channel| channel.name.as_str())
+                .collect::<Vec<_>>(),
+            ["BS", "UHF 21"],
+        );
+        // The services of a channel that was replaced go with it, and the
+        // identifier it had is not given to another channel.
+        assert_eq!(stored[1].services.len(), 1);
+        assert!(stored[1].id > stored[0].id);
     }
 
     #[tokio::test]
