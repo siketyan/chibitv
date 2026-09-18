@@ -101,6 +101,10 @@ message ServiceKey {
 message ListEventsRequest {
   // The service to list the schedule of, or every service when unset.
   optional ServiceKey service = 1;
+
+  // The broadcast wave to list the schedule of. Unspecified lists every wave,
+  // which is what the guide asks for when it shows them together.
+  DeliverySystem delivery_system = 2;
 }
 
 message ListEventsResponse {
