@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, type JSX, useMemo, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
-import { useServices } from "../api/services";
+import { type ServiceKey, serviceKeyId, useServices } from "../api/services";
 import { isTaskRunning, useRefreshEvents, useTasks } from "../api/tasks";
 import { toDate } from "../api/time";
 import { type Event, TaskKind } from "../gen/chibitv/v1/chibitv_pb";
@@ -32,7 +32,7 @@ const dateFormatter = new Intl.DateTimeFormat("en-GB", {
 
 interface GuideEvent {
   id: number;
-  serviceId: number;
+  service: ServiceKey;
   title: string;
   startAt: Date;
   endAt: Date;
@@ -45,11 +45,11 @@ function toGuideEvents(events: Event[]): GuideEvent[] {
     .flatMap((event) => {
       const startAt = toDate(event.startTime);
       const endAt = toDate(event.endTime);
-      if (!startAt || !endAt) {
+      if (!startAt || !endAt || !event.service) {
         return [];
       }
 
-      return [{ id: event.id, serviceId: event.serviceId, title: event.title || "Untitled", startAt, endAt, event }];
+      return [{ id: event.id, service: event.service, title: event.title || "Untitled", startAt, endAt, event }];
     })
     .toSorted((a, b) => a.startAt.valueOf() - b.startAt.valueOf());
 }
@@ -89,12 +89,14 @@ export function Events(): JSX.Element {
   const isRefreshing = useTasks().some((task) => task.kind === TaskKind.REFRESH_EVENTS && isTaskRunning(task));
 
   const allEvents = useMemo(() => toGuideEvents(events), [events]);
-  const eventsByServiceId = useMemo(() => {
-    const grouped = new Map<number, GuideEvent[]>();
+  // The services of two streams may share an id, so they are grouped under the
+  // whole key rather than under the service id alone.
+  const eventsByService = useMemo(() => {
+    const grouped = new Map<string, GuideEvent[]>();
     for (const event of allEvents) {
-      const events = grouped.get(event.serviceId) ?? [];
+      const events = grouped.get(serviceKeyId(event.service)) ?? [];
       events.push(event);
-      grouped.set(event.serviceId, events);
+      grouped.set(serviceKeyId(event.service), events);
     }
     return grouped;
   }, [allEvents]);
@@ -102,13 +104,15 @@ export function Events(): JSX.Element {
   const channelGroups = useMemo(
     () =>
       channels.map((channel) => {
-        const channelServices = services
-          .filter((service) => service.channelId === channel.id)
-          .map((service) => ({
-            serviceId: service.id,
-            serviceName: service.name,
-            events: eventsByServiceId.get(service.id) ?? [],
-          }));
+        const channelServices = services.flatMap((service) => {
+          if (service.channelId !== channel.id || !service.key) {
+            return [];
+          }
+
+          const id = serviceKeyId(service.key);
+
+          return [{ id, serviceName: service.name, events: eventsByService.get(id) ?? [] }];
+        });
 
         return {
           channel,
@@ -117,7 +121,7 @@ export function Events(): JSX.Element {
           services: expandedChannelIds.has(channel.id) ? channelServices : channelServices.slice(0, 1),
         };
       }),
-    [channels, services, eventsByServiceId, expandedChannelIds],
+    [channels, services, eventsByService, expandedChannelIds],
   );
   const eventDateKeys = allEvents.flatMap((event) => [
     toDateKey(event.startAt),
@@ -174,7 +178,10 @@ export function Events(): JSX.Element {
       {selectedEvent && (
         <EventDetails
           event={selectedEvent.event}
-          serviceName={services.find((service) => service.id === selectedEvent.serviceId)?.name}
+          serviceName={
+            services.find((service) => service.key && serviceKeyId(service.key) === serviceKeyId(selectedEvent.service))
+              ?.name
+          }
           onClose={() => setSelectedEvent(undefined)}
         />
       )}
@@ -223,7 +230,7 @@ export function Events(): JSX.Element {
                     ) : (
                       channelServices.map((service) => (
                         <div
-                          key={service.serviceId}
+                          key={service.id}
                           className="truncate border-r border-white/5 px-3 py-2 text-center text-xs"
                         >
                           {service.serviceName}
@@ -261,7 +268,7 @@ export function Events(): JSX.Element {
                   ) : (
                     channelServices.map((service) => (
                       <GuideLane
-                        key={service.serviceId}
+                        key={service.id}
                         events={service.events}
                         dayEnd={dayEnd}
                         dayStart={selectedDate}

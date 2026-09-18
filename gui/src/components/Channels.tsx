@@ -4,10 +4,10 @@ import { useQuery } from "@tanstack/react-query";
 import { type JSX, useEffect, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
-import { useServices } from "../api/services";
+import { isSameService, type ServiceKey, serviceKeyId, useServices } from "../api/services";
 import { useStream } from "../api/stream";
 import { type Channel, DeliverySystem, type Service } from "../gen/chibitv/v1/chibitv_pb";
-import { useSelectService, useServiceId } from "../router";
+import { useSelectService, useServiceKey } from "../router";
 
 const DELIVERY_SYSTEMS: { id: DeliverySystem; label: string }[] = [
   { id: DeliverySystem.ISDB_T, label: "Terrestrial" },
@@ -22,8 +22,8 @@ interface ChannelsProps {
 
 export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
   const { state } = useStream();
-  const serviceId = useServiceId();
-  const selectServiceId = useSelectService();
+  const service = useServiceKey();
+  const selectServiceKey = useSelectService();
   const [expandedChannelId, setExpandedChannelId] = useState<number>();
   const [selectedDeliverySystem, setSelectedDeliverySystem] = useState<DeliverySystem>();
   const { data: services = [], isLoading: areServicesLoading, isError: areServicesError } = useServices();
@@ -35,19 +35,19 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     queryKey: queryKeys.channels,
     queryFn: async () => (await chibitvClient.listChannels({})).channels,
   });
-  const selectService = (selectedServiceId: number) => {
-    selectServiceId(selectedServiceId);
+  const selectService = (selected: ServiceKey) => {
+    selectServiceKey(selected);
     onServiceChange?.();
   };
   // The stream is still tuning while the reported service lags the selection.
-  const isTuning = serviceId !== undefined && state?.service?.id !== serviceId;
-  const currentChannelId = services.find((service) => service.id === serviceId)?.channelId;
+  const isTuning = service !== undefined && !isSameService(state?.service?.key, service);
+  const currentChannelId = services.find(({ key }) => isSameService(key, service))?.channelId;
   const currentDeliverySystem = channels.find((channel) => channel.id === currentChannelId)?.deliverySystem;
   const servicesByChannel = new Map<number, Service[]>();
-  for (const service of services) {
-    const channelServices = servicesByChannel.get(service.channelId) ?? [];
-    channelServices.push(service);
-    servicesByChannel.set(service.channelId, channelServices);
+  for (const listed of services) {
+    const channelServices = servicesByChannel.get(listed.channelId) ?? [];
+    channelServices.push(listed);
+    servicesByChannel.set(listed.channelId, channelServices);
   }
 
   useEffect(() => {
@@ -102,8 +102,8 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         setExpandedChannelId(channelId);
 
         const firstService = servicesByChannel.get(channelId)?.[0];
-        if (firstService && firstService.id !== serviceId) {
-          selectService(firstService.id);
+        if (firstService?.key && !isSameService(firstService.key, service)) {
+          selectService(firstService.key);
         }
       }}
     >
@@ -123,7 +123,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
                 <ListBox
                   aria-label={`${channel.name} services`}
                   className="gap-1 p-0"
-                  selectedKeys={serviceId === undefined ? [] : [serviceId]}
+                  selectedKeys={service === undefined ? [] : [serviceKeyId(service)]}
                   selectionMode="single"
                   onSelectionChange={(keys) => {
                     if (keys === "all") {
@@ -131,26 +131,26 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
                     }
 
                     const [key] = keys;
-                    const selectedServiceId = Number(key);
-                    if (!Number.isNaN(selectedServiceId) && selectedServiceId !== serviceId) {
-                      selectService(selectedServiceId);
+                    const selected = channelServices.find(({ key: id }) => id && serviceKeyId(id) === key)?.key;
+                    if (selected && !isSameService(selected, service)) {
+                      selectService(selected);
                     }
                   }}
                 >
-                  {channelServices.map((service) => (
+                  {channelServices.map((channelService) => (
                     <ListBox.Item
-                      key={service.id}
-                      id={service.id}
+                      key={channelService.key && serviceKeyId(channelService.key)}
+                      id={channelService.key && serviceKeyId(channelService.key)}
                       className="min-h-12 rounded-xl px-3 data-[selected=true]:bg-accent-soft data-[selected=true]:text-accent-soft-foreground"
-                      textValue={service.name}
+                      textValue={channelService.name}
                     >
                       <div className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-sm font-medium">{service.name}</span>
-                        {service.providerName && (
-                          <span className="truncate text-xs text-muted">{service.providerName}</span>
+                        <span className="truncate text-sm font-medium">{channelService.name}</span>
+                        {channelService.providerName && (
+                          <span className="truncate text-xs text-muted">{channelService.providerName}</span>
                         )}
                       </div>
-                      {isTuning && service.id === serviceId ? (
+                      {isTuning && isSameService(channelService.key, service) ? (
                         <Spinner className="ms-auto shrink-0" size="sm" />
                       ) : (
                         <ListBox.ItemIndicator className="text-accent">
@@ -186,10 +186,10 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
         const group = groups.find((group) => group.id === deliverySystem);
         const firstService = group?.channels
           .map((channel) => servicesByChannel.get(channel.id)?.[0])
-          .find((service) => service !== undefined);
-        if (firstService && firstService.id !== serviceId) {
+          .find((first) => first !== undefined);
+        if (firstService?.key && !isSameService(firstService.key, service)) {
           setExpandedChannelId(firstService.channelId);
-          selectService(firstService.id);
+          selectService(firstService.key);
         }
       }}
     >

@@ -83,14 +83,24 @@ message ListServicesResponse {
 }
 
 message Service {
-  uint32 id = 1;
+  ServiceKey key = 1;
   string name = 2;
   string provider_name = 3;
   uint32 channel_id = 4;
 }
 
+// ServiceKey identifies one service among the ones on air. A service id alone
+// does not: BS 2K and BS 4K number their services alike.
+message ServiceKey {
+  // The TLV stream id on ISDB-S3, the transport stream id on ISDB-T and ISDB-S.
+  uint32 stream_id = 1;
+
+  uint32 service_id = 2;
+}
+
 message ListEventsRequest {
-  optional uint32 service_id = 1;
+  // The service to list the schedule of, or every service when unset.
+  optional ServiceKey service = 1;
 }
 
 message ListEventsResponse {
@@ -193,7 +203,7 @@ message TaskEvent {
 }
 
 message ScheduleRecordingRequest {
-  uint32 service_id = 1;
+  ServiceKey service = 1;
   uint32 event_id = 2;
 }
 
@@ -285,12 +295,12 @@ message Event {
   repeated EventDescription description = 3;
   optional DateTime start_time = 4;
   optional DateTime end_time = 5;
-  uint32 service_id = 6;
+  ServiceKey service = 6;
 }
 
 message StreamRequest {
   // The service to tune to and stream.
-  uint32 service_id = 1;
+  ServiceKey service = 1;
 }
 
 message StreamState {

@@ -16,7 +16,7 @@ use crate::demux::Demux;
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
 use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
-use crate::registry::Registry;
+use crate::registry::{Registry, ServiceKey};
 use crate::remux::Remuxer;
 use crate::service_information::{ServiceInformationProcessor, Signal};
 use crate::tuner::{AcquireError, TunerLease, Tuners};
@@ -69,7 +69,7 @@ impl WriteMp4Fragment for Fmp4StreamWriter {
 /// alive; dropping the last one signals the remuxer thread to stop, which
 /// closes the tuner device and releases the lease.
 pub struct Stream {
-    service_id: u16,
+    key: ServiceKey,
     event_id: Arc<RwLock<Option<u16>>>,
     fmp4_tx: Sender<Bytes>,
     fmp4_init_segment: Arc<Mutex<Option<Bytes>>>,
@@ -78,8 +78,8 @@ pub struct Stream {
 }
 
 impl Stream {
-    pub fn service_id(&self) -> u16 {
-        self.service_id
+    pub fn key(&self) -> ServiceKey {
+        self.key
     }
 
     pub fn event_id(&self) -> Option<u16> {
@@ -90,7 +90,7 @@ impl Stream {
         let init_segment = self.fmp4_init_segment.lock().unwrap();
         let rx = self.fmp4_tx.subscribe();
         info!(
-            service_id = self.service_id,
+            service_id = self.key.service_id,
             receivers = self.fmp4_tx.receiver_count(),
             "fMP4 stream client subscribed"
         );
@@ -108,7 +108,7 @@ impl Drop for Stream {
             let _ = kill_tx.send(());
         }
 
-        info!(service_id = self.service_id, "Stream stopped");
+        info!(service_id = self.key.service_id, "Stream stopped");
     }
 }
 
@@ -118,7 +118,7 @@ pub struct Streams {
     tuners: Arc<Tuners>,
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
-    streams: tokio::sync::Mutex<HashMap<u16, Weak<Stream>>>,
+    streams: tokio::sync::Mutex<HashMap<ServiceKey, Weak<Stream>>>,
 }
 
 impl Streams {
@@ -141,14 +141,14 @@ impl Streams {
     /// tuner when nobody is streaming it yet.
     pub async fn subscribe(
         &self,
-        service_id: u16,
+        key: ServiceKey,
         channel: &Channel,
     ) -> Result<Arc<Stream>, SubscribeError> {
         let deadline = tokio::time::Instant::now() + ACQUIRE_TIMEOUT;
 
         loop {
             let mut streams = self.streams.lock().await;
-            if let Some(stream) = streams.get(&service_id).and_then(Weak::upgrade) {
+            if let Some(stream) = streams.get(&key).and_then(Weak::upgrade) {
                 return Ok(stream);
             }
 
@@ -156,7 +156,7 @@ impl Streams {
             // The streams lock is held across it on purpose: concurrent
             // requests for the same service must wait and share the stream
             // instead of racing for another tuner.
-            let starter = self.stream_starter(service_id, channel);
+            let starter = self.stream_starter(key, channel);
             let result = tokio::task::spawn_blocking(starter)
                 .await
                 .map_err(|error| SubscribeError::Internal(error.into()))?;
@@ -164,7 +164,7 @@ impl Streams {
             match result {
                 Ok(stream) => {
                     streams.retain(|_, stream| stream.strong_count() > 0);
-                    streams.insert(service_id, Arc::downgrade(&stream));
+                    streams.insert(key, Arc::downgrade(&stream));
                     return Ok(stream);
                 }
                 Err(SubscribeError::TunerBusy) if tokio::time::Instant::now() < deadline => {}
@@ -178,7 +178,7 @@ impl Streams {
 
     fn stream_starter(
         &self,
-        service_id: u16,
+        key: ServiceKey,
         channel: &Channel,
     ) -> impl FnOnce() -> Result<Arc<Stream>, SubscribeError> + Send + 'static {
         let registry = Arc::clone(&self.registry);
@@ -192,9 +192,13 @@ impl Streams {
                 AcquireError::Busy => SubscribeError::TunerBusy,
                 AcquireError::NotConfigured => SubscribeError::Internal(error.into()),
             })?;
-            info!(tuner_id = tuner.id(), service_id, "Acquired tuner");
+            info!(
+                tuner_id = tuner.id(),
+                service_id = key.service_id,
+                "Acquired tuner"
+            );
 
-            start_stream(registry, cas, b61_descrambler, tuner, service_id, &channel)
+            start_stream(registry, cas, b61_descrambler, tuner, key, &channel)
                 .map_err(SubscribeError::Internal)
         }
     }
@@ -205,7 +209,7 @@ fn start_stream(
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
     tuner: TunerLease,
-    service_id: u16,
+    key: ServiceKey,
     channel: &Channel,
 ) -> anyhow::Result<Arc<Stream>> {
     tuner.tune(channel.clone())?;
@@ -225,7 +229,7 @@ fn start_stream(
                 MmtDemuxer::new(reader, descrambler),
                 StreamTarget {
                     channel_id: channel.id,
-                    service_id: Some(service_id),
+                    service_id: Some(key.service_id),
                 },
                 registry,
                 &fmp4_tx,
@@ -241,7 +245,7 @@ fn start_stream(
             let descrambler = B25Descrambler::init(cas)?;
             // A service of zero streams the whole transport stream instead of
             // picking one service out of it.
-            let target_service_id = (service_id != 0).then_some(service_id);
+            let target_service_id = (key.service_id != 0).then_some(key.service_id);
             let demux = match target_service_id {
                 Some(service_id) => M2tsDemuxer::new_for_service(reader, descrambler, service_id),
                 None => M2tsDemuxer::new(reader, descrambler),
@@ -261,10 +265,10 @@ fn start_stream(
         }
     }?;
 
-    info!(service_id, channel = %channel.name, "Stream started");
+    info!(service_id = key.service_id, channel = %channel.name, "Stream started");
 
     Ok(Arc::new(Stream {
-        service_id,
+        key,
         event_id,
         fmp4_tx,
         fmp4_init_segment,

@@ -12,6 +12,7 @@ import {
 
 import type { StreamState } from "../gen/chibitv/v1/chibitv_pb";
 import { chibitvClient } from ".";
+import type { ServiceKey } from "./services";
 
 type Fmp4Listener = (data: Uint8Array) => void;
 const MAX_PENDING_FMP4 = 256;
@@ -42,11 +43,11 @@ const StreamContext = createContext<StreamContextValue | undefined>(undefined);
 
 interface StreamProviderProps {
   /** The service to watch; the URL holds it, so a reload keeps the channel. */
-  serviceId: number | undefined;
+  service: ServiceKey | undefined;
   children: ReactNode;
 }
 
-export function StreamProvider({ serviceId, children }: StreamProviderProps): JSX.Element {
+export function StreamProvider({ service, children }: StreamProviderProps): JSX.Element {
   // The watched service is picked by this client alone; the server tunes only
   // while the stream below is held open and shares it with other watching
   // clients.
@@ -84,8 +85,13 @@ export function StreamProvider({ serviceId, children }: StreamProviderProps): JS
     abortConnection.current?.();
   }, []);
 
+  // The service is an object, so the effect below follows what it holds rather
+  // than the identity of the object the router hands it in.
+  const streamId = service?.streamId;
+  const serviceId = service?.serviceId;
+
   useEffect(() => {
-    if (serviceId === undefined) {
+    if (streamId === undefined || serviceId === undefined) {
       return;
     }
 
@@ -128,7 +134,7 @@ export function StreamProvider({ serviceId, children }: StreamProviderProps): JS
         try {
           watchForStall();
 
-          const stream = chibitvClient.stream({ serviceId }, { signal: connection.signal });
+          const stream = chibitvClient.stream({ service: { streamId, serviceId } }, { signal: connection.signal });
           for await (const { payload } of stream) {
             if (payload.case === "state") {
               setState(payload.value);
@@ -172,7 +178,7 @@ export function StreamProvider({ serviceId, children }: StreamProviderProps): JS
       closed.abort();
       pendingFmp4.current = [];
     };
-  }, [serviceId, restartPlayback]);
+  }, [streamId, serviceId, restartPlayback]);
 
   const value = useMemo(
     () => ({ state, subscribeFmp4, playbackGeneration, reconnect }),

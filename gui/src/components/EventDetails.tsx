@@ -67,10 +67,11 @@ export function EventDetails({
             </Modal.Body>
             <Modal.Footer>
               <Button
-                isDisabled={scheduleRecording.isPending}
+                isDisabled={scheduleRecording.isPending || !event.service}
                 variant="primary"
                 onPress={() =>
-                  scheduleRecording.mutate({ serviceId: event.serviceId, eventId: event.id }, { onSuccess: onClose })
+                  event.service &&
+                  scheduleRecording.mutate({ service: event.service, eventId: event.id }, { onSuccess: onClose })
                 }
               >
                 <VideoCameraIcon className="size-4" />

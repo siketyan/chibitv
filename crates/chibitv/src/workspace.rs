@@ -10,7 +10,7 @@ use crate::channel_scanner::{ChannelScanner, ScanRequest};
 use crate::config::ChannelConfig;
 use crate::event_crawler::EventCrawler;
 use crate::recorder::{Recorder, Recording};
-use crate::registry::{Registry, Service};
+use crate::registry::{Registry, Service, ServiceKey};
 use crate::scheduler::Scheduler;
 use crate::service_information::Signal;
 use crate::stream::{Stream, Streams, SubscribeError};
@@ -177,7 +177,7 @@ impl Workspace {
     /// programme does and stops once it is over.
     pub fn schedule_recording(
         &self,
-        service_id: u16,
+        key: ServiceKey,
         event_id: u16,
     ) -> Result<Task, WorkspaceError> {
         let recorder = self
@@ -186,7 +186,7 @@ impl Workspace {
             .ok_or(WorkspaceError::RecordingUnavailable)?;
         let service = self
             .registry
-            .get_service_by_id(service_id)
+            .get_service(key)
             .ok_or(WorkspaceError::ServiceNotFound)?;
         let channel = self
             .channel_of(&service)
@@ -194,7 +194,7 @@ impl Workspace {
             .clone();
         let event = self
             .registry
-            .get_event_by_id(service_id, event_id)
+            .get_event(key, event_id)
             .ok_or(WorkspaceError::EventNotFound)?;
 
         let (Some(start_time), Some(duration)) = (event.start_time, event.duration) else {
@@ -211,7 +211,7 @@ impl Workspace {
         let title = event.name.unwrap_or(service.name);
         let recording = Recording {
             channel,
-            service_id,
+            service_id: key.service_id,
             title: title.clone(),
             starts_at,
             ends_at,
@@ -248,7 +248,7 @@ impl Workspace {
     fn channel_of(&self, service: &Service) -> Option<&Channel> {
         self.channels.iter().find(|channel| match &channel.inner {
             ChannelInner::IsdbS3 { stream_id, .. } => {
-                *stream_id == u32::from(service.transport_stream_id)
+                *stream_id == u32::from(service.key.stream_id)
             }
             ChannelInner::IsdbT { .. }
             | ChannelInner::IsdbS { .. }
@@ -262,11 +262,11 @@ impl Workspace {
     /// nobody is streaming it yet.
     pub async fn subscribe_stream(
         &self,
-        service_id: u16,
+        key: ServiceKey,
     ) -> Result<StreamSubscription, WorkspaceError> {
         let service = self
             .registry
-            .get_service_by_id(service_id)
+            .get_service(key)
             .ok_or(WorkspaceError::ServiceNotFound)?;
 
         let channel = self
@@ -279,7 +279,7 @@ impl Workspace {
             .ok_or(WorkspaceError::StreamingUnavailable)?;
 
         let stream = streams
-            .subscribe(service_id, channel)
+            .subscribe(key, channel)
             .await
             .map_err(|error| match error {
                 SubscribeError::TunerBusy => WorkspaceError::TunerBusy,
@@ -310,6 +310,11 @@ fn broadcast_time(value: NaiveDateTime) -> Result<DateTime<Local>, WorkspaceErro
 mod tests {
     use super::*;
 
+    const SERVICE: ServiceKey = ServiceKey {
+        stream_id: 0x1234,
+        service_id: 0x5678,
+    };
+
     fn channel() -> Channel {
         Channel {
             id: 0,
@@ -325,7 +330,7 @@ mod tests {
     async fn subscribing_an_unknown_service_fails() {
         let workspace = Workspace::new(Arc::new(Registry::default()), vec![channel()], None);
 
-        let result = workspace.subscribe_stream(0x5678).await;
+        let result = workspace.subscribe_stream(SERVICE).await;
 
         assert!(matches!(result, Err(WorkspaceError::ServiceNotFound)));
     }
@@ -346,7 +351,7 @@ mod tests {
     async fn recording_without_a_configured_storage_fails() {
         let workspace = Workspace::new(Arc::new(Registry::default()), vec![channel()], None);
 
-        let result = workspace.schedule_recording(0x5678, 1);
+        let result = workspace.schedule_recording(SERVICE, 1);
 
         assert!(matches!(result, Err(WorkspaceError::RecordingUnavailable)));
     }
@@ -354,10 +359,10 @@ mod tests {
     #[tokio::test]
     async fn subscribing_without_configured_streams_fails() {
         let registry = Arc::new(Registry::default());
-        registry.put_cached_service(0, 0x1234, 0x5678, "Channel".to_string(), String::new());
+        registry.put_cached_service(0, SERVICE, "Channel".to_string(), String::new());
         let workspace = Workspace::new(registry, vec![channel()], None);
 
-        let result = workspace.subscribe_stream(0x5678).await;
+        let result = workspace.subscribe_stream(SERVICE).await;
 
         assert!(matches!(result, Err(WorkspaceError::StreamingUnavailable)));
     }
