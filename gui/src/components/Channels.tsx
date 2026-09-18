@@ -1,20 +1,12 @@
 import { CheckIcon } from "@heroicons/react/24/outline";
 import { Disclosure, DisclosureGroup, ListBox, Spinner, Tabs } from "@heroui/react";
-import { useQuery } from "@tanstack/react-query";
 import { type JSX, useEffect, useState } from "react";
 
-import { chibitvClient, queryKeys } from "../api";
+import { groupByDeliverySystem, useChannels } from "../api/channels";
 import { isSameService, type ServiceKey, serviceKeyId, useServices } from "../api/services";
 import { useStream } from "../api/stream";
-import { type Channel, DeliverySystem, type Service } from "../gen/chibitv/v1/chibitv_pb";
+import type { Channel, DeliverySystem, Service } from "../gen/chibitv/v1/chibitv_pb";
 import { useSelectService, useServiceKey } from "../router";
-
-const DELIVERY_SYSTEMS: { id: DeliverySystem; label: string }[] = [
-  { id: DeliverySystem.ISDB_T, label: "Terrestrial" },
-  { id: DeliverySystem.ISDB_S, label: "BS/CS" },
-  { id: DeliverySystem.ISDB_S3, label: "BS 4K" },
-  { id: DeliverySystem.UNSPECIFIED, label: "Other" },
-];
 
 interface ChannelsProps {
   onServiceChange?: () => void;
@@ -27,14 +19,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
   const [expandedChannelId, setExpandedChannelId] = useState<number>();
   const [selectedDeliverySystem, setSelectedDeliverySystem] = useState<DeliverySystem>();
   const { data: services = [], isLoading: areServicesLoading, isError: areServicesError } = useServices();
-  const {
-    data: channels = [],
-    isLoading: areChannelsLoading,
-    isError: areChannelsError,
-  } = useQuery({
-    queryKey: queryKeys.channels,
-    queryFn: async () => (await chibitvClient.listChannels({})).channels,
-  });
+  const { data: channels = [], isLoading: areChannelsLoading, isError: areChannelsError } = useChannels();
   const selectService = (selected: ServiceKey) => {
     selectServiceKey(selected);
     onServiceChange?.();
@@ -75,11 +60,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     return <p className="p-3 text-sm text-danger">Could not load channels.</p>;
   }
 
-  const groups = DELIVERY_SYSTEMS.flatMap(({ id, label }) => {
-    const groupChannels = channels.filter((channel) => channel.deliverySystem === id);
-
-    return groupChannels.length === 0 ? [] : [{ id, label, channels: groupChannels }];
-  });
+  const groups = groupByDeliverySystem(channels);
 
   if (groups.length === 0) {
     return <p className="p-3 text-sm text-muted">No channels are available.</p>;

@@ -1,13 +1,14 @@
 import { ArrowPathIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
-import { Button } from "@heroui/react";
+import { Button, Tabs } from "@heroui/react";
 import { useQuery } from "@tanstack/react-query";
 import { type CSSProperties, type JSX, useMemo, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
+import { groupByDeliverySystem, useChannels } from "../api/channels";
 import { type ServiceKey, serviceKeyId, useServices } from "../api/services";
 import { isTaskRunning, useRefreshEvents, useTasks } from "../api/tasks";
 import { toDate } from "../api/time";
-import { type Event, TaskKind } from "../gen/chibitv/v1/chibitv_pb";
+import { type Channel, DeliverySystem, type Event, TaskKind } from "../gen/chibitv/v1/chibitv_pb";
 import { EventDetails } from "./EventDetails";
 
 const MINUTES_PER_DAY = 24 * 60;
@@ -70,16 +71,25 @@ export function Events(): JSX.Element {
   const now = new Date();
   const todayKey = toDateKey(now);
   const [requestedDateKey, setRequestedDateKey] = useState<string>();
+  const [requestedDeliverySystem, setRequestedDeliverySystem] = useState<DeliverySystem>();
   const [expandedChannelIds, setExpandedChannelIds] = useState<Set<number>>(new Set());
   const [selectedEvent, setSelectedEvent] = useState<GuideEvent>();
-  const { data: channels = [] } = useQuery({
-    queryKey: queryKeys.channels,
-    queryFn: async () => (await chibitvClient.listChannels({})).channels,
-  });
+  const { data: channels = [] } = useChannels();
   const { data: services = [] } = useServices();
+
+  // One tab per broadcast wave that has channels on it, the guide showing the
+  // schedule of one wave at a time. The wave asked for is kept only while it
+  // still has channels, so that a guide opened before the channels arrive
+  // settles on the first wave rather than on nothing.
+  const waves = groupByDeliverySystem(channels);
+  const selectedWave = waves.find((wave) => wave.id === requestedDeliverySystem)?.id ?? waves[0]?.id;
+
+  // The server lists the schedule of the wave alone, so switching tabs asks it
+  // for that wave rather than sifting through every event it knows.
   const { data: events = [] } = useQuery({
-    queryKey: queryKeys.events(),
-    queryFn: async () => (await chibitvClient.listEvents({})).events,
+    queryKey: queryKeys.eventsOfWave(selectedWave ?? DeliverySystem.UNSPECIFIED),
+    queryFn: async () => (await chibitvClient.listEvents({ deliverySystem: selectedWave })).events,
+    enabled: selectedWave !== undefined,
   });
 
   // Refreshing is a background task: this button only starts one, and how it
@@ -101,28 +111,28 @@ export function Events(): JSX.Element {
     return grouped;
   }, [allEvents]);
 
-  const channelGroups = useMemo(
-    () =>
-      channels.map((channel) => {
-        const channelServices = services.flatMap((service) => {
-          if (service.channelId !== channel.id || !service.key) {
-            return [];
-          }
+  // The lanes of one wave, which is what a tab is filled with. Only the tab
+  // that is open renders, so the events of the wave it was asked for are the
+  // ones its lanes are filled with.
+  const laneGroupsOf = (waveChannels: Channel[]) =>
+    waveChannels.map((channel) => {
+      const channelServices = services.flatMap((service) => {
+        if (service.channelId !== channel.id || !service.key) {
+          return [];
+        }
 
-          const id = serviceKeyId(service.key);
+        const id = serviceKeyId(service.key);
 
-          return [{ id, serviceName: service.name, events: eventsByService.get(id) ?? [] }];
-        });
+        return [{ id, serviceName: service.name, events: eventsByService.get(id) ?? [] }];
+      });
 
-        return {
-          channel,
-          canExpand: channelServices.length > 1,
-          isExpanded: expandedChannelIds.has(channel.id),
-          services: expandedChannelIds.has(channel.id) ? channelServices : channelServices.slice(0, 1),
-        };
-      }),
-    [channels, services, eventsByService, expandedChannelIds],
-  );
+      return {
+        channel,
+        canExpand: channelServices.length > 1,
+        isExpanded: expandedChannelIds.has(channel.id),
+        services: expandedChannelIds.has(channel.id) ? channelServices : channelServices.slice(0, 1),
+      };
+    });
   const eventDateKeys = allEvents.flatMap((event) => [
     toDateKey(event.startAt),
     toDateKey(new Date(event.endAt.valueOf() - 1)),
@@ -135,6 +145,105 @@ export function Events(): JSX.Element {
   dayEnd.setDate(dayEnd.getDate() + 1);
   const nowOffset = (now.valueOf() - selectedDate.valueOf()) / 60_000;
   const showNow = selectedDateKey === todayKey && nowOffset >= 0 && nowOffset < MINUTES_PER_DAY;
+
+  const renderGuide = (waveChannels: Channel[]) => {
+    const laneGroups = laneGroupsOf(waveChannels);
+
+    return (
+      <div className="min-w-max">
+        <div className="sticky top-0 z-30 flex h-18 border-b border-white/10 bg-surface/90 backdrop-blur-xl">
+          <div className="sticky left-0 z-40 w-16 shrink-0 border-r border-white/10 bg-surface/95" />
+          {laneGroups.map(({ channel, services: channelServices, canExpand, isExpanded }) => {
+            const laneCount = Math.max(channelServices.length, 1);
+            return (
+              <div
+                key={channel.id}
+                className="shrink-0 border-r border-white/10"
+                style={{ width: laneCount * SERVICE_WIDTH }}
+              >
+                <div className="flex h-8 items-center justify-center gap-1 border-b border-white/10 px-2 text-xs font-semibold">
+                  <span className="truncate">{channel.name}</span>
+                  {canExpand && (
+                    <Button
+                      aria-label={isExpanded ? `Collapse ${channel.name}` : `Expand ${channel.name}`}
+                      aria-pressed={isExpanded}
+                      className="h-5 min-h-5 w-5 min-w-5 shrink-0"
+                      isIconOnly
+                      size="sm"
+                      variant="ghost"
+                      onPress={() =>
+                        setExpandedChannelIds((current) => {
+                          const next = new Set(current);
+                          if (isExpanded) {
+                            next.delete(channel.id);
+                          } else {
+                            next.add(channel.id);
+                          }
+                          return next;
+                        })
+                      }
+                    >
+                      {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                    </Button>
+                  )}
+                </div>
+                <div className="grid" style={{ gridTemplateColumns: `repeat(${laneCount}, minmax(0, 1fr))` }}>
+                  {channelServices.length === 0 ? (
+                    <div className="truncate px-3 py-2 text-center text-xs text-muted">No services</div>
+                  ) : (
+                    channelServices.map((service) => (
+                      <div key={service.id} className="truncate border-r border-white/5 px-3 py-2 text-center text-xs">
+                        {service.serviceName}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex">
+          <TimeAxis />
+          {laneGroups.map(({ channel, services: channelServices }) => {
+            const laneCount = Math.max(channelServices.length, 1);
+            return (
+              <div
+                key={channel.id}
+                className="grid shrink-0 border-r border-white/10"
+                style={{
+                  width: laneCount * SERVICE_WIDTH,
+                  gridTemplateColumns: `repeat(${laneCount}, minmax(0, 1fr))`,
+                  height: GUIDE_HEIGHT,
+                }}
+              >
+                {channelServices.length === 0 ? (
+                  <GuideLane
+                    events={[]}
+                    dayEnd={dayEnd}
+                    dayStart={selectedDate}
+                    nowOffset={showNow ? nowOffset : undefined}
+                    onSelect={setSelectedEvent}
+                  />
+                ) : (
+                  channelServices.map((service) => (
+                    <GuideLane
+                      key={service.id}
+                      events={service.events}
+                      dayEnd={dayEnd}
+                      dayStart={selectedDate}
+                      nowOffset={showNow ? nowOffset : undefined}
+                      onSelect={setSelectedEvent}
+                    />
+                  ))
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -186,103 +295,31 @@ export function Events(): JSX.Element {
         />
       )}
 
-      <div className="min-h-0 flex-1 overflow-auto">
-        <div className="min-w-max">
-          <div className="sticky top-0 z-30 flex h-18 border-b border-white/10 bg-surface/90 backdrop-blur-xl">
-            <div className="sticky left-0 z-40 w-16 shrink-0 border-r border-white/10 bg-surface/95" />
-            {channelGroups.map(({ channel, services: channelServices, canExpand, isExpanded }) => {
-              const laneCount = Math.max(channelServices.length, 1);
-              return (
-                <div
-                  key={channel.id}
-                  className="shrink-0 border-r border-white/10"
-                  style={{ width: laneCount * SERVICE_WIDTH }}
-                >
-                  <div className="flex h-8 items-center justify-center gap-1 border-b border-white/10 px-2 text-xs font-semibold">
-                    <span className="truncate">{channel.name}</span>
-                    {canExpand && (
-                      <Button
-                        aria-label={isExpanded ? `Collapse ${channel.name}` : `Expand ${channel.name}`}
-                        aria-pressed={isExpanded}
-                        className="h-5 min-h-5 w-5 min-w-5 shrink-0"
-                        isIconOnly
-                        size="sm"
-                        variant="ghost"
-                        onPress={() =>
-                          setExpandedChannelIds((current) => {
-                            const next = new Set(current);
-                            if (isExpanded) {
-                              next.delete(channel.id);
-                            } else {
-                              next.add(channel.id);
-                            }
-                            return next;
-                          })
-                        }
-                      >
-                        {isExpanded ? <ChevronDownIcon /> : <ChevronRightIcon />}
-                      </Button>
-                    )}
-                  </div>
-                  <div className="grid" style={{ gridTemplateColumns: `repeat(${laneCount}, minmax(0, 1fr))` }}>
-                    {channelServices.length === 0 ? (
-                      <div className="truncate px-3 py-2 text-center text-xs text-muted">No services</div>
-                    ) : (
-                      channelServices.map((service) => (
-                        <div
-                          key={service.id}
-                          className="truncate border-r border-white/5 px-3 py-2 text-center text-xs"
-                        >
-                          {service.serviceName}
-                        </div>
-                      ))
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div className="flex">
-            <TimeAxis />
-            {channelGroups.map(({ channel, services: channelServices }) => {
-              const laneCount = Math.max(channelServices.length, 1);
-              return (
-                <div
-                  key={channel.id}
-                  className="grid shrink-0 border-r border-white/10"
-                  style={{
-                    width: laneCount * SERVICE_WIDTH,
-                    gridTemplateColumns: `repeat(${laneCount}, minmax(0, 1fr))`,
-                    height: GUIDE_HEIGHT,
-                  }}
-                >
-                  {channelServices.length === 0 ? (
-                    <GuideLane
-                      events={[]}
-                      dayEnd={dayEnd}
-                      dayStart={selectedDate}
-                      nowOffset={showNow ? nowOffset : undefined}
-                      onSelect={setSelectedEvent}
-                    />
-                  ) : (
-                    channelServices.map((service) => (
-                      <GuideLane
-                        key={service.id}
-                        events={service.events}
-                        dayEnd={dayEnd}
-                        dayStart={selectedDate}
-                        nowOffset={showNow ? nowOffset : undefined}
-                        onSelect={setSelectedEvent}
-                      />
-                    ))
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
+      {waves.length === 0 ? (
+        <p className="p-3 text-sm text-muted">No channels are available.</p>
+      ) : (
+        <Tabs
+          className="min-h-0 flex-1"
+          selectedKey={selectedWave}
+          onSelectionChange={(key) => setRequestedDeliverySystem(Number(key) as DeliverySystem)}
+        >
+          <Tabs.ListContainer className="shrink-0">
+            <Tabs.List aria-label="Broadcast waves">
+              {waves.map((wave) => (
+                <Tabs.Tab key={wave.id} id={wave.id}>
+                  <Tabs.Indicator />
+                  {wave.label}
+                </Tabs.Tab>
+              ))}
+            </Tabs.List>
+          </Tabs.ListContainer>
+          {waves.map((wave) => (
+            <Tabs.Panel key={wave.id} id={wave.id} className="min-h-0 flex-1 overflow-auto p-0">
+              {renderGuide(wave.channels)}
+            </Tabs.Panel>
+          ))}
+        </Tabs>
+      )}
     </div>
   );
 }
