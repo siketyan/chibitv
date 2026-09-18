@@ -29,6 +29,8 @@ pub enum TaskKind {
     RefreshEvents,
     /// Records one programme to the storage.
     Record,
+    /// Looks for the channels on air.
+    ScanChannels,
 }
 
 impl TaskKind {
@@ -40,6 +42,8 @@ impl TaskKind {
             Self::RefreshEvents => true,
             // A recording stopped halfway keeps what it has recorded so far.
             Self::Record => true,
+            // Giving up halfway leaves the channels found so far to be had.
+            Self::ScanChannels => true,
         }
     }
 
@@ -51,6 +55,9 @@ impl TaskKind {
             Self::RefreshEvents => true,
             // Recordings run side by side for as long as there are tuners.
             Self::Record => false,
+            // A scan walks the band with a tuner, so a second one would only
+            // fight the first over it.
+            Self::ScanChannels => true,
         }
     }
 }

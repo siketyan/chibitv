@@ -8,6 +8,7 @@ use tracing::warn;
 
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner};
+use crate::channel_scanner::ChannelScanner;
 use crate::config::{ChannelConfig, Config};
 use crate::event_crawler::EventCrawler;
 use crate::recorder::Recorder;
@@ -103,6 +104,11 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         cas.clone(),
         config.cas.master_key.into(),
     );
+    let channel_scanner = ChannelScanner::new(
+        Arc::clone(&tuners),
+        cas.clone(),
+        config.cas.master_key.into(),
+    );
     let recorder = Recorder::new(
         tuners,
         cas,
@@ -112,6 +118,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let state = Arc::new(
         Workspace::new(registry, channels, Some(streams))
             .with_event_crawler(event_crawler)
+            .with_channel_scanner(channel_scanner)
             .with_recorder(recorder),
     );
 

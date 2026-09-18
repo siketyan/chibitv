@@ -13,6 +13,15 @@ service ChibitvService {
   // WatchTasks, and the events it collects are read back with ListEvents.
   rpc RefreshEvents(RefreshEventsRequest) returns (RefreshEventsResponse);
 
+  // ScanChannels starts a background task looking for the channels on air and
+  // returns it as soon as it is queued. Its progress is followed with
+  // WatchTasks, and what it found is read back with GetScanResult.
+  rpc ScanChannels(ScanChannelsRequest) returns (ScanChannelsResponse);
+
+  // GetScanResult returns what the last scan found, which is empty until one
+  // has finished.
+  rpc GetScanResult(GetScanResultRequest) returns (GetScanResultResponse);
+
   // ListTasks returns every background task the server keeps, the running ones
   // and the recently finished ones alike.
   rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
@@ -99,6 +108,56 @@ message RefreshEventsResponse {
   Task task = 1;
 }
 
+message ScanChannelsRequest {
+  // The broadcast to scan. Unspecified scans the terrestrial channels.
+  DeliverySystem delivery_system = 1;
+
+  // Read a satellite network out of one transponder instead of tuning to every
+  // stream of it. Refused for the terrestrial channels, which share no network.
+  bool fast = 2;
+
+  // Time spent on each channel. Zero uses the server default.
+  uint32 timeout_seconds = 3;
+}
+
+message ScanChannelsResponse {
+  // The task started for this scan.
+  Task task = 1;
+}
+
+message GetScanResultRequest {}
+
+message GetScanResultResponse {
+  // The channels the last scan found, in the order it found them.
+  repeated ScannedChannel channels = 1;
+
+  // The same, as the TOML to merge into the configuration.
+  string toml = 2;
+}
+
+// ScannedChannel is one channel a scan found.
+message ScannedChannel {
+  string name = 1;
+  DeliverySystem delivery_system = 2;
+
+  // The frequency the tuner is given: Hz for the terrestrial channels, kHz for
+  // the satellite ones.
+  uint32 frequency = 3;
+
+  // The stream the channel is picked out of its transponder by, on satellite.
+  optional uint32 stream_id = 4;
+
+  optional uint32 transport_stream_id = 5;
+  repeated ScannedService services = 6;
+}
+
+// ScannedService is one service of a channel a scan found.
+message ScannedService {
+  uint32 id = 1;
+  string name = 2;
+  string provider_name = 3;
+}
+
 message ListTasksRequest {}
 
 message ListTasksResponse {
@@ -152,6 +211,9 @@ enum TaskKind {
 
   // Recording one programme to the storage.
   TASK_KIND_RECORD = 2;
+
+  // Looking for the channels on air.
+  TASK_KIND_SCAN_CHANNELS = 3;
 }
 
 // TaskState is where a background task is in its lifetime.

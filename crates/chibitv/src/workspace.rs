@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -6,6 +6,8 @@ use chrono::{DateTime, Local, NaiveDateTime, TimeDelta};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::channel::{Channel, ChannelInner};
+use crate::channel_scanner::{ChannelScanner, ScanRequest};
+use crate::config::ChannelConfig;
 use crate::event_crawler::EventCrawler;
 use crate::recorder::{Recorder, Recording};
 use crate::registry::{Registry, Service};
@@ -29,6 +31,10 @@ pub enum WorkspaceError {
     StreamingUnavailable,
     /// No event crawler is configured, so the guide cannot be refreshed.
     EventCrawlerUnavailable,
+    /// No channel scanner is configured, so nothing can be scanned for.
+    ChannelScannerUnavailable,
+    /// The scan was asked for something it cannot walk.
+    ScanNotPossible(anyhow::Error),
     /// No storage is configured, so nothing can be recorded.
     RecordingUnavailable,
     EventNotFound,
@@ -57,6 +63,9 @@ pub struct Workspace {
     channels: Vec<Channel>,
     streams: Option<Streams>,
     event_crawler: Option<Arc<EventCrawler>>,
+    channel_scanner: Option<Arc<ChannelScanner>>,
+    /// What the last scan found, kept for whoever asked for it to read back.
+    scan_result: Arc<Mutex<Vec<ChannelConfig>>>,
     recorder: Option<Arc<Recorder>>,
     tasks: Arc<Tasks>,
     scheduler: Arc<Scheduler>,
@@ -71,6 +80,8 @@ impl Workspace {
             channels,
             streams,
             event_crawler: None,
+            channel_scanner: None,
+            scan_result: Arc::default(),
             recorder: None,
             scheduler: Scheduler::spawn(Arc::clone(&tasks)),
             tasks,
@@ -79,6 +90,11 @@ impl Workspace {
 
     pub fn with_event_crawler(mut self, crawler: EventCrawler) -> Self {
         self.event_crawler = Some(Arc::new(crawler));
+        self
+    }
+
+    pub fn with_channel_scanner(mut self, scanner: ChannelScanner) -> Self {
+        self.channel_scanner = Some(Arc::new(scanner));
         self
     }
 
@@ -118,6 +134,43 @@ impl Workspace {
             .map_err(|error| match error {
                 SpawnError::AlreadyRunning => WorkspaceError::TaskAlreadyRunning,
             })
+    }
+
+    /// Starts looking for the channels on air in the background.
+    ///
+    /// What the scan finds replaces what the last one did, and is read back
+    /// with [`Workspace::scan_result`]. The channels the server is serving are
+    /// left alone: they come from the configuration, which this does not write.
+    pub fn scan_channels(&self, request: ScanRequest) -> Result<Task, WorkspaceError> {
+        let scanner = self
+            .channel_scanner
+            .clone()
+            .ok_or(WorkspaceError::ChannelScannerUnavailable)?;
+        request
+            .validate()
+            .map_err(WorkspaceError::ScanNotPossible)?;
+
+        let result = Arc::clone(&self.scan_result);
+
+        self.tasks
+            .spawn_blocking(
+                TaskKind::ScanChannels,
+                "Scanning for channels",
+                move |task| {
+                    let channels = scanner.scan(&request, Some(task))?;
+                    *result.lock().unwrap() = channels;
+
+                    Ok(())
+                },
+            )
+            .map_err(|error| match error {
+                SpawnError::AlreadyRunning => WorkspaceError::TaskAlreadyRunning,
+            })
+    }
+
+    /// What the last scan found, which is empty until one has finished.
+    pub fn scan_result(&self) -> Vec<ChannelConfig> {
+        self.scan_result.lock().unwrap().clone()
     }
 
     /// Books a recording of the event, which starts shortly before the

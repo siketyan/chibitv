@@ -1,6 +1,7 @@
 mod aac;
 mod cas;
 mod channel;
+mod channel_scanner;
 mod command;
 mod config;
 mod demux;
