@@ -1,12 +1,6 @@
 import { type UseMutationResult, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import {
-  type Channel,
-  type DeliverySystem,
-  type GetScanResultResponse,
-  type Task,
-  TaskKind,
-} from "../gen/chibitv/v1/chibitv_pb";
+import { type DeliverySystem, type GetScanResultResponse, type Task, TaskKind } from "../gen/chibitv/v1/chibitv_pb";
 import { chibitvClient, queryKeys } from ".";
 import { isTaskRunning, useTasks } from "./tasks";
 
@@ -47,25 +41,6 @@ export function useScanResult(): GetScanResultResponse | undefined {
   });
 
   return data;
-}
-
-/**
- * Keeps what the last scan found as the channels of the broadcast it walked.
- *
- * The server serves them at once, so the channels and the services it lists
- * are read again rather than waiting for a restart.
- */
-export function useSaveScanResult(): UseMutationResult<Channel[], Error, void> {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: async () => (await chibitvClient.saveScanResult({})).channels,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.channels });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.services });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.events() });
-    },
-  });
 }
 
 /** The scan running right now, if one is. */

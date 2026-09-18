@@ -3,9 +3,10 @@ import { Button, Modal, ProgressBar } from "@heroui/react";
 import type { UseMutationResult } from "@tanstack/react-query";
 import { type JSX, useState } from "react";
 
-import { useRunningScan, useSaveScanResult, useScanChannels, useScanResult } from "../api/scan";
+import { useCreateChannels } from "../api/channels";
+import { useRunningScan, useScanChannels, useScanResult } from "../api/scan";
 import { useStartTaskError } from "../api/tasks";
-import { type Channel, DeliverySystem, type ScannedChannel } from "../gen/chibitv/v1/chibitv_pb";
+import { type Channel, DeliverySystem, type NewChannel } from "../gen/chibitv/v1/chibitv_pb";
 
 const DELIVERY_SYSTEMS: { id: DeliverySystem; label: string }[] = [
   { id: DeliverySystem.ISDB_T, label: "Terrestrial" },
@@ -25,7 +26,7 @@ export function ScanChannels(): JSX.Element {
   const [deliverySystem, setDeliverySystem] = useState(DeliverySystem.ISDB_T);
   const [isFast, setIsFast] = useState(false);
   const scanChannels = useScanChannels();
-  const saveScanResult = useSaveScanResult();
+  const createChannels = useCreateChannels();
   const runningScan = useRunningScan();
   const startError = useStartTaskError();
   const result = useScanResult();
@@ -81,9 +82,9 @@ export function ScanChannels(): JSX.Element {
                 <Button
                   isDisabled={runningScan !== undefined || scanChannels.isPending}
                   onPress={() => {
-                    // What the last scan was saved as says nothing about what
+                    // What the last scan was kept as says nothing about what
                     // this one is about to find.
-                    saveScanResult.reset();
+                    createChannels.reset();
                     scanChannels.mutate({
                       deliverySystem,
                       fast,
@@ -113,7 +114,7 @@ export function ScanChannels(): JSX.Element {
                 )}
                 {startError && <p className="text-xs text-danger">Could not start the scan: {startError}</p>}
                 {result && result.channels.length > 0 && (
-                  <ScanResult channels={result.channels} save={saveScanResult} />
+                  <ScanResult channels={result.channels} keep={createChannels} />
                 )}
               </div>
             </Modal.Body>
@@ -126,10 +127,10 @@ export function ScanChannels(): JSX.Element {
 
 function ScanResult({
   channels,
-  save,
+  keep,
 }: {
-  channels: ScannedChannel[];
-  save: UseMutationResult<Channel[], Error, void>;
+  channels: NewChannel[];
+  keep: UseMutationResult<Channel[], Error, NewChannel[]>;
 }): JSX.Element {
   return (
     <div className="flex min-h-0 flex-col gap-2">
@@ -137,21 +138,21 @@ function ScanResult({
         <h3 className="mr-auto text-sm font-medium">
           {channels.length} channel{channels.length === 1 ? "" : "s"} found
         </h3>
-        <Button isDisabled={save.isPending} size="sm" onPress={() => save.mutate()}>
-          {save.isPending ? "Saving" : "Save channels"}
+        <Button isDisabled={keep.isPending} size="sm" onPress={() => keep.mutate(channels)}>
+          {keep.isPending ? "Saving" : "Save channels"}
         </Button>
       </div>
-      {/* Saving replaces the channels of the broadcast that was scanned, and
-          leaves the channels of the other broadcasts alone. */}
+      {/* Keeping a channel tuned the way one already kept is tuned writes over
+          it, so saving the same scan twice changes nothing. */}
       <p className="text-xs text-muted">
-        Saving these replaces the channels kept for this broadcast. The other broadcasts are left alone.
+        Saving these keeps them alongside the channels already kept, and writes over the ones found again.
       </p>
-      {save.isSuccess && <p className="text-xs text-success">Saved. These channels are being served now.</p>}
-      {save.error && <p className="text-xs text-danger">Could not save the channels: {save.error.message}</p>}
+      {keep.isSuccess && <p className="text-xs text-success">Saved. These channels are being served now.</p>}
+      {keep.error && <p className="text-xs text-danger">Could not save the channels: {keep.error.message}</p>}
       <ul className="flex max-h-48 flex-col gap-1 overflow-auto">
         {channels.map((channel) => (
           <li
-            key={`${channel.deliverySystem}-${channel.frequency}-${channel.streamId ?? 0}`}
+            key={`${channel.deliverySystem}-${channelKey(channel)}`}
             className="rounded-lg border border-white/10 bg-white/5 px-3 py-2"
           >
             <p className="truncate text-sm font-medium">{channel.name}</p>
@@ -163,4 +164,16 @@ function ScanResult({
       </ul>
     </div>
   );
+}
+
+/** What tells a channel a scan found apart from the others it found. */
+function channelKey(channel: NewChannel): string {
+  switch (channel.tuning.case) {
+    case "parameters":
+      return `${channel.tuning.value.frequency}-${channel.tuning.value.streamId ?? 0}`;
+    case "bondriver":
+      return `${channel.tuning.value.space}-${channel.tuning.value.channel}`;
+    default:
+      return channel.name;
+  }
 }

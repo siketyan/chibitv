@@ -19,14 +19,17 @@ service ChibitvService {
   rpc ScanChannels(ScanChannelsRequest) returns (ScanChannelsResponse);
 
   // GetScanResult returns what the last scan found, which is empty until one
-  // has finished.
+  // has finished. What it returns is what BulkCreateChannels takes, so the
+  // channels found are kept by handing them back, edited or picked over first
+  // if the viewer likes.
   rpc GetScanResult(GetScanResultRequest) returns (GetScanResultResponse);
 
-  // SaveScanResult keeps what the last scan found, as the channels of the
-  // broadcast it walked: the ones that were on air replace the channels kept
-  // for that broadcast, while the channels of the other broadcasts are left
-  // alone. The channels served change at once, so nothing has to be restarted.
-  rpc SaveScanResult(SaveScanResultRequest) returns (SaveScanResultResponse);
+  // BulkCreateChannels keeps the channels given, which is how what a scan
+  // found becomes something to watch. A channel tuned the way one already kept
+  // is tuned takes its place rather than being added beside it, so keeping the
+  // same scan twice changes nothing. The channels served change at once, so
+  // nothing has to be restarted.
+  rpc BulkCreateChannels(BulkCreateChannelsRequest) returns (BulkCreateChannelsResponse);
 
   // ListTasks returns every background task the server keeps, the running ones
   // and the recently finished ones alike.
@@ -150,34 +153,60 @@ message GetScanResultRequest {}
 
 message GetScanResultResponse {
   // The channels the last scan found, in the order it found them.
-  repeated ScannedChannel channels = 1;
+  repeated NewChannel channels = 1;
 }
 
-message SaveScanResultRequest {}
+message BulkCreateChannelsRequest {
+  repeated NewChannel channels = 1;
+}
 
-message SaveScanResultResponse {
-  // The channels being served now that the scan has been kept.
+message BulkCreateChannelsResponse {
+  // Every channel served now that these have been kept.
   repeated Channel channels = 1;
 }
 
-// ScannedChannel is one channel a scan found.
-message ScannedChannel {
+// NewChannel is a channel on its way into the database: what a scan found, and
+// what BulkCreateChannels takes.
+message NewChannel {
   string name = 1;
   DeliverySystem delivery_system = 2;
 
-  // The frequency the tuner is given: Hz for the terrestrial channels, kHz for
-  // the satellite ones.
-  uint32 frequency = 3;
+  // How the channel is tuned to.
+  oneof tuning {
+    TuningParameters parameters = 3;
+    BonDriverChannel bondriver = 4;
+  }
 
-  // The stream the channel is picked out of its transponder by, on satellite.
-  optional uint32 stream_id = 4;
-
+  // The stream the services of the channel are named under, as a scan read it.
   optional uint32 transport_stream_id = 5;
-  repeated ScannedService services = 6;
+
+  // The service catalog of the channel, which the server wants before tuning.
+  repeated NewService services = 6;
 }
 
-// ScannedService is one service of a channel a scan found.
-message ScannedService {
+// TuningParameters is what a tuner is given to reach a channel.
+message TuningParameters {
+  // Hz for the terrestrial channels, kHz for the satellite ones.
+  uint32 frequency = 1;
+
+  // Terrestrial only. Zero is the 6 MHz a terrestrial channel is.
+  uint32 bandwidth_hz = 2;
+
+  // Satellite only: the stream the channel is picked out of its transponder
+  // by, which is the transport stream id on ISDB-S and the TLV stream id on
+  // ISDB-S3.
+  optional uint32 stream_id = 3;
+}
+
+// BonDriverChannel names a channel a BonDriver enumerates, which is how one is
+// reached on Windows: the driver holds the tuning parameters itself.
+message BonDriverChannel {
+  uint32 space = 1;
+  uint32 channel = 2;
+}
+
+// NewService is one service of the catalog of a channel.
+message NewService {
   uint32 id = 1;
   string name = 2;
   string provider_name = 3;

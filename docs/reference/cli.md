@@ -235,9 +235,11 @@ broadcasts alone. This is also how a channel gets the service catalog that
 [`serve`](#serve) needs.
 
 A server that is already running holds the channels it started with, so it has
-to be restarted to serve what a scan wrote — scanning from the GUI instead
-saves them without a restart. Either way a running server is holding the tuner,
-which a scan needs for itself.
+to be restarted to serve what a scan wrote. Scanning from the app instead hands
+what was found back to be kept, which takes effect without a restart and keeps
+the channels picked from it beside the ones already kept rather than replacing
+a whole broadcast. Either way a running server is holding the tuner, which a
+scan needs for itself.
 
 ## `status`
 

@@ -1,9 +1,10 @@
 //! Finding the channels on air.
 //!
 //! A scan tunes to what it is told to look at and reads the signalling there
-//! into [`NewChannel`] entries, which are kept in the database as the channels
-//! of the broadcast that was walked: the `scan` command writes them itself,
-//! while the server waits for `SaveScanResult` to say so.
+//! into [`NewChannel`] entries, which are what the channels being served are
+//! kept as: the `scan` command writes them itself, as the channels of the
+//! broadcast it walked, while the server hands them to whoever asked for the
+//! scan and waits for `BulkCreateChannels` to say which are worth keeping.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufReader, Read};

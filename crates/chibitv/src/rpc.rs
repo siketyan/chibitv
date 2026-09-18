@@ -15,7 +15,7 @@ use crate::channel_scanner::{ScanDeliverySystem, ScanRequest};
 use crate::proto::chibitv::v1::*;
 use crate::registry;
 use crate::service_information::Signal;
-use crate::store::NewChannel;
+use crate::store;
 use crate::task;
 use crate::workspace::{StreamSubscription, Workspace, WorkspaceError};
 
@@ -206,23 +206,30 @@ impl ChibitvService for ChibitvServiceImpl {
         let found = self.workspace.scan_result();
 
         Response::ok(GetScanResultResponse {
-            channels: found.iter().map(scanned_channel).collect(),
+            channels: found.iter().map(new_channel_message).collect(),
             ..Default::default()
         })
     }
 
-    async fn save_scan_result(
+    async fn bulk_create_channels(
         &self,
         _ctx: RequestContext,
-        _request: ServiceRequest<'_, SaveScanResultRequest>,
-    ) -> ServiceResult<SaveScanResultResponse> {
+        request: ServiceRequest<'_, BulkCreateChannelsRequest>,
+    ) -> ServiceResult<BulkCreateChannelsResponse> {
+        // Every channel is read before any of them is kept, so a request one
+        // of them is wrong in keeps none of it.
+        let channels = request
+            .channels
+            .iter()
+            .map(new_channel)
+            .collect::<Result<Vec<_>, _>>()?;
         let channels = self
             .workspace
-            .save_scan_result()
+            .create_channels(&channels)
             .await
             .map_err(workspace_error)?;
 
-        Response::ok(SaveScanResultResponse {
+        Response::ok(BulkCreateChannelsResponse {
             channels: channels.iter().map(channel).collect(),
             ..Default::default()
         })
@@ -476,33 +483,53 @@ fn delivery_system(inner: &ChannelInner) -> DeliverySystem {
     }
 }
 
-fn scanned_channel(channel: &NewChannel) -> ScannedChannel {
-    let (delivery_system, frequency, stream_id) = match channel.inner {
-        ChannelInner::IsdbT { frequency, .. } => (DeliverySystem::IsdbT, frequency, None),
+/// The bandwidth a terrestrial channel is, which a request may leave out.
+const TERRESTRIAL_BANDWIDTH_HZ: u32 = 6_000_000;
+
+/// A channel a scan found, as the message that keeping it hands back.
+fn new_channel_message(channel: &store::NewChannel) -> NewChannel {
+    let tuning = match channel.inner {
+        ChannelInner::IsdbT {
+            frequency,
+            bandwidth_hz,
+        } => new_channel::Tuning::Parameters(Box::new(TuningParameters {
+            frequency,
+            bandwidth_hz,
+            ..Default::default()
+        })),
         ChannelInner::IsdbS {
             frequency,
             stream_id,
-        } => (DeliverySystem::IsdbS, frequency, Some(stream_id)),
-        ChannelInner::IsdbS3 {
+        }
+        | ChannelInner::IsdbS3 {
             frequency,
             stream_id,
-        } => (DeliverySystem::IsdbS3, frequency, Some(stream_id)),
+        } => new_channel::Tuning::Parameters(Box::new(TuningParameters {
+            frequency,
+            stream_id: Some(stream_id),
+            ..Default::default()
+        })),
         // A scan finds no BonDriver channel: the driver enumerates those.
-        ChannelInner::BonIsdbT { .. } => (DeliverySystem::IsdbT, 0, None),
-        ChannelInner::BonIsdbS { .. } => (DeliverySystem::IsdbS, 0, None),
-        ChannelInner::BonIsdbS3 { .. } => (DeliverySystem::IsdbS3, 0, None),
+        ChannelInner::BonIsdbT { space, channel }
+        | ChannelInner::BonIsdbS { space, channel }
+        | ChannelInner::BonIsdbS3 { space, channel } => {
+            new_channel::Tuning::Bondriver(Box::new(BonDriverChannel {
+                space,
+                channel,
+                ..Default::default()
+            }))
+        }
     };
 
-    ScannedChannel {
+    NewChannel {
         name: channel.name.clone(),
-        delivery_system: delivery_system.into(),
-        frequency,
-        stream_id,
+        delivery_system: delivery_system(&channel.inner).into(),
+        tuning: Some(tuning),
         transport_stream_id: channel.transport_stream_id.map(u32::from),
         services: channel
             .services
             .iter()
-            .map(|service| ScannedService {
+            .map(|service| NewService {
                 id: u32::from(service.id),
                 name: service.name.clone(),
                 provider_name: service.provider_name.clone(),
@@ -511,6 +538,114 @@ fn scanned_channel(channel: &NewChannel) -> ScannedChannel {
             .collect(),
         ..Default::default()
     }
+}
+
+/// A channel a request asks to keep, as the store takes it.
+fn new_channel(channel: &NewChannelView<'_>) -> Result<store::NewChannel, ConnectError> {
+    if channel.name.is_empty() {
+        return Err(ConnectError::invalid_argument("a channel needs a name"));
+    }
+
+    let Some(delivery_system) = channel.delivery_system.as_known() else {
+        return Err(ConnectError::invalid_argument(
+            "delivery_system is not one this server knows",
+        ));
+    };
+    let inner = match (delivery_system, &channel.tuning) {
+        (_, None) => {
+            return Err(ConnectError::invalid_argument(
+                "a channel needs the tuning it is reached with",
+            ));
+        }
+        (DeliverySystem::Unspecified, _) => {
+            return Err(ConnectError::invalid_argument(
+                "a channel needs the broadcast it is carried on",
+            ));
+        }
+        (DeliverySystem::IsdbT, Some(new_channel::TuningView::Parameters(parameters))) => {
+            ChannelInner::IsdbT {
+                frequency: frequency_of(parameters)?,
+                bandwidth_hz: match parameters.bandwidth_hz {
+                    0 => TERRESTRIAL_BANDWIDTH_HZ,
+                    bandwidth_hz => bandwidth_hz,
+                },
+            }
+        }
+        (DeliverySystem::IsdbS, Some(new_channel::TuningView::Parameters(parameters))) => {
+            ChannelInner::IsdbS {
+                frequency: frequency_of(parameters)?,
+                stream_id: stream_id_of(parameters)?,
+            }
+        }
+        (DeliverySystem::IsdbS3, Some(new_channel::TuningView::Parameters(parameters))) => {
+            ChannelInner::IsdbS3 {
+                frequency: frequency_of(parameters)?,
+                stream_id: stream_id_of(parameters)?,
+            }
+        }
+        (DeliverySystem::IsdbT, Some(new_channel::TuningView::Bondriver(bondriver))) => {
+            ChannelInner::BonIsdbT {
+                space: bondriver.space,
+                channel: bondriver.channel,
+            }
+        }
+        (DeliverySystem::IsdbS, Some(new_channel::TuningView::Bondriver(bondriver))) => {
+            ChannelInner::BonIsdbS {
+                space: bondriver.space,
+                channel: bondriver.channel,
+            }
+        }
+        (DeliverySystem::IsdbS3, Some(new_channel::TuningView::Bondriver(bondriver))) => {
+            ChannelInner::BonIsdbS3 {
+                space: bondriver.space,
+                channel: bondriver.channel,
+            }
+        }
+    };
+
+    Ok(store::NewChannel {
+        name: channel.name.to_string(),
+        inner,
+        transport_stream_id: channel
+            .transport_stream_id
+            .map(|stream_id| {
+                u16::try_from(stream_id).map_err(|_| {
+                    ConnectError::invalid_argument("transport_stream_id is not a stream id")
+                })
+            })
+            .transpose()?,
+        services: channel
+            .services
+            .iter()
+            .map(|service| {
+                Ok(store::StoredService {
+                    id: u16::try_from(service.id).map_err(|_| {
+                        ConnectError::invalid_argument("a service id is not a service id")
+                    })?,
+                    name: service.name.to_string(),
+                    provider_name: service.provider_name.to_string(),
+                })
+            })
+            .collect::<Result<Vec<_>, ConnectError>>()?,
+    })
+}
+
+/// The frequency of a tuning, which is no tuning at all without one.
+fn frequency_of(parameters: &TuningParametersView<'_>) -> Result<u32, ConnectError> {
+    match parameters.frequency {
+        0 => Err(ConnectError::invalid_argument(
+            "a tuning needs the frequency to tune to",
+        )),
+        frequency => Ok(frequency),
+    }
+}
+
+/// The stream a satellite channel is picked out of its transponder by, which
+/// the tuning of one has to name.
+fn stream_id_of(parameters: &TuningParametersView<'_>) -> Result<u32, ConnectError> {
+    parameters.stream_id.ok_or_else(|| {
+        ConnectError::invalid_argument("a satellite channel needs the stream it is picked by")
+    })
 }
 
 fn workspace_error(error: WorkspaceError) -> ConnectError {
@@ -529,9 +664,6 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
         }
         WorkspaceError::ChannelStoreUnavailable => {
             ConnectError::failed_precondition("no database is configured to keep the channels in")
-        }
-        WorkspaceError::ScanResultUnavailable => {
-            ConnectError::failed_precondition("no scan has finished, so there is nothing to keep")
         }
         WorkspaceError::ScanNotPossible(error) => {
             ConnectError::invalid_argument(format!("{error:#}"))

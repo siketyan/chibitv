@@ -2,8 +2,9 @@
 //!
 //! A channel used to be named by `config.toml`, which meant editing a file and
 //! restarting the server to watch what a scan had found. The store keeps them
-//! instead, one broadcast at a time: a scan replaces the channels of the
-//! broadcast it walked and leaves the other broadcasts alone.
+//! instead, written either one broadcast at a time — a scan of a broadcast
+//! replaces the channels of it — or one channel at a time, which is what
+//! keeping a scan someone has picked over comes to.
 
 use async_trait::async_trait;
 
@@ -72,6 +73,14 @@ pub struct StoredService {
 pub trait ChannelStore: Send + Sync {
     /// Every channel kept, in the order they are served in.
     async fn load_channels(&self) -> anyhow::Result<Vec<StoredChannel>>;
+
+    /// Keeps the channels given, without touching the ones already kept that
+    /// they say nothing about.
+    ///
+    /// A channel tuned the way one already kept is tuned takes its place,
+    /// keeping the identifier it was given, so keeping the same channel twice
+    /// leaves one of it rather than two.
+    async fn create_channels(&self, channels: &[NewChannel]) -> anyhow::Result<()>;
 
     /// Replaces the channels of one broadcast with the ones given, which are
     /// the channels of that broadcast a scan of it found.

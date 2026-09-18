@@ -178,6 +178,53 @@ impl ChannelStore for SqliteStore {
         Ok(channels)
     }
 
+    async fn create_channels(&self, channels: &[NewChannel]) -> anyhow::Result<()> {
+        let mut transaction = self.pool.begin().await?;
+
+        // A channel is told apart by the tuning it is reached with, so keeping
+        // one that is already kept writes over it rather than beside it.
+        let kept = sqlx::query(SELECT_CHANNELS)
+            .fetch_all(&mut *transaction)
+            .await?
+            .iter()
+            .map(read_channel)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+
+        for channel in channels {
+            match kept.iter().find(|kept| kept.inner == channel.inner) {
+                Some(kept) => {
+                    let id = i64::try_from(kept.id)?;
+                    sqlx::query(
+                        "UPDATE channels SET name = ?, transport_stream_id = ? WHERE id = ?",
+                    )
+                    .bind(channel.name.as_str())
+                    .bind(channel.transport_stream_id.map(i64::from))
+                    .bind(id)
+                    .execute(&mut *transaction)
+                    .await?;
+
+                    // The catalog is written as a whole, so a service the
+                    // channel no longer carries goes with it.
+                    sqlx::query("DELETE FROM channel_services WHERE channel_id = ?")
+                        .bind(id)
+                        .execute(&mut *transaction)
+                        .await?;
+
+                    insert_services(&mut transaction, id, &channel.services).await?;
+                }
+                None => {
+                    let id = insert_channel(&mut transaction, channel).await?;
+
+                    insert_services(&mut transaction, id, &channel.services).await?;
+                }
+            }
+        }
+
+        transaction.commit().await?;
+
+        Ok(())
+    }
+
     async fn replace_channels(
         &self,
         delivery_system: DeliverySystem,
@@ -191,45 +238,64 @@ impl ChannelStore for SqliteStore {
             .await?;
 
         for channel in channels {
-            let tuning = Tuning::of(&channel.inner);
-            // The identifier is the database's to give, and the services of
-            // the channel are written under the one it just gave.
-            let id: i64 = sqlx::query(
-                "INSERT INTO channels (name, delivery_system, tuning, frequency, bandwidth_hz, \
-                 stream_id, space, channel_number, transport_stream_id) \
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
-            )
-            .bind(channel.name.as_str())
-            .bind(tuning.delivery_system.as_str())
-            .bind(tuning.tuning)
-            .bind(tuning.frequency)
-            .bind(tuning.bandwidth_hz)
-            .bind(tuning.stream_id)
-            .bind(tuning.space)
-            .bind(tuning.channel_number)
-            .bind(channel.transport_stream_id.map(i64::from))
-            .fetch_one(&mut *transaction)
-            .await?
-            .try_get("id")?;
+            let id = insert_channel(&mut transaction, channel).await?;
 
-            for service in &channel.services {
-                sqlx::query(
-                    "INSERT OR REPLACE INTO channel_services (channel_id, service_id, name, \
-                     provider_name) VALUES (?, ?, ?, ?)",
-                )
-                .bind(id)
-                .bind(i64::from(service.id))
-                .bind(service.name.as_str())
-                .bind(service.provider_name.as_str())
-                .execute(&mut *transaction)
-                .await?;
-            }
+            insert_services(&mut transaction, id, &channel.services).await?;
         }
 
         transaction.commit().await?;
 
         Ok(())
     }
+}
+
+/// Writes a channel that is not kept yet, reporting the identifier the
+/// database gave it, which its services are written under.
+async fn insert_channel(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    channel: &NewChannel,
+) -> anyhow::Result<i64> {
+    let tuning = Tuning::of(&channel.inner);
+    let id = sqlx::query(
+        "INSERT INTO channels (name, delivery_system, tuning, frequency, bandwidth_hz, \
+         stream_id, space, channel_number, transport_stream_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
+    )
+    .bind(channel.name.as_str())
+    .bind(tuning.delivery_system.as_str())
+    .bind(tuning.tuning)
+    .bind(tuning.frequency)
+    .bind(tuning.bandwidth_hz)
+    .bind(tuning.stream_id)
+    .bind(tuning.space)
+    .bind(tuning.channel_number)
+    .bind(channel.transport_stream_id.map(i64::from))
+    .fetch_one(&mut **transaction)
+    .await?
+    .try_get("id")?;
+
+    Ok(id)
+}
+
+async fn insert_services(
+    transaction: &mut sqlx::Transaction<'_, Sqlite>,
+    channel_id: i64,
+    services: &[StoredService],
+) -> anyhow::Result<()> {
+    for service in services {
+        sqlx::query(
+            "INSERT OR REPLACE INTO channel_services (channel_id, service_id, name, \
+             provider_name) VALUES (?, ?, ?, ?)",
+        )
+        .bind(channel_id)
+        .bind(i64::from(service.id))
+        .bind(service.name.as_str())
+        .bind(service.provider_name.as_str())
+        .execute(&mut **transaction)
+        .await?;
+    }
+
+    Ok(())
 }
 
 /// The tuning of a channel, as the columns of its row.
@@ -484,6 +550,74 @@ mod tests {
         assert_eq!(stored[0].transport_stream_id, Some(0x1234));
         assert_eq!(stored[2].transport_stream_id, None);
         assert_eq!(stored[1].services, channels[1].services);
+    }
+
+    #[tokio::test]
+    async fn keeps_a_channel_tuned_the_same_way_once() {
+        let store = store().await;
+        let tuning = ChannelInner::IsdbT {
+            frequency: 515_142_857,
+            bandwidth_hz: 6_000_000,
+        };
+        store
+            .create_channels(&[new_channel("UHF 20", tuning.clone(), Some(0x1234))])
+            .await
+            .unwrap();
+        let first = store.load_channels().await.unwrap();
+
+        // The same channel under another name, as someone who edited what a
+        // scan found would hand it back.
+        let mut renamed = new_channel("TOKYO MX", tuning, Some(0x1234));
+        renamed.services.clear();
+        store.create_channels(&[renamed]).await.unwrap();
+
+        let kept = store.load_channels().await.unwrap();
+
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].id, first[0].id);
+        assert_eq!(kept[0].name, "TOKYO MX");
+        // The catalog is written as a whole, so a service that came with the
+        // channel before and does not now is gone.
+        assert!(kept[0].services.is_empty());
+    }
+
+    #[tokio::test]
+    async fn keeps_a_channel_beside_the_ones_already_kept() {
+        let store = store().await;
+        store
+            .create_channels(&[new_channel(
+                "UHF 20",
+                ChannelInner::IsdbT {
+                    frequency: 515_142_857,
+                    bandwidth_hz: 6_000_000,
+                },
+                Some(0x1234),
+            )])
+            .await
+            .unwrap();
+
+        store
+            .create_channels(&[new_channel(
+                "BS",
+                ChannelInner::IsdbS {
+                    frequency: 1_049_480,
+                    stream_id: 0x4031,
+                },
+                Some(0x4031),
+            )])
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store
+                .load_channels()
+                .await
+                .unwrap()
+                .iter()
+                .map(|channel| channel.name.clone())
+                .collect::<Vec<_>>(),
+            ["UHF 20", "BS"],
+        );
     }
 
     #[tokio::test]
