@@ -10,7 +10,7 @@ import {
   useState,
 } from "react";
 
-import type { StreamState } from "../gen/chibitv/v1/chibitv_pb";
+import { StreamErrorKind, type StreamState } from "../gen/chibitv/v1/chibitv_pb";
 import { chibitvClient } from ".";
 import type { ServiceKey } from "./services";
 
@@ -30,13 +30,40 @@ const STABLE_CONNECTION_MS = 10_000;
  * otherwise leave the picture frozen forever.
  */
 const STALL_TIMEOUT_MS = 20_000;
+/**
+ * The errors taking the stream back up cannot get past.
+ *
+ * A card that hands over no key answers the next ECM the same way, so
+ * reconnecting would only occupy a tuner to be refused again; the viewer asks
+ * for it to be tried again once whatever is in the way has been seen to.
+ */
+const PERMANENT_ERROR_KINDS: readonly StreamErrorKind[] = [
+  StreamErrorKind.NOT_CONTRACTED,
+  StreamErrorKind.DESCRAMBLING_REFUSED,
+];
+
+/**
+ * What stopped the stream: what the server said stopped it, or the call to it
+ * breaking, which is how a tuner or a card that cannot be opened at all
+ * arrives.
+ */
+export type StreamFailure = {
+  kind: StreamErrorKind;
+  message: string;
+};
 
 interface StreamContextValue {
   state: StreamState | undefined;
+  /** What stopped the stream, until it is taken up again. */
+  error: StreamFailure | undefined;
+  /** Whether the stream stopped for good, waiting to be asked to try again. */
+  stopped: boolean;
   subscribeFmp4: (listener: Fmp4Listener) => () => void;
   playbackGeneration: number;
   /** Drops the connection and takes the stream up again from a fresh init segment. */
   reconnect: () => void;
+  /** Takes the stream up again after an error it does not reconnect through. */
+  retry: () => void;
 }
 
 const StreamContext = createContext<StreamContextValue | undefined>(undefined);
@@ -52,7 +79,11 @@ export function StreamProvider({ service, children }: StreamProviderProps): JSX.
   // while the stream below is held open and shares it with other watching
   // clients.
   const [state, setState] = useState<StreamState>();
+  const [error, setError] = useState<StreamFailure>();
+  const [stopped, setStopped] = useState(false);
   const [playbackGeneration, setPlaybackGeneration] = useState(0);
+  /** Bumped to open the stream again once it has stopped for good. */
+  const [attempt, setAttempt] = useState(0);
   const listeners = useRef(new Set<Fmp4Listener>());
   const pendingFmp4 = useRef<Uint8Array[]>([]);
   const abortConnection = useRef<() => void>(undefined);
@@ -85,11 +116,14 @@ export function StreamProvider({ service, children }: StreamProviderProps): JSX.
     abortConnection.current?.();
   }, []);
 
+  const retry = useCallback(() => setAttempt((attempt) => attempt + 1), []);
+
   // The service is an object, so the effect below follows what it holds rather
   // than the identity of the object the router hands it in.
   const streamId = service?.streamId;
   const serviceId = service?.serviceId;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the attempt deliberately opens the stream again without the service changing.
   useEffect(() => {
     if (streamId === undefined || serviceId === undefined) {
       return;
@@ -97,6 +131,8 @@ export function StreamProvider({ service, children }: StreamProviderProps): JSX.
 
     const closed = new AbortController();
     setState(undefined);
+    setError(undefined);
+    setStopped(false);
 
     const deliver = (data: Uint8Array) => {
       if (listeners.current.size === 0) {
@@ -114,9 +150,11 @@ export function StreamProvider({ service, children }: StreamProviderProps): JSX.
 
     const receive = async () => {
       let failures = 0;
+      let stopForGood = false;
 
       while (!closed.signal.aborted) {
         restartPlayback();
+        setError(undefined);
 
         const connection = new AbortController();
         const abort = () => connection.abort();
@@ -141,15 +179,27 @@ export function StreamProvider({ service, children }: StreamProviderProps): JSX.
               continue;
             }
 
+            if (payload.case === "error") {
+              setError(payload.value);
+              stopForGood = PERMANENT_ERROR_KINDS.includes(payload.value.kind);
+              continue;
+            }
+
             if (payload.case === "fmp4") {
               received = true;
               watchForStall();
               deliver(payload.value);
             }
           }
-        } catch (error) {
+        } catch (rpcError) {
           if (!closed.signal.aborted) {
-            console.error("Stream RPC failed", error);
+            console.error("Stream RPC failed", rpcError);
+            // The call never got as far as a stream to stop, so there is no
+            // kind to it; what it says is all there is to go on.
+            setError({
+              kind: StreamErrorKind.INTERNAL,
+              message: rpcError instanceof Error ? rpcError.message : String(rpcError),
+            });
           }
         } finally {
           window.clearTimeout(stallTimer);
@@ -157,7 +207,8 @@ export function StreamProvider({ service, children }: StreamProviderProps): JSX.
           abortConnection.current = undefined;
         }
 
-        if (closed.signal.aborted) {
+        if (closed.signal.aborted || stopForGood) {
+          setStopped(stopForGood);
           break;
         }
 
@@ -178,11 +229,11 @@ export function StreamProvider({ service, children }: StreamProviderProps): JSX.
       closed.abort();
       pendingFmp4.current = [];
     };
-  }, [streamId, serviceId, restartPlayback]);
+  }, [streamId, serviceId, restartPlayback, attempt]);
 
   const value = useMemo(
-    () => ({ state, subscribeFmp4, playbackGeneration, reconnect }),
-    [state, subscribeFmp4, playbackGeneration, reconnect],
+    () => ({ state, error, stopped, subscribeFmp4, playbackGeneration, reconnect, retry }),
+    [state, error, stopped, subscribeFmp4, playbackGeneration, reconnect, retry],
   );
 
   return <StreamContext value={value}>{children}</StreamContext>;
