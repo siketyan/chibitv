@@ -51,17 +51,44 @@ pub trait Demux {
     fn next_packet(&mut self) -> anyhow::Result<Option<Packet>>;
 }
 
-/// Whether the card protecting the stream hands over no key to descramble it
-/// with, which is the one error reading on does not get past.
+/// Why the card protecting the stream handed over no key.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum DescramblingRefusal {
+    /// No contract on the card covers the programme, which is the ordinary
+    /// reason and the one worth telling a viewer about by name.
+    NotContracted,
+    /// The card would not sell the programme, or could not make sense of the
+    /// ECM at all.
+    Other,
+}
+
+/// How the card protecting the stream refused to descramble it, when that is
+/// what an error reading it is.
 ///
 /// Both conditional access systems answer that way, and what reads a [`Demux`]
 /// does not know which of them is in the way, so the two are asked about
-/// together here. A programme with no contract behind it is the ordinary
-/// reason, and the card will answer the next ECM the same way: nothing is
-/// coming, so whatever wants the picture stops, while whatever wants the
-/// tables — a scan, the programme guide — carries on reading them unscrambled.
+/// together here. Whichever it is, the card will answer the next ECM the same
+/// way: nothing is coming, so whatever wants the picture stops, while whatever
+/// wants the tables — a scan, the programme guide — carries on reading them
+/// unscrambled.
+pub fn descrambling_refusal(error: &anyhow::Error) -> Option<DescramblingRefusal> {
+    let not_contracted = match error.downcast_ref::<chibitv_b25::EcmRefusedError>() {
+        Some(error) => error.is_not_contracted(),
+        None => error
+            .downcast_ref::<chibitv_b61::EcmRefusedError>()?
+            .is_not_contracted(),
+    };
+
+    Some(match not_contracted {
+        true => DescramblingRefusal::NotContracted,
+        false => DescramblingRefusal::Other,
+    })
+}
+
+/// Whether the card protecting the stream hands over no key to descramble it
+/// with, which is the one error reading on does not get past.
 pub fn is_descrambling_refused(error: &anyhow::Error) -> bool {
-    error.is::<chibitv_b25::EcmRefusedError>() || error.is::<chibitv_b61::EcmRefusedError>()
+    descrambling_refusal(error).is_some()
 }
 
 #[cfg(test)]
@@ -83,6 +110,43 @@ mod tests {
             .into()
         ));
         assert!(!is_descrambling_refused(&anyhow::anyhow!("a torn packet")));
+    }
+
+    #[test]
+    fn tells_a_programme_no_contract_covers_from_one_the_card_refused_otherwise() {
+        // 0x8901 is the code both cards answer with when the contract has run
+        // out; 0xA101 is one of the refusals that is not about a contract.
+        assert_eq!(
+            descrambling_refusal(
+                &chibitv_b25::EcmRefusedError {
+                    return_code: 0x8901
+                }
+                .into()
+            ),
+            Some(DescramblingRefusal::NotContracted)
+        );
+        assert_eq!(
+            descrambling_refusal(
+                &chibitv_b61::EcmRefusedError {
+                    return_code: 0x8901
+                }
+                .into()
+            ),
+            Some(DescramblingRefusal::NotContracted)
+        );
+        assert_eq!(
+            descrambling_refusal(
+                &chibitv_b25::EcmRefusedError {
+                    return_code: 0xA101
+                }
+                .into()
+            ),
+            Some(DescramblingRefusal::Other)
+        );
+        assert_eq!(
+            descrambling_refusal(&anyhow::anyhow!("a torn packet")),
+            None
+        );
     }
 }
 
