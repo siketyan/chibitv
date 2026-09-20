@@ -50,8 +50,12 @@ dvbv5-sys = { version = "0.2.1", optional = true }
 libc = { version = "0.2.186", optional = true }
 
 [features]
-default = ["dvb", "bon"]
+default = ["dvb", "bon", "px4"]
 dvb = ["dep:dvbv5-sys", "dep:libc"]
+
+# px4_drv tuner support, the Linux driver of the PLEX and Digibest tuners. It
+# only takes the C library, so there is no system library to install for it.
+px4 = ["dep:libc"]
 
 # BonDriver tuner support. Both this and `dvb` are on by default and each only
 # takes effect on the platform it exists for, so a plain build is right either

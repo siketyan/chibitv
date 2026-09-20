@@ -101,6 +101,17 @@ pub enum TunerConfig {
     Bon {
         path: std::path::PathBuf,
     },
+
+    /// A character device of px4_drv, the Linux driver of the PLEX and
+    /// Digibest tuners.
+    #[cfg(all(feature = "px4", target_os = "linux"))]
+    Px4 {
+        path: std::path::PathBuf,
+        /// The voltage the tuner feeds the dish's converter with while a
+        /// satellite channel is tuned: 0 for none, 11 or 15.
+        #[serde(default)]
+        lnb_voltage: u8,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -156,5 +167,44 @@ mod tests {
 
         let StorageConfig::Directory { path } = toml::from_str::<Storage>("").unwrap().storage;
         assert_eq!(path, std::path::Path::new("./recordings"));
+    }
+
+    #[cfg(all(feature = "px4", target_os = "linux"))]
+    #[test]
+    fn leaves_the_lnb_of_a_px4_tuner_unpowered_unless_told() {
+        #[derive(Deserialize)]
+        struct Tuners {
+            tuners: Vec<TunerConfig>,
+        }
+
+        let configured = toml::from_str::<Tuners>(
+            r#"
+                [[tuners]]
+                type = "px4"
+                path = "/dev/pxmlt5video0"
+
+                [[tuners]]
+                type = "px4"
+                path = "/dev/pxmlt5video1"
+                lnb_voltage = 15
+            "#,
+        )
+        .unwrap();
+
+        let [
+            TunerConfig::Px4 {
+                path: first,
+                lnb_voltage: 0,
+            },
+            TunerConfig::Px4 {
+                path: second,
+                lnb_voltage: 15,
+            },
+        ] = configured.tuners.as_slice()
+        else {
+            panic!("{:?}", configured.tuners);
+        };
+        assert_eq!(first, std::path::Path::new("/dev/pxmlt5video0"));
+        assert_eq!(second, std::path::Path::new("/dev/pxmlt5video1"));
     }
 }

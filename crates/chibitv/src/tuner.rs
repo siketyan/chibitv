@@ -2,6 +2,8 @@
 mod bon;
 #[cfg(all(feature = "dvb", unix))]
 mod dvb;
+#[cfg(all(feature = "px4", target_os = "linux"))]
+mod px4;
 mod stdin;
 
 use std::collections::BTreeMap;
@@ -22,6 +24,11 @@ pub trait Tuner: Send + Sync {
         warn!("This tuner does not support tuning.");
         Ok(())
     }
+
+    /// Called once the lease on the tuner is given back, for a tuner that has
+    /// something to let go of between uses, such as a device other programs
+    /// could use meanwhile.
+    fn close(&self) {}
 }
 
 struct TunerSlot {
@@ -52,6 +59,13 @@ impl std::error::Error for AcquireError {}
 pub struct TunerLease {
     slot: Arc<TunerSlot>,
     _permit: OwnedSemaphorePermit,
+}
+
+impl Drop for TunerLease {
+    fn drop(&mut self) {
+        // The permit is a field, so it is only released after this.
+        self.slot.tuner.close();
+    }
 }
 
 impl TunerLease {
@@ -160,6 +174,11 @@ impl Tuners {
             #[cfg(all(feature = "bon", windows))]
             TunerConfig::Bon { path } => {
                 self.add_tuner(id, bon::BonTuner::new(path)?);
+            }
+
+            #[cfg(all(feature = "px4", target_os = "linux"))]
+            TunerConfig::Px4 { path, lnb_voltage } => {
+                self.add_tuner(id, px4::Px4Tuner::new(path, *lnb_voltage)?);
             }
         }
 
