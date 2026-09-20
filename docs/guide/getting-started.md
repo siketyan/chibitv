@@ -78,8 +78,9 @@ Every key of the file is described in the
 Run a subcommand with `cargo run -- <COMMAND>`. The channel arguments used by
 `live`, `record`, and `status` are the identifiers the database gave the
 channels, which [`channels`](../reference/cli#channels) lists. Tuner commands
-currently use the first entry in `[[tuners]]`. Place the global `--verbose`
-option before the subcommand to enable trace logging:
+take the first free entry in `[[tuners]]` receiving the channel's broadcast.
+Place the global `--verbose` option before the subcommand to enable trace
+logging:
 
 ```shell
 cargo run -- channels

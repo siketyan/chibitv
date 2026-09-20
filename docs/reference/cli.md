@@ -42,8 +42,8 @@ from `RUST_LOG`, which `--verbose` only changes the default of.
 
 The `--channel` option of `live`, `record` and `status` is the identifier the
 [`[database]`](./configuration#database) gave the channel, which
-[`channels`](#channels) lists. Tuner commands currently use the first entry in
-[`[[tuners]]`](./configuration#tuners).
+[`channels`](#channels) lists. Tuner commands take the first free entry in
+[`[[tuners]]`](./configuration#tuners) receiving the channel's broadcast.
 
 ## `channels`
 

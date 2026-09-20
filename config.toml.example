@@ -1,10 +1,14 @@
 [cas]
 master_key = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
 
+# Every tuner takes `delivery_systems`, the broadcasts it receives out of
+# "ISDB-T", "ISDB-S" and "ISDB-S3" (BS/CS 4K); a tuner is picked for the
+# broadcast a channel is on. Left out, a tuner is taken to receive every one.
 [[tuners]]
 type = "dvb"
 adapter_num = 0
 frontend_num = 0
+# delivery_systems = ["ISDB-S", "ISDB-S3"]
 
 # Linux only. A tuner px4_drv drives, such as a PLEX PX-MLT5PE, by the device
 # file the driver makes for it. `lnb_voltage` (0, 11 or 15) is what the dish's
