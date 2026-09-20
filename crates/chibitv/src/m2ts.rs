@@ -31,9 +31,21 @@ struct PesBuffer {
     pts: Option<f64>,
 }
 
-#[derive(Debug)]
-struct TrackState {
-    pes: PesBuffer,
+/// What is kept about each PID the stream has been seen carrying.
+#[derive(Debug, Default)]
+struct PidState {
+    /// The continuity counter last seen, to notice a lost packet.
+    continuity: Option<u8>,
+    /// The section being put together, on a PID carrying sections.
+    section: Vec<u8>,
+    /// The sample being put together, on a PID chosen as a media track.
+    pes: Option<PesBuffer>,
+}
+
+impl PidState {
+    fn is_track(&self) -> bool {
+        self.pes.is_some()
+    }
 }
 
 #[derive(Debug)]
@@ -42,10 +54,7 @@ pub struct M2tsDemuxer<R> {
     descrambler: Arc<Mutex<B25Descrambler>>,
     target_service_id: Option<u16>,
     ecm_pids: BTreeSet<Pid>,
-    tracks: BTreeMap<Pid, TrackState>,
-    section_buffers: BTreeMap<Pid, Vec<u8>>,
-    /// The continuity counter last seen on each PID, to notice a lost packet.
-    continuity: BTreeMap<Pid, u8>,
+    pids: BTreeMap<Pid, PidState>,
     /// When a packet was last lost, so that a burst of losses is warned about
     /// once rather than once per PID.
     last_loss: Option<Instant>,
@@ -77,9 +86,7 @@ impl<R: Read> M2tsDemuxer<R> {
             descrambler,
             target_service_id,
             ecm_pids: BTreeSet::new(),
-            tracks: BTreeMap::new(),
-            section_buffers: BTreeMap::new(),
-            continuity: BTreeMap::new(),
+            pids: BTreeMap::new(),
             last_loss: None,
             pending_packets: PacketQueue::default(),
         }
@@ -106,6 +113,11 @@ impl<R: Read> M2tsDemuxer<R> {
         }
     }
 
+    /// Whether the PID was chosen as a media track.
+    fn is_track(&self, pid: Pid) -> bool {
+        self.pids.get(&pid).is_some_and(PidState::is_track)
+    }
+
     /// Whether a packet went missing before this one, going by the continuity
     /// counter of its PID, and says so in the log.
     fn is_packet_lost(&mut self, packet: &TsPacket) -> bool {
@@ -117,7 +129,8 @@ impl<R: Read> M2tsDemuxer<R> {
         }
 
         let counter = packet.header.continuity_counter.as_u8();
-        let Some(last) = self.continuity.insert(pid, counter) else {
+        let state = self.pids.entry(pid).or_default();
+        let Some(last) = state.continuity.replace(counter) else {
             return false;
         };
         let announced = packet
@@ -166,10 +179,12 @@ impl<R: Read> M2tsDemuxer<R> {
             };
 
             let pid = packet.header.pid;
-            if self.is_packet_lost(&packet) {
+            if self.is_packet_lost(&packet)
+                && let Some(state) = self.pids.get_mut(&pid)
+            {
                 // Whatever section was being put together is missing its
                 // middle, so it is started over.
-                self.section_buffers.remove(&pid);
+                state.section.clear();
             }
 
             if packet.header.transport_scrambling_control
@@ -184,7 +199,7 @@ impl<R: Read> M2tsDemuxer<R> {
                     return Err(error);
                 }
 
-                if self.tracks.contains_key(&pid) {
+                if self.is_track(pid) {
                     parse_pes_payload(&mut packet)?;
                 }
             }
@@ -223,7 +238,7 @@ impl<R: Read> M2tsDemuxer<R> {
                                 self.add_ecm_pid(pid);
                             }
                         }
-                        if self.tracks.contains_key(&pid) {
+                        if self.is_track(pid) {
                             continue;
                         }
 
@@ -242,12 +257,7 @@ impl<R: Read> M2tsDemuxer<R> {
 
                     for (pid, track_type) in [selected_video, selected_audio].into_iter().flatten()
                     {
-                        self.tracks.insert(
-                            pid,
-                            TrackState {
-                                pes: PesBuffer::default(),
-                            },
-                        );
+                        self.pids.entry(pid).or_default().pes = Some(PesBuffer::default());
                         out.push(Packet::Media(MediaPacket::Track {
                             track_id: pid.as_u16(),
                             ty: track_type,
@@ -256,8 +266,7 @@ impl<R: Read> M2tsDemuxer<R> {
                 }
                 TsPayload::Section(section) => {
                     let sections = read_sections(
-                        &mut self.section_buffers,
-                        pid,
+                        &mut self.pids.entry(pid).or_default().section,
                         packet.header.payload_unit_start_indicator,
                         section.pointer_field,
                         section.data.as_ref(),
@@ -287,38 +296,41 @@ impl<R: Read> M2tsDemuxer<R> {
                     }
                 }
                 TsPayload::PesStart(pes) => {
-                    let Some(state) = self.tracks.get_mut(&pid) else {
+                    let Some(buffer) = self.pids.get_mut(&pid).and_then(|state| state.pes.as_mut())
+                    else {
                         continue;
                     };
 
-                    let buffer = std::mem::take(&mut state.pes);
+                    let finished = std::mem::replace(
+                        buffer,
+                        PesBuffer {
+                            data: BytesMut::from(Bytes::from(pes.data.to_vec())),
+                            dts: pes.header.dts.map(timestamp_to_seconds),
+                            pts: pes.header.pts.map(timestamp_to_seconds),
+                        },
+                    );
                     let finished =
-                        (!buffer.data.is_empty()).then_some(Packet::Media(MediaPacket::Sample {
+                        (!finished.data.is_empty()).then_some(Packet::Media(MediaPacket::Sample {
                             track_id: pid.as_u16(),
-                            data: buffer.data.freeze(),
-                            dts: buffer.dts,
-                            pts: buffer.pts,
+                            data: finished.data.freeze(),
+                            dts: finished.dts,
+                            pts: finished.pts,
                         }));
-
-                    state.pes = PesBuffer {
-                        data: BytesMut::from(Bytes::from(pes.data.to_vec())),
-                        dts: pes.header.dts.map(timestamp_to_seconds),
-                        pts: pes.header.pts.map(timestamp_to_seconds),
-                    };
 
                     if let Some(sample) = finished {
                         out.push(sample);
                     }
                 }
                 TsPayload::PesContinuation(payload) => {
-                    let Some(state) = self.tracks.get_mut(&pid) else {
+                    let Some(buffer) = self.pids.get_mut(&pid).and_then(|state| state.pes.as_mut())
+                    else {
                         continue;
                     };
-                    if state.pes.data.is_empty() {
+                    if buffer.data.is_empty() {
                         continue;
                     }
 
-                    state.pes.data.extend_from_slice(payload.as_ref());
+                    buffer.data.extend_from_slice(payload.as_ref());
                 }
                 _ => {}
             };
@@ -340,7 +352,7 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
             }
 
             let Some(packets) = self.read_packets()? else {
-                let flushed = flush_pes_buffers(&mut self.tracks);
+                let flushed = flush_pes_buffers(&mut self.pids);
                 self.pending_packets.extend(flushed);
                 return Ok(self.pending_packets.pop());
             };
@@ -349,11 +361,10 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
     }
 }
 
-fn flush_pes_buffers(tracks: &mut BTreeMap<Pid, TrackState>) -> Vec<Packet> {
-    tracks
-        .iter_mut()
+fn flush_pes_buffers(pids: &mut BTreeMap<Pid, PidState>) -> Vec<Packet> {
+    pids.iter_mut()
         .filter_map(|(&track_id, state)| {
-            let buffer = std::mem::take(&mut state.pes);
+            let buffer = std::mem::take(state.pes.as_mut()?);
             (!buffer.data.is_empty()).then_some(Packet::Media(MediaPacket::Sample {
                 track_id: track_id.as_u16(),
                 data: buffer.data.freeze(),
@@ -364,15 +375,15 @@ fn flush_pes_buffers(tracks: &mut BTreeMap<Pid, TrackState>) -> Vec<Packet> {
         .collect()
 }
 
+/// Puts the sections of a PID together out of the payload of one packet,
+/// with `buffer` carrying over what a section has been read of so far.
 fn read_sections(
-    section_buffers: &mut BTreeMap<Pid, Vec<u8>>,
-    pid: Pid,
+    buffer: &mut Vec<u8>,
     payload_unit_start_indicator: bool,
     pointer_field: u8,
     payload: &[u8],
 ) -> Vec<Vec<u8>> {
     let mut sections = Vec::new();
-    let buffer = section_buffers.entry(pid).or_default();
 
     if payload_unit_start_indicator {
         let new_section_offset = usize::from(pointer_field);
@@ -911,24 +922,28 @@ mod tests {
         let mut tracks = BTreeMap::from([
             (
                 Pid::new(0x0100).unwrap(),
-                TrackState {
-                    pes: PesBuffer {
+                PidState {
+                    pes: Some(PesBuffer {
                         data: BytesMut::from(&b"video"[..]),
                         dts: Some(1.0),
                         pts: Some(1.5),
-                    },
+                    }),
+                    ..PidState::default()
                 },
             ),
             (
                 Pid::new(0x0110).unwrap(),
-                TrackState {
-                    pes: PesBuffer {
+                PidState {
+                    pes: Some(PesBuffer {
                         data: BytesMut::from(&b"audio"[..]),
                         dts: Some(2.0),
                         pts: Some(2.5),
-                    },
+                    }),
+                    ..PidState::default()
                 },
             ),
+            // A PID carrying sections has nothing to flush.
+            (Pid::new(0x0000).unwrap(), PidState::default()),
         ]);
 
         let packets = flush_pes_buffers(&mut tracks);
@@ -961,17 +976,16 @@ mod tests {
 
     #[test]
     fn read_sections_keeps_previous_section_tail_before_pointer_field() {
-        let pid = Pid::new(0x0012).unwrap();
-        let mut buffers = BTreeMap::new();
+        let mut buffer = Vec::new();
         let first = section(0x4E, &[0x01, 0x02, 0x03, 0x04, 0x05]);
         let second = section(0x4F, &[0x06, 0x07, 0x08]);
 
-        assert!(read_sections(&mut buffers, pid, true, 0, &first[..5]).is_empty());
+        assert!(read_sections(&mut buffer, true, 0, &first[..5]).is_empty());
 
         // The end of the previous section comes before the pointer field.
         let mut payload = first[5..].to_vec();
         payload.extend_from_slice(&second);
-        let sections = read_sections(&mut buffers, pid, true, (first.len() - 5) as u8, &payload);
+        let sections = read_sections(&mut buffer, true, (first.len() - 5) as u8, &payload);
 
         assert_eq!(sections, vec![first, second]);
     }
@@ -1005,27 +1019,25 @@ mod tests {
         assert!(has_valid_crc(&[0x82, 0x30, 0x02, 0x00, 0x00]));
 
         // What follows the corrupted section in the buffer goes with it.
-        let pid = Pid::new(0x0000).unwrap();
-        let mut buffers = BTreeMap::new();
+        let mut buffer = Vec::new();
         let mut payload = section.clone();
         payload.extend_from_slice(&[0x4F, 0xB0, 0x03, 0x06, 0x07, 0x08]);
-        assert!(read_sections(&mut buffers, pid, true, 0, &payload).is_empty());
-        assert!(buffers.get(&pid).is_none_or(Vec::is_empty));
+        assert!(read_sections(&mut buffer, true, 0, &payload).is_empty());
+        assert!(buffer.is_empty());
     }
 
     #[test]
     fn read_sections_drains_multiple_sections_from_one_payload() {
-        let pid = Pid::new(0x0012).unwrap();
-        let mut buffers = BTreeMap::new();
+        let mut buffer = Vec::new();
         let first = section(0x4E, &[0x01, 0x02, 0x03]);
         let second = section(0x4F, &[0x04, 0x05, 0x06]);
 
         let mut payload = first.clone();
         payload.extend_from_slice(&second);
         payload.push(0xFF);
-        let sections = read_sections(&mut buffers, pid, true, 0, &payload);
+        let sections = read_sections(&mut buffer, true, 0, &payload);
 
         assert_eq!(sections, vec![first, second]);
-        assert!(buffers.get(&pid).is_none_or(Vec::is_empty));
+        assert!(buffer.is_empty());
     }
 }
