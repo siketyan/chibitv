@@ -83,9 +83,14 @@ impl Recorder {
         let deadline = Instant::now() + ACQUIRE_TIMEOUT;
 
         loop {
-            match self.tuners.try_acquire() {
+            match self
+                .tuners
+                .try_acquire(recording.channel.inner.delivery_system())
+            {
                 Ok(tuner) => return Ok(tuner),
-                Err(error @ AcquireError::NotConfigured) => return Err(error.into()),
+                Err(error @ (AcquireError::NotConfigured | AcquireError::Unsupported(_))) => {
+                    return Err(error.into());
+                }
                 Err(error @ AcquireError::Busy) => {
                     if Instant::now() >= deadline
                         || task.is_cancelled()

@@ -192,7 +192,7 @@ impl ChannelScanner {
     ) -> anyhow::Result<Vec<NewChannel>> {
         request.validate()?;
 
-        let tuner = self.tuners.try_acquire()?;
+        let tuner = self.tuners.try_acquire(request.delivery_system.into())?;
         info!(tuner_id = tuner.id(), "Acquired tuner for scanning");
 
         let scanner = Scanner {
@@ -942,8 +942,8 @@ impl Scanner<'_> {
         Ok(Some(state))
     }
 
-    /// Tunes the first tuner to the channel, reporting one it cannot reach as
-    /// nothing rather than as an error.
+    /// Tunes the tuner held for the scan to the channel, reporting one it
+    /// cannot reach as nothing rather than as an error.
     fn tune(
         &self,
         label: &str,

@@ -653,6 +653,9 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
         WorkspaceError::ChannelNotFound => ConnectError::not_found("channel not found"),
         WorkspaceError::ServiceNotFound => ConnectError::not_found("service not found"),
         WorkspaceError::TunerBusy => ConnectError::resource_exhausted("all tuners are in use"),
+        WorkspaceError::NoTuner(system) => {
+            ConnectError::failed_precondition(format!("no tuner receives {system}"))
+        }
         WorkspaceError::StreamingUnavailable => {
             ConnectError::unavailable("streaming is unavailable")
         }
