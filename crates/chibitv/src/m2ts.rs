@@ -43,6 +43,9 @@ pub struct M2tsDemuxer<R> {
     ecm_pids: BTreeSet<Pid>,
     tracks: BTreeMap<Pid, TrackState>,
     section_buffers: BTreeMap<Pid, Vec<u8>>,
+    /// The continuity counter last seen on each section PID, to notice a
+    /// packet lost in the middle of a section.
+    section_continuity: BTreeMap<Pid, u8>,
     pending_packets: PacketQueue,
 }
 
@@ -70,6 +73,7 @@ impl<R: Read> M2tsDemuxer<R> {
             ecm_pids: BTreeSet::new(),
             tracks: BTreeMap::new(),
             section_buffers: BTreeMap::new(),
+            section_continuity: BTreeMap::new(),
             pending_packets: PacketQueue::default(),
         }
     }
@@ -198,6 +202,15 @@ impl<R: Read> M2tsDemuxer<R> {
                     }
                 }
                 TsPayload::Section(section) => {
+                    // A packet lost on the way leaves the section being put
+                    // together missing its middle, so it is started over.
+                    let continuity_counter = packet.header.continuity_counter.as_u8();
+                    if let Some(last) = self.section_continuity.insert(pid, continuity_counter)
+                        && (last + 1) & 0x0F != continuity_counter
+                    {
+                        self.section_buffers.remove(&pid);
+                    }
+
                     let sections = read_sections(
                         &mut self.section_buffers,
                         pid,
@@ -351,6 +364,21 @@ fn read_sections(
     sections
 }
 
+/// The CRC every section with the syntax indicator set ends in.
+const SECTION_CRC: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_MPEG_2);
+
+/// Whether the section arrived whole. A section without the syntax indicator
+/// carries no CRC to tell by, so it is taken as it is.
+fn has_valid_crc(section: &[u8]) -> bool {
+    let section_syntax_indicator = section.get(1).is_some_and(|byte| byte & 0x80 != 0);
+    if !section_syntax_indicator {
+        return true;
+    }
+
+    // Running the CRC over the CRC itself leaves zero when it matches.
+    section.len() >= 4 && SECTION_CRC.checksum(section) == 0
+}
+
 fn drain_complete_sections(buffer: &mut Vec<u8>, sections: &mut Vec<Vec<u8>>) {
     loop {
         if buffer.first().copied() == Some(0xFF) {
@@ -365,6 +393,18 @@ fn drain_complete_sections(buffer: &mut Vec<u8>, sections: &mut Vec<Vec<u8>>) {
         let section_length = usize::from(u16::from_be_bytes([buffer[1] & 0x0F, buffer[2]]));
         let section_end = 3 + section_length;
         if buffer.len() < section_end {
+            break;
+        }
+
+        // A section its CRC does not match was stitched out of two, and what
+        // follows it in the buffer is no more trustworthy: wait for the next
+        // packet a section starts in.
+        if !has_valid_crc(&buffer[..section_end]) {
+            warn!(
+                table_id = buffer[0],
+                "Dropping a section whose CRC does not match"
+            );
+            buffer.clear();
             break;
         }
 
@@ -857,57 +897,72 @@ mod tests {
         assert!(flush_pes_buffers(&mut tracks).is_empty());
     }
 
+    /// A section of the syntax the tables use, with the CRC every such
+    /// section ends in, out of its table id and body.
+    fn section(table_id: u8, body: &[u8]) -> Vec<u8> {
+        let length = body.len() + 4;
+        let mut section = vec![table_id, 0xB0 | (length >> 8) as u8, length as u8];
+        section.extend_from_slice(body);
+        let crc = SECTION_CRC.checksum(&section);
+        section.extend_from_slice(&crc.to_be_bytes());
+
+        section
+    }
+
     #[test]
     fn read_sections_keeps_previous_section_tail_before_pointer_field() {
         let pid = Pid::new(0x0012).unwrap();
         let mut buffers = BTreeMap::new();
+        let first = section(0x4E, &[0x01, 0x02, 0x03, 0x04, 0x05]);
+        let second = section(0x4F, &[0x06, 0x07, 0x08]);
 
-        assert!(
-            read_sections(&mut buffers, pid, true, 0, &[0x4E, 0xB0, 0x05, 0x01, 0x02],).is_empty()
-        );
+        assert!(read_sections(&mut buffers, pid, true, 0, &first[..5]).is_empty());
 
-        let sections = read_sections(
-            &mut buffers,
-            pid,
-            true,
-            3,
-            &[
-                0x03, 0x04, 0x05, // End of the previous section.
-                0x4F, 0xB0, 0x03, 0x06, 0x07, 0x08,
-            ],
-        );
+        // The end of the previous section comes before the pointer field.
+        let mut payload = first[5..].to_vec();
+        payload.extend_from_slice(&second);
+        let sections = read_sections(&mut buffers, pid, true, (first.len() - 5) as u8, &payload);
 
-        assert_eq!(
-            sections,
-            vec![
-                vec![0x4E, 0xB0, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05],
-                vec![0x4F, 0xB0, 0x03, 0x06, 0x07, 0x08],
-            ]
+        assert_eq!(sections, vec![first, second]);
+    }
+
+    #[test]
+    fn tells_a_section_stitched_out_of_two_by_its_crc() {
+        // A PAT of one programme, as broadcast.
+        let mut section = section(
+            0x00,
+            &[0x7E, 0x87, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE1, 0x00],
         );
+        assert!(has_valid_crc(&section));
+
+        section[9] ^= 0x01;
+        assert!(!has_valid_crc(&section));
+
+        // Without the syntax indicator there is no CRC to check against.
+        assert!(has_valid_crc(&[0x82, 0x30, 0x02, 0x00, 0x00]));
+
+        // What follows the corrupted section in the buffer goes with it.
+        let pid = Pid::new(0x0000).unwrap();
+        let mut buffers = BTreeMap::new();
+        let mut payload = section.clone();
+        payload.extend_from_slice(&[0x4F, 0xB0, 0x03, 0x06, 0x07, 0x08]);
+        assert!(read_sections(&mut buffers, pid, true, 0, &payload).is_empty());
+        assert!(buffers.get(&pid).is_none_or(Vec::is_empty));
     }
 
     #[test]
     fn read_sections_drains_multiple_sections_from_one_payload() {
         let pid = Pid::new(0x0012).unwrap();
         let mut buffers = BTreeMap::new();
+        let first = section(0x4E, &[0x01, 0x02, 0x03]);
+        let second = section(0x4F, &[0x04, 0x05, 0x06]);
 
-        let sections = read_sections(
-            &mut buffers,
-            pid,
-            true,
-            0,
-            &[
-                0x4E, 0xB0, 0x03, 0x01, 0x02, 0x03, 0x4F, 0xB0, 0x03, 0x04, 0x05, 0x06, 0xFF,
-            ],
-        );
+        let mut payload = first.clone();
+        payload.extend_from_slice(&second);
+        payload.push(0xFF);
+        let sections = read_sections(&mut buffers, pid, true, 0, &payload);
 
-        assert_eq!(
-            sections,
-            vec![
-                vec![0x4E, 0xB0, 0x03, 0x01, 0x02, 0x03],
-                vec![0x4F, 0xB0, 0x03, 0x04, 0x05, 0x06],
-            ]
-        );
+        assert_eq!(sections, vec![first, second]);
         assert!(buffers.get(&pid).is_none_or(Vec::is_empty));
     }
 }
