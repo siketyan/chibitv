@@ -19,6 +19,7 @@ bytes = "1.12.0"
 chrono = "0.4.45"
 clap = { version = "4.6.1", features = ["derive"] }
 connectrpc = { version = "0.9.0", features = ["axum"] }
+crc = "3.4.0"
 hex = "0.4.3"
 mpeg2ts = "0.6.0"
 papaya = "0.2.4"
@@ -45,13 +46,17 @@ tower = { version = "0.5.3", features = ["util"] }
 [target.'cfg(windows)'.dependencies]
 chibitv_bon = { path = "../chibitv_bon", optional = true }
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 dvbv5-sys = { version = "0.2.1", optional = true }
 libc = { version = "0.2.186", optional = true }
 
 [features]
-default = ["dvb", "bon"]
+default = ["dvb", "bon", "px4"]
 dvb = ["dep:dvbv5-sys", "dep:libc"]
+
+# px4_drv tuner support, the Linux driver of the PLEX and Digibest tuners. It
+# only takes the C library, so there is no system library to install for it.
+px4 = ["dep:libc"]
 
 # BonDriver tuner support. Both this and `dvb` are on by default and each only
 # takes effect on the platform it exists for, so a plain build is right either

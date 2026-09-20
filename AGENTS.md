@@ -57,7 +57,7 @@ The library crates map directly to ARIB standard documents and hold the parsing/
 
 The shared data flow is a pipeline:
 
-1. A tuner source (`tuner/dvb.rs` behind the default `dvb` feature, `tuner/bon.rs` behind `bon`, or `tuner/stdin.rs` / file input) produces a raw stream
+1. A tuner source (`tuner/dvb.rs` behind the default `dvb` feature, `tuner/px4.rs` behind `px4`, `tuner/bon.rs` behind `bon`, or `tuner/stdin.rs` / file input) produces a raw stream
 2. Demux (`demux.rs`, `mmt.rs` for MMT/TLV, `m2ts.rs` for MPEG-2 TS)
 3. CAS descrambling (`cas.rs`, backed by the b25/b61 crates over PC/SC)
 4. Remux (`remux.rs`, `mp4.rs`, codec helpers `aac.rs`/`hevc.rs`/`mp2.rs`)
@@ -82,10 +82,11 @@ Configuration is loaded from `./config.toml` in the working directory (`config.r
 Cargo features on `chibitv`:
 
 - `dvb` (default, Linux DVB tuner support)
+- `px4` (default, px4_drv tuner support on Linux: the PLEX/Digibest character devices, driven with the PT1/PT3 ioctls)
 - `bon` (default, BonDriver tuner support on Windows)
 - `gui` (embeds the built `gui/dist` into the binary via rust-embed — used only by the Docker image; development keeps GUI and server separate).
 
-Both tuner features are on by default and each is gated on the platform it exists
+The tuner features are all on by default and each is gated on the platform it exists
 for as well, so a plain build does the right thing on either one.
 
 ### GUI and JS packages

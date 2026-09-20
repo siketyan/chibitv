@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read};
 use std::sync::RwLock;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use bytes::{Buf, Bytes, BytesMut};
 use mpeg2ts::es::{StreamId, StreamType};
@@ -14,7 +15,7 @@ use mpeg2ts::ts::{
     TransportScramblingControl, TsHeader, TsPacket, TsPacketReader, TsPayload, VersionNumber,
     WriteTsPacket,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use chibitv_b10::descriptor::Descriptor as B10Descriptor;
 use chibitv_b10::table::Table as B10Table;
@@ -30,9 +31,21 @@ struct PesBuffer {
     pts: Option<f64>,
 }
 
-#[derive(Debug)]
-struct TrackState {
-    pes: PesBuffer,
+/// What is kept about each PID the stream has been seen carrying.
+#[derive(Debug, Default)]
+struct PidState {
+    /// The continuity counter last seen, to notice a lost packet.
+    continuity: Option<u8>,
+    /// The section being put together, on a PID carrying sections.
+    section: Vec<u8>,
+    /// The sample being put together, on a PID chosen as a media track.
+    pes: Option<PesBuffer>,
+}
+
+impl PidState {
+    fn is_track(&self) -> bool {
+        self.pes.is_some()
+    }
 }
 
 #[derive(Debug)]
@@ -41,10 +54,15 @@ pub struct M2tsDemuxer<R> {
     descrambler: Arc<Mutex<B25Descrambler>>,
     target_service_id: Option<u16>,
     ecm_pids: BTreeSet<Pid>,
-    tracks: BTreeMap<Pid, TrackState>,
-    section_buffers: BTreeMap<Pid, Vec<u8>>,
+    pids: BTreeMap<Pid, PidState>,
+    /// When a packet was last lost, so that a burst of losses is warned about
+    /// once rather than once per PID.
+    last_loss: Option<Instant>,
     pending_packets: PacketQueue,
 }
+
+/// How long after a lost packet another one counts as the same loss.
+const LOSS_BURST_WINDOW: Duration = Duration::from_secs(1);
 
 impl<R: Read> M2tsDemuxer<R> {
     pub fn new(reader: R, descrambler: B25Descrambler) -> Self {
@@ -68,8 +86,8 @@ impl<R: Read> M2tsDemuxer<R> {
             descrambler,
             target_service_id,
             ecm_pids: BTreeSet::new(),
-            tracks: BTreeMap::new(),
-            section_buffers: BTreeMap::new(),
+            pids: BTreeMap::new(),
+            last_loss: None,
             pending_packets: PacketQueue::default(),
         }
     }
@@ -94,6 +112,52 @@ impl<R: Read> M2tsDemuxer<R> {
             self.reader.add_section_pid(pid);
         }
     }
+
+    /// Whether the PID was chosen as a media track.
+    fn is_track(&self, pid: Pid) -> bool {
+        self.pids.get(&pid).is_some_and(PidState::is_track)
+    }
+
+    /// Whether a packet went missing before this one, going by the continuity
+    /// counter of its PID, and says so in the log.
+    fn is_packet_lost(&mut self, packet: &TsPacket) -> bool {
+        let pid = packet.header.pid;
+        // The counter only moves on packets carrying a payload, and null
+        // packets do not keep one.
+        if pid.as_u16() == Pid::NULL || packet.payload.is_none() {
+            return false;
+        }
+
+        let counter = packet.header.continuity_counter.as_u8();
+        let state = self.pids.entry(pid).or_default();
+        let Some(last) = state.continuity.replace(counter) else {
+            return false;
+        };
+        let announced = packet
+            .adaptation_field
+            .as_ref()
+            .is_some_and(|field| field.discontinuity_indicator);
+        if !is_continuity_broken(last, counter, announced) {
+            return false;
+        }
+
+        // Every PID in flight loses a packet at once, which is one event.
+        let now = Instant::now();
+        if self
+            .last_loss
+            .is_some_and(|at| now.duration_since(at) < LOSS_BURST_WINDOW)
+        {
+            debug!(pid = pid.as_u16(), last, counter, "Packet loss continues");
+        } else {
+            warn!(
+                pid = pid.as_u16(),
+                last, counter, "Packet loss: the continuity counter jumped"
+            );
+        }
+        self.last_loss = Some(now);
+
+        true
+    }
 }
 
 impl<R: Read> M2tsDemuxer<R> {
@@ -115,6 +179,14 @@ impl<R: Read> M2tsDemuxer<R> {
             };
 
             let pid = packet.header.pid;
+            if self.is_packet_lost(&packet)
+                && let Some(state) = self.pids.get_mut(&pid)
+            {
+                // Whatever section was being put together is missing its
+                // middle, so it is started over.
+                state.section.clear();
+            }
+
             if packet.header.transport_scrambling_control
                 != TransportScramblingControl::NotScrambled
             {
@@ -127,7 +199,7 @@ impl<R: Read> M2tsDemuxer<R> {
                     return Err(error);
                 }
 
-                if self.tracks.contains_key(&pid) {
+                if self.is_track(pid) {
                     parse_pes_payload(&mut packet)?;
                 }
             }
@@ -166,7 +238,7 @@ impl<R: Read> M2tsDemuxer<R> {
                                 self.add_ecm_pid(pid);
                             }
                         }
-                        if self.tracks.contains_key(&pid) {
+                        if self.is_track(pid) {
                             continue;
                         }
 
@@ -185,12 +257,7 @@ impl<R: Read> M2tsDemuxer<R> {
 
                     for (pid, track_type) in [selected_video, selected_audio].into_iter().flatten()
                     {
-                        self.tracks.insert(
-                            pid,
-                            TrackState {
-                                pes: PesBuffer::default(),
-                            },
-                        );
+                        self.pids.entry(pid).or_default().pes = Some(PesBuffer::default());
                         out.push(Packet::Media(MediaPacket::Track {
                             track_id: pid.as_u16(),
                             ty: track_type,
@@ -199,8 +266,7 @@ impl<R: Read> M2tsDemuxer<R> {
                 }
                 TsPayload::Section(section) => {
                     let sections = read_sections(
-                        &mut self.section_buffers,
-                        pid,
+                        &mut self.pids.entry(pid).or_default().section,
                         packet.header.payload_unit_start_indicator,
                         section.pointer_field,
                         section.data.as_ref(),
@@ -230,38 +296,41 @@ impl<R: Read> M2tsDemuxer<R> {
                     }
                 }
                 TsPayload::PesStart(pes) => {
-                    let Some(state) = self.tracks.get_mut(&pid) else {
+                    let Some(buffer) = self.pids.get_mut(&pid).and_then(|state| state.pes.as_mut())
+                    else {
                         continue;
                     };
 
-                    let buffer = std::mem::take(&mut state.pes);
+                    let finished = std::mem::replace(
+                        buffer,
+                        PesBuffer {
+                            data: BytesMut::from(Bytes::from(pes.data.to_vec())),
+                            dts: pes.header.dts.map(timestamp_to_seconds),
+                            pts: pes.header.pts.map(timestamp_to_seconds),
+                        },
+                    );
                     let finished =
-                        (!buffer.data.is_empty()).then_some(Packet::Media(MediaPacket::Sample {
+                        (!finished.data.is_empty()).then_some(Packet::Media(MediaPacket::Sample {
                             track_id: pid.as_u16(),
-                            data: buffer.data.freeze(),
-                            dts: buffer.dts,
-                            pts: buffer.pts,
+                            data: finished.data.freeze(),
+                            dts: finished.dts,
+                            pts: finished.pts,
                         }));
-
-                    state.pes = PesBuffer {
-                        data: BytesMut::from(Bytes::from(pes.data.to_vec())),
-                        dts: pes.header.dts.map(timestamp_to_seconds),
-                        pts: pes.header.pts.map(timestamp_to_seconds),
-                    };
 
                     if let Some(sample) = finished {
                         out.push(sample);
                     }
                 }
                 TsPayload::PesContinuation(payload) => {
-                    let Some(state) = self.tracks.get_mut(&pid) else {
+                    let Some(buffer) = self.pids.get_mut(&pid).and_then(|state| state.pes.as_mut())
+                    else {
                         continue;
                     };
-                    if state.pes.data.is_empty() {
+                    if buffer.data.is_empty() {
                         continue;
                     }
 
-                    state.pes.data.extend_from_slice(payload.as_ref());
+                    buffer.data.extend_from_slice(payload.as_ref());
                 }
                 _ => {}
             };
@@ -283,7 +352,7 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
             }
 
             let Some(packets) = self.read_packets()? else {
-                let flushed = flush_pes_buffers(&mut self.tracks);
+                let flushed = flush_pes_buffers(&mut self.pids);
                 self.pending_packets.extend(flushed);
                 return Ok(self.pending_packets.pop());
             };
@@ -292,11 +361,10 @@ impl<R: Read> Demux for M2tsDemuxer<R> {
     }
 }
 
-fn flush_pes_buffers(tracks: &mut BTreeMap<Pid, TrackState>) -> Vec<Packet> {
-    tracks
-        .iter_mut()
+fn flush_pes_buffers(pids: &mut BTreeMap<Pid, PidState>) -> Vec<Packet> {
+    pids.iter_mut()
         .filter_map(|(&track_id, state)| {
-            let buffer = std::mem::take(&mut state.pes);
+            let buffer = std::mem::take(state.pes.as_mut()?);
             (!buffer.data.is_empty()).then_some(Packet::Media(MediaPacket::Sample {
                 track_id: track_id.as_u16(),
                 data: buffer.data.freeze(),
@@ -307,15 +375,15 @@ fn flush_pes_buffers(tracks: &mut BTreeMap<Pid, TrackState>) -> Vec<Packet> {
         .collect()
 }
 
+/// Puts the sections of a PID together out of the payload of one packet,
+/// with `buffer` carrying over what a section has been read of so far.
 fn read_sections(
-    section_buffers: &mut BTreeMap<Pid, Vec<u8>>,
-    pid: Pid,
+    buffer: &mut Vec<u8>,
     payload_unit_start_indicator: bool,
     pointer_field: u8,
     payload: &[u8],
 ) -> Vec<Vec<u8>> {
     let mut sections = Vec::new();
-    let buffer = section_buffers.entry(pid).or_default();
 
     if payload_unit_start_indicator {
         let new_section_offset = usize::from(pointer_field);
@@ -351,6 +419,27 @@ fn read_sections(
     sections
 }
 
+/// Whether a continuity counter going from `last` to `counter` skipped a
+/// packet. A packet may be sent twice, and a stream may announce a jump.
+fn is_continuity_broken(last: u8, counter: u8, announced: bool) -> bool {
+    !announced && counter != (last + 1) & 0x0F && counter != last
+}
+
+/// The CRC every section with the syntax indicator set ends in.
+const SECTION_CRC: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_MPEG_2);
+
+/// Whether the section arrived whole. A section without the syntax indicator
+/// carries no CRC to tell by, so it is taken as it is.
+fn has_valid_crc(section: &[u8]) -> bool {
+    let section_syntax_indicator = section.get(1).is_some_and(|byte| byte & 0x80 != 0);
+    if !section_syntax_indicator {
+        return true;
+    }
+
+    // Running the CRC over the CRC itself leaves zero when it matches.
+    section.len() >= 4 && SECTION_CRC.checksum(section) == 0
+}
+
 fn drain_complete_sections(buffer: &mut Vec<u8>, sections: &mut Vec<Vec<u8>>) {
     loop {
         if buffer.first().copied() == Some(0xFF) {
@@ -365,6 +454,18 @@ fn drain_complete_sections(buffer: &mut Vec<u8>, sections: &mut Vec<Vec<u8>>) {
         let section_length = usize::from(u16::from_be_bytes([buffer[1] & 0x0F, buffer[2]]));
         let section_end = 3 + section_length;
         if buffer.len() < section_end {
+            break;
+        }
+
+        // A section its CRC does not match was stitched out of two, and what
+        // follows it in the buffer is no more trustworthy: wait for the next
+        // packet a section starts in.
+        if !has_valid_crc(&buffer[..section_end]) {
+            warn!(
+                table_id = buffer[0],
+                "Dropping a section whose CRC does not match"
+            );
+            buffer.clear();
             break;
         }
 
@@ -821,24 +922,28 @@ mod tests {
         let mut tracks = BTreeMap::from([
             (
                 Pid::new(0x0100).unwrap(),
-                TrackState {
-                    pes: PesBuffer {
+                PidState {
+                    pes: Some(PesBuffer {
                         data: BytesMut::from(&b"video"[..]),
                         dts: Some(1.0),
                         pts: Some(1.5),
-                    },
+                    }),
+                    ..PidState::default()
                 },
             ),
             (
                 Pid::new(0x0110).unwrap(),
-                TrackState {
-                    pes: PesBuffer {
+                PidState {
+                    pes: Some(PesBuffer {
                         data: BytesMut::from(&b"audio"[..]),
                         dts: Some(2.0),
                         pts: Some(2.5),
-                    },
+                    }),
+                    ..PidState::default()
                 },
             ),
+            // A PID carrying sections has nothing to flush.
+            (Pid::new(0x0000).unwrap(), PidState::default()),
         ]);
 
         let packets = flush_pes_buffers(&mut tracks);
@@ -857,57 +962,82 @@ mod tests {
         assert!(flush_pes_buffers(&mut tracks).is_empty());
     }
 
+    /// A section of the syntax the tables use, with the CRC every such
+    /// section ends in, out of its table id and body.
+    fn section(table_id: u8, body: &[u8]) -> Vec<u8> {
+        let length = body.len() + 4;
+        let mut section = vec![table_id, 0xB0 | (length >> 8) as u8, length as u8];
+        section.extend_from_slice(body);
+        let crc = SECTION_CRC.checksum(&section);
+        section.extend_from_slice(&crc.to_be_bytes());
+
+        section
+    }
+
     #[test]
     fn read_sections_keeps_previous_section_tail_before_pointer_field() {
-        let pid = Pid::new(0x0012).unwrap();
-        let mut buffers = BTreeMap::new();
+        let mut buffer = Vec::new();
+        let first = section(0x4E, &[0x01, 0x02, 0x03, 0x04, 0x05]);
+        let second = section(0x4F, &[0x06, 0x07, 0x08]);
 
-        assert!(
-            read_sections(&mut buffers, pid, true, 0, &[0x4E, 0xB0, 0x05, 0x01, 0x02],).is_empty()
-        );
+        assert!(read_sections(&mut buffer, true, 0, &first[..5]).is_empty());
 
-        let sections = read_sections(
-            &mut buffers,
-            pid,
-            true,
-            3,
-            &[
-                0x03, 0x04, 0x05, // End of the previous section.
-                0x4F, 0xB0, 0x03, 0x06, 0x07, 0x08,
-            ],
-        );
+        // The end of the previous section comes before the pointer field.
+        let mut payload = first[5..].to_vec();
+        payload.extend_from_slice(&second);
+        let sections = read_sections(&mut buffer, true, (first.len() - 5) as u8, &payload);
 
-        assert_eq!(
-            sections,
-            vec![
-                vec![0x4E, 0xB0, 0x05, 0x01, 0x02, 0x03, 0x04, 0x05],
-                vec![0x4F, 0xB0, 0x03, 0x06, 0x07, 0x08],
-            ]
+        assert_eq!(sections, vec![first, second]);
+    }
+
+    #[test]
+    fn tells_a_lost_packet_by_the_continuity_counter() {
+        assert!(!is_continuity_broken(3, 4, false));
+        assert!(!is_continuity_broken(15, 0, false));
+        // Sent twice.
+        assert!(!is_continuity_broken(3, 3, false));
+        // Announced by the discontinuity indicator.
+        assert!(!is_continuity_broken(3, 9, true));
+
+        assert!(is_continuity_broken(3, 5, false));
+        assert!(is_continuity_broken(3, 2, false));
+    }
+
+    #[test]
+    fn tells_a_section_stitched_out_of_two_by_its_crc() {
+        // A PAT of one programme, as broadcast.
+        let mut section = section(
+            0x00,
+            &[0x7E, 0x87, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE1, 0x00],
         );
+        assert!(has_valid_crc(&section));
+
+        section[9] ^= 0x01;
+        assert!(!has_valid_crc(&section));
+
+        // Without the syntax indicator there is no CRC to check against.
+        assert!(has_valid_crc(&[0x82, 0x30, 0x02, 0x00, 0x00]));
+
+        // What follows the corrupted section in the buffer goes with it.
+        let mut buffer = Vec::new();
+        let mut payload = section.clone();
+        payload.extend_from_slice(&[0x4F, 0xB0, 0x03, 0x06, 0x07, 0x08]);
+        assert!(read_sections(&mut buffer, true, 0, &payload).is_empty());
+        assert!(buffer.is_empty());
     }
 
     #[test]
     fn read_sections_drains_multiple_sections_from_one_payload() {
-        let pid = Pid::new(0x0012).unwrap();
-        let mut buffers = BTreeMap::new();
+        let mut buffer = Vec::new();
+        let first = section(0x4E, &[0x01, 0x02, 0x03]);
+        let second = section(0x4F, &[0x04, 0x05, 0x06]);
 
-        let sections = read_sections(
-            &mut buffers,
-            pid,
-            true,
-            0,
-            &[
-                0x4E, 0xB0, 0x03, 0x01, 0x02, 0x03, 0x4F, 0xB0, 0x03, 0x04, 0x05, 0x06, 0xFF,
-            ],
-        );
+        let mut payload = first.clone();
+        payload.extend_from_slice(&second);
+        payload.push(0xFF);
+        let sections = read_sections(&mut buffer, true, 0, &payload);
 
-        assert_eq!(
-            sections,
-            vec![
-                vec![0x4E, 0xB0, 0x03, 0x01, 0x02, 0x03],
-                vec![0x4F, 0xB0, 0x03, 0x04, 0x05, 0x06],
-            ]
-        );
-        assert!(buffers.get(&pid).is_none_or(Vec::is_empty));
+        assert_eq!(sections, vec![first, second]);
+        assert!(buffer.is_empty());
     }
 }

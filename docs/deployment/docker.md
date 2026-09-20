@@ -40,6 +40,10 @@ docker run --rm \
   ghcr.io/siketyan/chibitv:main
 ```
 
+A tuner px4_drv drives is passed in the same way, with the device file the
+driver made for it in place of the three DVB ones, for example
+`--device /dev/pxmlt5video0`.
+
 Open `http://localhost:3001/` in your browser and enjoy!
 
 ## Permissions
@@ -49,8 +53,8 @@ distroless base image, and chibitv itself needs no privileges beyond reaching
 the devices and the daemon. Both of those are still checked against the host,
 which is what the two options above are for:
 
-- DVB device nodes belong to the `video` group, so the container process has
-  to be a member of it.
+- DVB and px4_drv device nodes belong to the `video` group, so the container
+  process has to be a member of it.
 - pcsc-lite authorizes card access with polkit, which resolves the user of the
   connecting process on the host. Running the container as the host user set
   up in

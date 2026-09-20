@@ -340,6 +340,7 @@ dependencies = [
  "clap",
  "connectrpc",
  "connectrpc-build",
+ "crc",
  "dvbv5-sys",
  "hex",
  "libc",
