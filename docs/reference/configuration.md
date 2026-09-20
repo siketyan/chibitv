@@ -47,7 +47,7 @@ first entry; `serve` manages every configured tuner in its registry.
 
 ### `type = "dvb"`
 
-A Linux DVB device. Available on Unix with the default `dvb` Cargo feature.
+A Linux DVB device. Available on Linux with the default `dvb` Cargo feature.
 
 | Key            | Type    | Default    | Description                                                 |
 | -------------- | ------- | ---------- | ----------------------------------------------------------- |

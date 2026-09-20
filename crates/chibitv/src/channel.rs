@@ -66,20 +66,21 @@ impl Display for DeliverySystem {
 /// satellite system, carries MMT/TLV.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChannelInner {
-    // Only the DVB and px4_drv tuners read the tuning parameters; a build
-    // without them keeps them purely to describe the channel.
+    // Only the DVB and px4_drv tuners, both Linux ones, read the tuning
+    // parameters; a build without them keeps them purely to describe the
+    // channel.
     #[cfg_attr(
-        not(any(all(feature = "dvb", unix), all(feature = "px4", target_os = "linux"))),
+        not(all(any(feature = "dvb", feature = "px4"), target_os = "linux")),
         allow(dead_code)
     )]
     IsdbT { frequency: u32, bandwidth_hz: u32 },
     #[cfg_attr(
-        not(any(all(feature = "dvb", unix), all(feature = "px4", target_os = "linux"))),
+        not(all(any(feature = "dvb", feature = "px4"), target_os = "linux")),
         allow(dead_code)
     )]
     IsdbS { frequency: u32, stream_id: u32 },
     #[cfg_attr(
-        not(any(all(feature = "dvb", unix), all(feature = "px4", target_os = "linux"))),
+        not(all(any(feature = "dvb", feature = "px4"), target_os = "linux")),
         allow(dead_code)
     )]
     IsdbS3 { frequency: u32, stream_id: u32 },

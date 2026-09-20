@@ -90,7 +90,7 @@ fn default_storage_path() -> std::path::PathBuf {
 pub enum TunerConfig {
     Stdin,
 
-    #[cfg(all(feature = "dvb", unix))]
+    #[cfg(all(feature = "dvb", target_os = "linux"))]
     Dvb {
         adapter_num: u8,
         frontend_num: u8,

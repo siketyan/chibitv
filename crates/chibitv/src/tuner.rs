@@ -1,6 +1,6 @@
 #[cfg(all(feature = "bon", windows))]
 mod bon;
-#[cfg(all(feature = "dvb", unix))]
+#[cfg(all(feature = "dvb", target_os = "linux"))]
 mod dvb;
 #[cfg(all(feature = "px4", target_os = "linux"))]
 mod px4;
@@ -163,7 +163,7 @@ impl Tuners {
                 self.add_tuner(id, stdin::StdinTuner);
             }
 
-            #[cfg(all(feature = "dvb", unix))]
+            #[cfg(all(feature = "dvb", target_os = "linux"))]
             TunerConfig::Dvb {
                 adapter_num,
                 frontend_num,
