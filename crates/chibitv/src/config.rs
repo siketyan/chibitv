@@ -4,6 +4,8 @@ use std::path::Path;
 use serde::de::Error;
 use serde::{Deserialize, Deserializer};
 
+use crate::channel::DeliverySystem;
+
 #[derive(Copy, Clone, Debug)]
 pub struct CasMasterKey([u8; 32]);
 
@@ -85,9 +87,30 @@ fn default_storage_path() -> std::path::PathBuf {
     std::path::PathBuf::from("./recordings")
 }
 
+/// A tuner, as `[[tuners]]` describes one.
+#[derive(Clone, Debug, Deserialize)]
+pub struct TunerConfig {
+    #[serde(flatten)]
+    pub kind: TunerKind,
+
+    /// The broadcasts the tuner receives, which is what it is picked for.
+    /// Every one of them, unless listed.
+    pub delivery_systems: Option<Vec<DeliverySystem>>,
+}
+
+impl TunerConfig {
+    /// The broadcasts the tuner is picked for.
+    pub fn delivery_systems(&self) -> Vec<DeliverySystem> {
+        self.delivery_systems
+            .clone()
+            .unwrap_or_else(|| DeliverySystem::ALL.to_vec())
+    }
+}
+
+/// How a tuner is driven, which `type` picks along with the keys of it.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum TunerConfig {
+pub enum TunerKind {
     Stdin,
 
     #[cfg(all(feature = "dvb", target_os = "linux"))]
@@ -192,13 +215,21 @@ mod tests {
         .unwrap();
 
         let [
-            TunerConfig::Px4 {
-                path: first,
-                lnb_voltage: 0,
+            TunerConfig {
+                kind:
+                    TunerKind::Px4 {
+                        path: first,
+                        lnb_voltage: 0,
+                    },
+                ..
             },
-            TunerConfig::Px4 {
-                path: second,
-                lnb_voltage: 15,
+            TunerConfig {
+                kind:
+                    TunerKind::Px4 {
+                        path: second,
+                        lnb_voltage: 15,
+                    },
+                ..
             },
         ] = configured.tuners.as_slice()
         else {
@@ -206,5 +237,46 @@ mod tests {
         };
         assert_eq!(first, std::path::Path::new("/dev/pxmlt5video0"));
         assert_eq!(second, std::path::Path::new("/dev/pxmlt5video1"));
+    }
+
+    #[test]
+    fn takes_a_tuner_as_receiving_every_broadcast_unless_told() {
+        #[derive(Deserialize)]
+        struct Tuners {
+            tuners: Vec<TunerConfig>,
+        }
+
+        let configured = toml::from_str::<Tuners>(
+            r#"
+                [[tuners]]
+                type = "stdin"
+
+                [[tuners]]
+                type = "stdin"
+                delivery_systems = ["ISDB-S3"]
+            "#,
+        )
+        .unwrap();
+
+        assert!(matches!(configured.tuners[0].kind, TunerKind::Stdin));
+        assert_eq!(
+            configured.tuners[0].delivery_systems(),
+            DeliverySystem::ALL.to_vec()
+        );
+        assert_eq!(
+            configured.tuners[1].delivery_systems(),
+            vec![DeliverySystem::IsdbS3]
+        );
+
+        assert!(
+            toml::from_str::<Tuners>(
+                r#"
+                    [[tuners]]
+                    type = "stdin"
+                    delivery_systems = ["ISDB-C"]
+                "#
+            )
+            .is_err()
+        );
     }
 }

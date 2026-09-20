@@ -5,7 +5,7 @@ use bytes::Bytes;
 use chrono::{DateTime, Local, NaiveDateTime, TimeDelta};
 use tokio_stream::wrappers::BroadcastStream;
 
-use crate::channel::Channel;
+use crate::channel::{Channel, DeliverySystem};
 use crate::channel_scanner::{ChannelScanner, ScanRequest};
 use crate::event_crawler::EventCrawler;
 use crate::recorder::{Recorder, Recording};
@@ -28,6 +28,8 @@ pub enum WorkspaceError {
     ChannelNotFound,
     ServiceNotFound,
     TunerBusy,
+    /// No tuner receives the broadcast the channel is on.
+    NoTuner(DeliverySystem),
     StreamingUnavailable,
     /// No event crawler is configured, so the guide cannot be refreshed.
     EventCrawlerUnavailable,
@@ -333,6 +335,7 @@ impl Workspace {
             .await
             .map_err(|error| match error {
                 SubscribeError::TunerBusy => WorkspaceError::TunerBusy,
+                SubscribeError::NoTuner(system) => WorkspaceError::NoTuner(system),
                 SubscribeError::Internal(error) => WorkspaceError::Internal(error),
             })?;
 

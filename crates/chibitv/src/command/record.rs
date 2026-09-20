@@ -25,9 +25,8 @@ pub async fn record(options: &Options, config: &Config) -> anyhow::Result<()> {
         tuners.add_tuner_from_config(id as u32, tuner)?;
     }
 
-    let tuner = tuners.try_acquire_by_id(0)?;
-
     let channel = channel::find_channel(config, options.channel).await?;
+    let tuner = tuners.try_acquire(channel.inner.delivery_system())?;
 
     info!("Tuning to the channel: {:?}", channel);
 

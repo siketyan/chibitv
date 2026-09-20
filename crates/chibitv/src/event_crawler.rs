@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::BufReader;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -8,14 +9,14 @@ use chibitv_b25::B25Descrambler;
 use chibitv_b61::Descrambler;
 
 use crate::cas::PcscCasModule;
-use crate::channel::{Channel, ChannelInner};
+use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::demux::{Demux, Packet, is_descrambling_refused};
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
 use crate::registry::Registry;
 use crate::service_information::ServiceInformationProcessor;
 use crate::task::TaskHandle;
-use crate::tuner::Tuners;
+use crate::tuner::{AcquireError, Tuners};
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
 
@@ -37,8 +38,11 @@ impl EventCrawler {
     /// Tunes every channel in turn and collects the events it announces into
     /// the registry, which stores them.
     ///
-    /// The task is asked to stop between packets, so cancelling it keeps the
-    /// events collected so far and gives the tuner back at once.
+    /// The channels are walked a broadcast at a time, on a tuner receiving
+    /// it, which is held for the whole of them; a broadcast no tuner receives
+    /// is skipped with a warning. The task is asked to stop between packets,
+    /// so cancelling it keeps the events collected so far and gives the tuner
+    /// back at once.
     pub fn crawl(
         &self,
         channels: &[Channel],
@@ -46,50 +50,74 @@ impl EventCrawler {
         dwell_time: Duration,
         task: &TaskHandle,
     ) -> anyhow::Result<()> {
-        let tuner = self.tuners.try_acquire()?;
-        info!(tuner_id = tuner.id(), "Acquired tuner for event crawling");
+        let mut by_system: BTreeMap<DeliverySystem, Vec<&Channel>> = BTreeMap::new();
+        for channel in channels {
+            by_system
+                .entry(channel.inner.delivery_system())
+                .or_default()
+                .push(channel);
+        }
 
-        for (index, channel) in channels.iter().enumerate() {
+        let mut index = 0;
+        for (system, channels_of_system) in by_system {
             if task.is_cancelled() {
                 break;
             }
 
-            info!(channel_id = channel.id, channel = %channel.name, "Crawling events");
-            task.report(
-                Some(index as f32 / channels.len() as f32),
-                format!("Crawling {}", channel.name),
-            );
-
-            if let Err(error) = tuner.tune(channel.clone()) {
-                warn!(channel_id = channel.id, %error, "Could not tune while crawling events");
-                continue;
-            }
-
-            let reader = match tuner.open_reader() {
-                Ok(reader) => reader,
-                Err(error) => {
-                    warn!(channel_id = channel.id, %error, "Could not open tuner input");
+            let tuner = match self.tuners.try_acquire(system) {
+                Ok(tuner) => tuner,
+                Err(error @ AcquireError::Unsupported(_)) => {
+                    warn!(%system, %error, "Skipping the channels of a broadcast no tuner receives");
+                    index += channels_of_system.len();
                     continue;
                 }
+                Err(error) => return Err(error.into()),
             };
-            let deadline = Instant::now() + dwell_time;
-            match channel.inner {
-                ChannelInner::IsdbT { .. }
-                | ChannelInner::IsdbS { .. }
-                | ChannelInner::BonIsdbT { .. }
-                | ChannelInner::BonIsdbS { .. } => {
-                    let descrambler = B25Descrambler::init(self.cas.clone())?;
-                    let mut demux = M2tsDemuxer::new(reader, descrambler);
-                    crawl_channel(&mut demux, channel, &registry, deadline, task)?;
+            info!(tuner_id = tuner.id(), %system, "Acquired tuner for event crawling");
+
+            for channel in channels_of_system {
+                if task.is_cancelled() {
+                    break;
                 }
-                ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
-                    let descrambler =
-                        Descrambler::init(self.cas.clone(), self.cas_master_key, false)?;
-                    let mut demux = MmtDemuxer::new(
-                        BufReader::with_capacity(READ_BUFFER_SIZE, reader),
-                        descrambler,
-                    );
-                    crawl_channel(&mut demux, channel, &registry, deadline, task)?;
+
+                info!(channel_id = channel.id, channel = %channel.name, "Crawling events");
+                task.report(
+                    Some(index as f32 / channels.len() as f32),
+                    format!("Crawling {}", channel.name),
+                );
+                index += 1;
+
+                if let Err(error) = tuner.tune(channel.clone()) {
+                    warn!(channel_id = channel.id, %error, "Could not tune while crawling events");
+                    continue;
+                }
+
+                let reader = match tuner.open_reader() {
+                    Ok(reader) => reader,
+                    Err(error) => {
+                        warn!(channel_id = channel.id, %error, "Could not open tuner input");
+                        continue;
+                    }
+                };
+                let deadline = Instant::now() + dwell_time;
+                match channel.inner {
+                    ChannelInner::IsdbT { .. }
+                    | ChannelInner::IsdbS { .. }
+                    | ChannelInner::BonIsdbT { .. }
+                    | ChannelInner::BonIsdbS { .. } => {
+                        let descrambler = B25Descrambler::init(self.cas.clone())?;
+                        let mut demux = M2tsDemuxer::new(reader, descrambler);
+                        crawl_channel(&mut demux, channel, &registry, deadline, task)?;
+                    }
+                    ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
+                        let descrambler =
+                            Descrambler::init(self.cas.clone(), self.cas_master_key, false)?;
+                        let mut demux = MmtDemuxer::new(
+                            BufReader::with_capacity(READ_BUFFER_SIZE, reader),
+                            descrambler,
+                        );
+                        crawl_channel(&mut demux, channel, &registry, deadline, task)?;
+                    }
                 }
             }
         }

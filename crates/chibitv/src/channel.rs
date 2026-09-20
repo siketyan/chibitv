@@ -8,6 +8,7 @@
 use std::fmt::{Display, Formatter, Write as _};
 
 use anyhow::bail;
+use serde::Deserialize;
 
 use crate::config::Config;
 use crate::store::StoredChannel;
@@ -15,20 +16,28 @@ use crate::store::StoredChannel;
 /// The broadcast a channel is carried on.
 ///
 /// This is what decides how the stream is demultiplexed and which descrambler
-/// reads it, so a channel a BonDriver tunes still names it.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// reads it, so a channel a BonDriver tunes still names it. It is also what a
+/// tuner is picked for, as not every tuner receives every broadcast.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
 pub enum DeliverySystem {
     /// Terrestrial digital broadcasting, which carries MPEG-2 TS.
+    #[serde(rename = "ISDB-T")]
     IsdbT,
 
     /// Satellite 2K (BS/CS) broadcasting, which carries MPEG-2 TS.
+    #[serde(rename = "ISDB-S")]
     IsdbS,
 
     /// Satellite 4K (BS/CS) broadcasting, which carries MMT/TLV.
+    #[serde(rename = "ISDB-S3")]
     IsdbS3,
 }
 
 impl DeliverySystem {
+    /// Every broadcast there is, which is what a tuner receives unless the
+    /// configuration says otherwise.
+    pub const ALL: [Self; 3] = [Self::IsdbT, Self::IsdbS, Self::IsdbS3];
+
     /// The name the configuration and the database call it by.
     pub fn as_str(self) -> &'static str {
         match self {
@@ -183,6 +192,21 @@ mod tests {
             DeliverySystem::IsdbS,
         );
         assert!(DeliverySystem::parse("ISDB-C").is_err());
+    }
+
+    #[test]
+    fn reads_a_delivery_system_from_the_configuration_by_the_same_name() {
+        for system in DeliverySystem::ALL {
+            let configured: DeliverySystem =
+                toml::from_str::<toml::Value>(&format!("system = \"{system}\""))
+                    .unwrap()
+                    .get("system")
+                    .cloned()
+                    .unwrap()
+                    .try_into()
+                    .unwrap();
+            assert_eq!(configured, system);
+        }
     }
 
     #[test]
