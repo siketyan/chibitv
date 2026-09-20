@@ -61,6 +61,39 @@ adapter_num = 0
 frontend_num = 0
 ```
 
+### `type = "px4"`
+
+A tuner driven by [px4_drv](https://github.com/tsukumijima/px4_drv), the
+Linux driver of the PLEX and Digibest tuners (PX-W3U4, PX-MLT5PE, PX-M1UR,
+DTV02A-1T1S-U and the like). Available on Linux with the default `px4` Cargo
+feature.
+
+| Key           | Type    | Default    | Description                                                                          |
+| ------------- | ------- | ---------- | ------------------------------------------------------------------------------------ |
+| `path`        | string  | _required_ | Path to the device file the driver makes, such as `/dev/pxmlt5video0`.               |
+| `lnb_voltage` | integer | `0`        | Voltage fed to the dish's converter while a satellite channel is tuned: 0, 11 or 15. |
+
+The driver takes the channel numbers of the PT1/PT3 drivers rather than a
+frequency, and chibitv works them out from the channel it is given, so the
+channels a [scan](./cli#scan) finds with any tuner can be tuned with this one.
+Only ISDB-T and ISDB-S are received: none of the tuners the driver supports
+takes ISDB-S3.
+
+The device is opened while the tuner is in use and closed once it is released,
+so other programs, `recpt1` for instance, can use it in between. A device the
+driver made for one broadcast only, such as the `px4video0` and `px4video1`
+of a PX-W3U4 which receive ISDB-S alone, refuses a channel of the other.
+
+Device files of the driver belong to the `video` group, as the
+[DVB ones](../guide/getting-started#device-permissions-on-linux) do.
+
+```toml
+[[tuners]]
+type = "px4"
+path = "/dev/pxmlt5video0"
+lnb_voltage = 15
+```
+
 ### `type = "bon"`
 
 A BonDriver DLL, which is how tuners are driven on Windows. Available on

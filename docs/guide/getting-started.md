@@ -6,18 +6,19 @@
 
 ## Prerequisites
 
-- A DVB compatible tuner to produce raw MMT/TLV stream
+- A tuner: one with a Linux DVB driver, one driven by
+  [px4_drv](https://github.com/tsukumijima/px4_drv), or a BonDriver on Windows
 - A PC/SC compatible interface to the CAS module
 - The value of _Kd_ defined in Section 1.4 of the ARIB STD-B61 standard
 
 ### Device permissions on Linux
 
-chibitv needs access to both the PC/SC daemon and DVB devices. The following
-setup allows the application to run without `sudo` on distributions using
-pcsc-lite, polkit, and udev, such as Ubuntu and Debian.
+chibitv needs access to both the PC/SC daemon and the tuner devices. The
+following setup allows the application to run without `sudo` on distributions
+using pcsc-lite, polkit, and udev, such as Ubuntu and Debian.
 
 Create a dedicated group for PC/SC access, then add the current user to both
-that group and the `video` group used by DVB devices:
+that group and the `video` group used by DVB devices and px4_drv alike:
 
 ```shell
 sudo groupadd --force --system pcsc
@@ -52,7 +53,7 @@ Verify the setup with:
 ```shell
 id -nG
 pcsc_scan
-ls -l /dev/dvb
+ls -l /dev/dvb /dev/*video*
 ```
 
 The output of `id -nG` should include both `pcsc` and `video`, and `pcsc_scan`

@@ -6,6 +6,15 @@ type = "dvb"
 adapter_num = 0
 frontend_num = 0
 
+# Linux only. A tuner px4_drv drives, such as a PLEX PX-MLT5PE, by the device
+# file the driver makes for it. `lnb_voltage` (0, 11 or 15) is what the dish's
+# converter is powered with while a satellite channel is tuned; the default is
+# 0, no power.
+[[tuners]]
+type = "px4"
+path = "/dev/pxmlt5video0"
+lnb_voltage = 0
+
 # Windows only. The DLL reads its own tuning parameters from the .ini file
 # sitting next to it.
 [[tuners]]
