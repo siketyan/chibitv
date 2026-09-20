@@ -3,6 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{self, Read};
 use std::sync::RwLock;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use bytes::{Buf, Bytes, BytesMut};
 use mpeg2ts::es::{StreamId, StreamType};
@@ -14,7 +15,7 @@ use mpeg2ts::ts::{
     TransportScramblingControl, TsHeader, TsPacket, TsPacketReader, TsPayload, VersionNumber,
     WriteTsPacket,
 };
-use tracing::warn;
+use tracing::{debug, warn};
 
 use chibitv_b10::descriptor::Descriptor as B10Descriptor;
 use chibitv_b10::table::Table as B10Table;
@@ -43,11 +44,16 @@ pub struct M2tsDemuxer<R> {
     ecm_pids: BTreeSet<Pid>,
     tracks: BTreeMap<Pid, TrackState>,
     section_buffers: BTreeMap<Pid, Vec<u8>>,
-    /// The continuity counter last seen on each section PID, to notice a
-    /// packet lost in the middle of a section.
-    section_continuity: BTreeMap<Pid, u8>,
+    /// The continuity counter last seen on each PID, to notice a lost packet.
+    continuity: BTreeMap<Pid, u8>,
+    /// When a packet was last lost, so that a burst of losses is warned about
+    /// once rather than once per PID.
+    last_loss: Option<Instant>,
     pending_packets: PacketQueue,
 }
+
+/// How long after a lost packet another one counts as the same loss.
+const LOSS_BURST_WINDOW: Duration = Duration::from_secs(1);
 
 impl<R: Read> M2tsDemuxer<R> {
     pub fn new(reader: R, descrambler: B25Descrambler) -> Self {
@@ -73,7 +79,8 @@ impl<R: Read> M2tsDemuxer<R> {
             ecm_pids: BTreeSet::new(),
             tracks: BTreeMap::new(),
             section_buffers: BTreeMap::new(),
-            section_continuity: BTreeMap::new(),
+            continuity: BTreeMap::new(),
+            last_loss: None,
             pending_packets: PacketQueue::default(),
         }
     }
@@ -98,6 +105,46 @@ impl<R: Read> M2tsDemuxer<R> {
             self.reader.add_section_pid(pid);
         }
     }
+
+    /// Whether a packet went missing before this one, going by the continuity
+    /// counter of its PID, and says so in the log.
+    fn is_packet_lost(&mut self, packet: &TsPacket) -> bool {
+        let pid = packet.header.pid;
+        // The counter only moves on packets carrying a payload, and null
+        // packets do not keep one.
+        if pid.as_u16() == Pid::NULL || packet.payload.is_none() {
+            return false;
+        }
+
+        let counter = packet.header.continuity_counter.as_u8();
+        let Some(last) = self.continuity.insert(pid, counter) else {
+            return false;
+        };
+        let announced = packet
+            .adaptation_field
+            .as_ref()
+            .is_some_and(|field| field.discontinuity_indicator);
+        if !is_continuity_broken(last, counter, announced) {
+            return false;
+        }
+
+        // Every PID in flight loses a packet at once, which is one event.
+        let now = Instant::now();
+        if self
+            .last_loss
+            .is_some_and(|at| now.duration_since(at) < LOSS_BURST_WINDOW)
+        {
+            debug!(pid = pid.as_u16(), last, counter, "Packet loss continues");
+        } else {
+            warn!(
+                pid = pid.as_u16(),
+                last, counter, "Packet loss: the continuity counter jumped"
+            );
+        }
+        self.last_loss = Some(now);
+
+        true
+    }
 }
 
 impl<R: Read> M2tsDemuxer<R> {
@@ -119,6 +166,12 @@ impl<R: Read> M2tsDemuxer<R> {
             };
 
             let pid = packet.header.pid;
+            if self.is_packet_lost(&packet) {
+                // Whatever section was being put together is missing its
+                // middle, so it is started over.
+                self.section_buffers.remove(&pid);
+            }
+
             if packet.header.transport_scrambling_control
                 != TransportScramblingControl::NotScrambled
             {
@@ -202,15 +255,6 @@ impl<R: Read> M2tsDemuxer<R> {
                     }
                 }
                 TsPayload::Section(section) => {
-                    // A packet lost on the way leaves the section being put
-                    // together missing its middle, so it is started over.
-                    let continuity_counter = packet.header.continuity_counter.as_u8();
-                    if let Some(last) = self.section_continuity.insert(pid, continuity_counter)
-                        && (last + 1) & 0x0F != continuity_counter
-                    {
-                        self.section_buffers.remove(&pid);
-                    }
-
                     let sections = read_sections(
                         &mut self.section_buffers,
                         pid,
@@ -362,6 +406,12 @@ fn read_sections(
     drain_complete_sections(buffer, &mut sections);
 
     sections
+}
+
+/// Whether a continuity counter going from `last` to `counter` skipped a
+/// packet. A packet may be sent twice, and a stream may announce a jump.
+fn is_continuity_broken(last: u8, counter: u8, announced: bool) -> bool {
+    !announced && counter != (last + 1) & 0x0F && counter != last
 }
 
 /// The CRC every section with the syntax indicator set ends in.
@@ -924,6 +974,19 @@ mod tests {
         let sections = read_sections(&mut buffers, pid, true, (first.len() - 5) as u8, &payload);
 
         assert_eq!(sections, vec![first, second]);
+    }
+
+    #[test]
+    fn tells_a_lost_packet_by_the_continuity_counter() {
+        assert!(!is_continuity_broken(3, 4, false));
+        assert!(!is_continuity_broken(15, 0, false));
+        // Sent twice.
+        assert!(!is_continuity_broken(3, 3, false));
+        // Announced by the discontinuity indicator.
+        assert!(!is_continuity_broken(3, 9, true));
+
+        assert!(is_continuity_broken(3, 5, false));
+        assert!(is_continuity_broken(3, 2, false));
     }
 
     #[test]
