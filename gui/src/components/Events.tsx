@@ -1,7 +1,7 @@
 import { ArrowPathIcon, ChevronDownIcon, ChevronLeftIcon, ChevronRightIcon } from "@heroicons/react/24/outline";
 import { Button, Tabs } from "@heroui/react";
 import { useQuery } from "@tanstack/react-query";
-import { type CSSProperties, type JSX, useMemo, useState } from "react";
+import { type CSSProperties, type JSX, useCallback, useMemo, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
 import { groupByDeliverySystem, useChannels } from "../api/channels";
@@ -154,11 +154,35 @@ export function Events({ service, compact = false }: { service?: ServiceKey; com
   const nowOffset = (now.valueOf() - selectedDate.valueOf()) / 60_000;
   const showNow = selectedDateKey === todayKey && nowOffset >= 0 && nowOffset < MINUTES_PER_DAY;
 
+  const scrollToNow = useCallback(
+    (guide: HTMLDivElement | null) => {
+      if (!guide) return;
+
+      // The pane stays mounted while hidden, and its guide may arrive after
+      // opening. Scroll when it becomes visible, but leave manual scrolling
+      // alone when its size or programme data changes while it is open.
+      let wasVisible = false;
+      const observer = new ResizeObserver(() => {
+        const isVisible = guide.getClientRects().length > 0;
+        if (isVisible && !wasVisible && guide.parentElement) {
+          const now = new Date();
+          const minutes = (now.valueOf() - fromDateKey(selectedDateKey).valueOf()) / 60_000;
+          guide.parentElement.scrollTop =
+            selectedDateKey === toDateKey(now) ? Math.max(0, minutes - 30) * PIXELS_PER_MINUTE : 0;
+        }
+        wasVisible = isVisible;
+      });
+      observer.observe(guide);
+      return () => observer.disconnect();
+    },
+    [selectedDateKey],
+  );
+
   const renderGuide = (waveChannels: Channel[]) => {
     const laneGroups = laneGroupsOf(waveChannels);
 
     return (
-      <div className={compact ? "min-w-0" : "min-w-max"}>
+      <div ref={scrollToNow} className={compact ? "min-w-0" : "min-w-max"}>
         <div className="sticky top-0 z-30 flex h-18 border-b border-white/10 bg-surface/90 backdrop-blur-xl">
           <div className="sticky left-0 z-40 w-16 shrink-0 border-r border-white/10 bg-surface/95" />
           {laneGroups.map(({ channel, services: channelServices, canExpand, isExpanded }) => {
