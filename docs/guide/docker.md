@@ -58,7 +58,7 @@ which is what the two options above are for:
 - pcsc-lite authorizes card access with polkit, which resolves the user of the
   connecting process on the host. Running the container as the host user set
   up in
-  [Device permissions on Linux](../guide/getting-started#device-permissions-on-linux)
+  [Device permissions on Linux](./getting-started#device-permissions-on-linux)
   therefore keeps the same rule working. Without `--user`, the polkit rule has
   to accept the user of the image (uid 65532) instead.
 

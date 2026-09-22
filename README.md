@@ -12,7 +12,7 @@ The documentation is published at https://siketyan.github.io/chibitv/:
 - The [configuration reference](https://siketyan.github.io/chibitv/reference/configuration) documents every key of
   `config.toml`.
 - The [CLI reference](https://siketyan.github.io/chibitv/reference/cli) documents every subcommand and option.
-- [Docker](https://siketyan.github.io/chibitv/deployment/docker) covers running the published image.
+- [Docker](https://siketyan.github.io/chibitv/guide/docker) covers running the published image.
 
 ## Development
 
