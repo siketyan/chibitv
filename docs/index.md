@@ -16,18 +16,18 @@ hero:
       link: https://github.com/siketyan/chibitv
 
 features:
-  - title: Getting started
-    details: Prerequisites, device permissions on Linux, configuring config.toml, and running the server with the GUI.
-    link: /guide/getting-started
-  - title: Configuration
-    details: Every key of config.toml, from the CAS master key to tuners, the server address, the database the channels and the guide are kept in, and where recordings are kept.
-    link: /reference/configuration
-  - title: CLI
-    details: Every subcommand and option of the chibitv binary — live, record, remux, scan, status and serve.
-    link: /reference/cli
-  - title: Docker
-    details: Running the image that serves the RPC API and the GUI from one binary, with the tuner devices and the PC/SC daemon of the host.
-    link: /deployment/docker
+  - icon: 🪶
+    title: Lightweight
+    details: The server only tunes, descrambles and remuxes; the decoding happens in the browser, so nothing is transcoded on the way. One binary serves the RPC API, the live stream and the GUI, and the published image is distroless.
+  - icon: 📦
+    title: Out of the box
+    details: A Linux DVB device, a px4_drv one or a BonDriver on Windows, and a CAS card over PC/SC. A scan fills the channels in and the GUI is a browser away, with no external muxer, player or tuner daemon to install beside it.
+  - icon: 📘
+    title: Written from the standards
+    details: One crate per ARIB standard — the SI tables (B10), the character encoding (B24), the conditional access of 2K (B25) and of 4K (B61), and the MMT/TLV container (B60) — rather than a binding to an existing implementation.
+  - icon: 🛰️
+    title: 4K broadcasting
+    details: ISDB-T and ISDB-S carry MPEG-2 TS and are descrambled with B25, while ISDB-S3, the 4K satellite broadcasting, carries MMT/TLV and is descrambled with B61. Both are tuned, descrambled and remuxed by the same pipeline.
 ---
 
 > [!WARNING]
