@@ -1548,6 +1548,7 @@ mod tests {
 
     fn mh_sdt(tlv_stream_id: u16, services: Vec<MmtServiceInformation>) -> MmtTable {
         MmtTable::MhSdt(MhSdt {
+            table_id: 0x9f,
             section_syntax_indicator: true,
             section_length: 0,
             tlv_stream_id,

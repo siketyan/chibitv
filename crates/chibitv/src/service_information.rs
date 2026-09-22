@@ -90,6 +90,7 @@ pub struct ServiceInformationProcessor {
     signal_tx: Option<Sender<Signal>>,
     current_event_id: Option<u16>,
     stored_sections: HashMap<SectionKey, SectionVersion>,
+    logos: crate::logo::Logos,
 }
 
 impl ServiceInformationProcessor {
@@ -105,6 +106,7 @@ impl ServiceInformationProcessor {
             signal_tx,
             current_event_id: None,
             stored_sections: HashMap::new(),
+            logos: crate::logo::Logos::default(),
         }
     }
 
@@ -149,6 +151,23 @@ impl ServiceInformationProcessor {
             {
                 self.process_b10_eit(table_id, table)
             }
+            B10Table::Dsmcc(data) => {
+                if let Some(registry) = &self.registry {
+                    self.logos.carousel(registry, &data);
+                }
+                Ok(())
+            }
+            B10Table::Cdt(table) if table.current_next_indicator && table.data_type == 1 => {
+                if let Some(registry) = &self.registry {
+                    self.logos.data(
+                        registry,
+                        table.original_network_id,
+                        table.download_data_id,
+                        &table.data,
+                    );
+                }
+                Ok(())
+            }
             B10Table::Sdt(table) if table_id == SDT_ACTUAL_TABLE_ID => {
                 self.process_b10_sdt(table);
                 Ok(())
@@ -157,10 +176,26 @@ impl ServiceInformationProcessor {
         }
     }
 
-    fn process_b10_sdt(&self, table: Sdt) {
+    fn process_b10_sdt(&mut self, table: Sdt) {
+        if !table.current_next_indicator {
+            return;
+        }
         if let Some(registry) = &self.registry {
             for service in &table.services {
                 registry.put_b10_service(self.channel_id, table.transport_stream_id, service);
+                for descriptor in &service.descriptors {
+                    if let chibitv_b10::descriptor::Descriptor::Unknown(0xcf, data) = descriptor {
+                        self.logos.reference(
+                            registry,
+                            ServiceKey {
+                                stream_id: table.transport_stream_id,
+                                service_id: service.service_id,
+                            },
+                            table.original_network_id,
+                            data,
+                        );
+                    }
+                }
             }
         }
     }
@@ -202,6 +237,12 @@ impl ServiceInformationProcessor {
 
     fn process_m2_section_message(&mut self, message: M2SectionMessage) -> anyhow::Result<()> {
         match message.table {
+            Table::MhCdt(table) if table.current_next_indicator && table.data_type == 1 => {
+                if let Some(registry) = &self.registry {
+                    self.logos.mh_data(registry, table);
+                }
+                Ok(())
+            }
             Table::MhEit(table) => self.process_mh_eit(table),
             Table::MhBit(table) => {
                 self.process_mh_bit(table);
@@ -258,10 +299,29 @@ impl ServiceInformationProcessor {
         }
     }
 
-    fn process_mh_sdt(&self, table: MhSdt) {
+    fn process_mh_sdt(&mut self, table: MhSdt) {
+        if !table.current_next_indicator {
+            return;
+        }
         if let Some(registry) = &self.registry {
             for service in &table.services {
                 registry.put_service(self.channel_id, table.tlv_stream_id, service);
+                for descriptor in &service.descriptors {
+                    if table.table_id == 0x9f
+                        && let chibitv_b60::descriptor::Descriptor::Unknown(0x8025, data) =
+                            descriptor
+                    {
+                        self.logos.reference(
+                            registry,
+                            ServiceKey {
+                                stream_id: table.tlv_stream_id,
+                                service_id: service.service_id,
+                            },
+                            table.original_network_id,
+                            data,
+                        );
+                    }
+                }
             }
         }
     }
@@ -457,6 +517,46 @@ mod tests {
             table_id: *EIT_ACTUAL_SCHEDULE_TABLE_IDS.start(),
             table,
         }
+    }
+
+    /// Replay only SDT/CDT sections extracted from a local receiver capture.
+    #[test]
+    #[ignore = "set CHIBITV_SI_CAPTURE to length-prefixed SI sections from a receiver"]
+    fn receives_broadcast_logos() {
+        use bytes::{Buf, Bytes};
+        let path = std::env::var("CHIBITV_SI_CAPTURE").unwrap();
+        let mut bytes = Bytes::from(std::fs::read(path).unwrap());
+        let registry = Arc::new(Registry::default());
+        let mut processor = ServiceInformationProcessor::new(0, Some(Arc::clone(&registry)), None);
+        while bytes.has_remaining() {
+            let size = bytes.get_u32() as usize;
+            let mut section = bytes.split_to(size);
+            assert_eq!(
+                crc::Crc::<u32>::new(&crc::CRC_32_MPEG_2).checksum(&section),
+                0
+            );
+            let table_id = section[0];
+            let table = B10Table::read(&mut section).unwrap();
+            if let B10Table::Sdt(ref sdt) = table {
+                registry.put_channel(0, Some(sdt.transport_stream_id));
+            }
+            processor
+                .process(SignalingEvent::B10Table { table_id, table })
+                .unwrap();
+        }
+        let mut received = 0;
+        for service in registry.get_all_services() {
+            if let Some(png) = registry.get_logo(service.key) {
+                println!("{}: {} bytes", service.name, png.len());
+                let output = format!(
+                    "/tmp/chibitv-logo-{}-{}.png",
+                    service.key.stream_id, service.key.service_id
+                );
+                std::fs::write(output, png.as_slice()).unwrap();
+                received += 1;
+            }
+        }
+        assert!(received > 0, "No logos in the capture");
     }
 
     #[test]

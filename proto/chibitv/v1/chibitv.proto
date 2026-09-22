@@ -97,6 +97,10 @@ message Service {
   string name = 2;
   string provider_name = 3;
   uint32 channel_id = 4;
+  // Empty until a logo has been received from broadcast SI.
+  string logo_url = 5;
+  // The programme on air, if its times are known from the EPG.
+  Event current_event = 6;
 }
 
 // ServiceKey identifies one service among the ones on air. A service id alone

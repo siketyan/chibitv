@@ -634,6 +634,7 @@ impl ServiceInformation {
 /// MH-SDT (Service Description Table).
 #[derive(Clone, Debug)]
 pub struct MhSdt {
+    pub table_id: u8,
     pub section_syntax_indicator: bool,
     pub section_length: u16,
     pub tlv_stream_id: u16,
@@ -647,7 +648,7 @@ pub struct MhSdt {
 }
 
 impl MhSdt {
-    pub fn read(bytes: &mut Bytes) -> Result<Self> {
+    pub fn read(table_id: u8, bytes: &mut Bytes) -> Result<Self> {
         let head = bytes.get_u16();
         let section_syntax_indicator = ((head & 0x8000) >> 15) == 1;
         let section_length = head & 0x0FFF;
@@ -672,6 +673,7 @@ impl MhSdt {
         let crc_32 = bytes.get_u32();
 
         Ok(Self {
+            table_id,
             section_syntax_indicator,
             section_length,
             tlv_stream_id,
@@ -789,8 +791,65 @@ const MH_SDT_ID: u8 = 0x9F;
 const MH_SDT_OTHER_ID: u8 = 0xA0;
 const MH_SIT_ID: u8 = 0xA8;
 
+/// Common Data Table, carrying receiver data such as station logos.
+#[derive(Clone, Debug)]
+pub struct MhCdt {
+    pub download_data_id: u16,
+    pub original_network_id: u16,
+    pub version_number: u8,
+    pub current_next_indicator: bool,
+    pub section_number: u8,
+    pub last_section_number: u8,
+    pub data_type: u8,
+    pub data: Vec<u8>,
+}
+
+impl MhCdt {
+    pub fn read(bytes: &mut Bytes) -> Result<Self> {
+        use std::io::ErrorKind;
+        if bytes.remaining() < 2 {
+            return Err(ErrorKind::UnexpectedEof.into());
+        }
+        let head = bytes.get_u16();
+        let length = usize::from(head & 0x0fff);
+        if head & 0x8000 == 0 || !(14..=4093).contains(&length) {
+            return Err(ErrorKind::InvalidData.into());
+        }
+        if bytes.remaining() < length {
+            return Err(ErrorKind::UnexpectedEof.into());
+        }
+        let mut body = bytes.split_to(length);
+        let download_data_id = body.get_u16();
+        let version = body.get_u8();
+        let section_number = body.get_u8();
+        let last_section_number = body.get_u8();
+        if section_number > last_section_number {
+            return Err(ErrorKind::InvalidData.into());
+        }
+        let original_network_id = body.get_u16();
+        let data_type = body.get_u8();
+        let descriptors_length = usize::from(body.get_u16() & 0x0fff);
+        if body.remaining() < descriptors_length + 4 {
+            return Err(ErrorKind::UnexpectedEof.into());
+        }
+        body.advance(descriptors_length);
+        let data = body.split_to(body.remaining() - 4).to_vec();
+        Ok(Self {
+            download_data_id,
+            original_network_id,
+            version_number: (version >> 1) & 31,
+            current_next_indicator: version & 1 != 0,
+            section_number,
+            last_section_number,
+            data_type,
+            data,
+        })
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum Table {
+    MhCdt(MhCdt),
     Mpt(Mpt),
     Plt(Plt),
     MhEit(MhEit),
@@ -805,13 +864,14 @@ impl Table {
         let table_id = bytes.get_u8();
 
         Ok(match table_id {
+            0xA2 => Self::MhCdt(MhCdt::read(bytes)?),
             MPT_ID => Self::Mpt(Mpt::read(bytes)?),
             PLT_ID => Self::Plt(Plt::read(bytes)?),
             MH_EIT_ID | MH_EIT_SCHEDULE_ID_START..=MH_EIT_SCHEDULE_ID_END => {
                 Self::MhEit(MhEit::read(table_id, bytes)?)
             }
             MH_BIT_ID => Self::MhBit(MhBit::read(bytes)?),
-            MH_SDT_ID | MH_SDT_OTHER_ID => Self::MhSdt(MhSdt::read(bytes)?),
+            MH_SDT_ID | MH_SDT_OTHER_ID => Self::MhSdt(MhSdt::read(table_id, bytes)?),
             MH_SIT_ID => Self::MhSit(MhSit::read(bytes)?),
             _ => Self::Unknown(table_id, bytes.to_vec()),
         })
@@ -822,6 +882,30 @@ impl Table {
 mod tests {
     use super::*;
     use chrono::NaiveDate;
+
+    #[test]
+    fn reads_common_data_without_panicking_on_truncation() {
+        let section = [
+            162, 0xf0, 0x10, 0x12, 0x34, 0xc5, 1, 2, 0, 4, 1, 0xf0, 0, 0xab, 0xcd, 0, 0, 0, 0,
+        ];
+        let Table::MhCdt(table) = Table::read(&mut Bytes::copy_from_slice(&section)).unwrap()
+        else {
+            panic!("CDT expected");
+        };
+        assert_eq!(table.download_data_id, 0x1234);
+        assert_eq!(table.original_network_id, 4);
+        assert_eq!(table.version_number, 2);
+        assert!(table.current_next_indicator);
+        assert_eq!((table.section_number, table.last_section_number), (1, 2));
+        assert_eq!(table.data_type, 1);
+        assert_eq!(table.data, [0xab, 0xcd]);
+        for length in 1..section.len() {
+            assert!(Table::read(&mut Bytes::copy_from_slice(&section[..length])).is_err());
+        }
+        let mut bad = section;
+        bad[11] = 0xff; // Descriptor loop extends beyond this section.
+        assert!(Table::read(&mut Bytes::copy_from_slice(&bad)).is_err());
+    }
 
     #[test]
     fn test_parse_start_time() {

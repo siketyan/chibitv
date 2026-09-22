@@ -61,7 +61,20 @@ impl ChibitvService for ChibitvServiceImpl {
     ) -> ServiceResult<ListServicesResponse> {
         let mut services = self.workspace.registry().get_all_services();
         services.sort_by_key(|service| service.key);
-        let services = services.iter().map(Service::from).collect();
+        let now = Local::now().naive_local();
+        let services = services
+            .iter()
+            .map(|service| {
+                let mut message = Service::from(service);
+                message.current_event = service
+                    .current_event(now)
+                    .as_ref()
+                    .map(|event| event_message(service.key, event))
+                    .into();
+                message.logo_url = self.workspace.registry().logo_url(service.key);
+                message
+            })
+            .collect();
 
         Response::ok(ListServicesResponse {
             services,

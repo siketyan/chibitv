@@ -47,6 +47,27 @@ pub struct Service {
     events: Arc<HashMap<u16, Event>>,
 }
 
+impl Service {
+    pub fn current_event(&self, now: NaiveDateTime) -> Option<Event> {
+        self.events
+            .pin()
+            .values()
+            .filter(|event| {
+                event
+                    .start_time
+                    .zip(event.duration)
+                    .is_some_and(|(start, duration)| {
+                        start <= now
+                            && start
+                                .checked_add_signed(duration)
+                                .is_some_and(|end| now < end)
+                    })
+            })
+            .max_by_key(|event| (event.start_time, event.id))
+            .cloned()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Event {
     pub id: u16,
@@ -94,9 +115,59 @@ pub struct Registry {
     broadcasters: HashMap<u8, Broadcaster>,
     services: HashMap<ServiceKey, Service>,
     events: Option<EventWriter>,
+    logos: HashMap<ServiceKey, Arc<Vec<u8>>>,
+    logo_writer: Option<crate::store::LogoWriter>,
 }
 
 impl Registry {
+    pub fn storing_logos(mut self, writer: crate::store::LogoWriter) -> Self {
+        self.logo_writer = Some(writer);
+        self
+    }
+
+    pub async fn restore_logos(&self, store: &Arc<dyn Store>) -> anyhow::Result<()> {
+        for logo in store.load_logos().await? {
+            if self.get_service(logo.key).is_some() {
+                self.logos.pin().insert(logo.key, Arc::new(logo.png));
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_logo(&self, key: ServiceKey) -> Option<Arc<Vec<u8>>> {
+        self.logos.pin().get(&key).cloned()
+    }
+
+    pub fn logo_url(&self, key: ServiceKey) -> String {
+        self.get_logo(key)
+            .map(|png| {
+                format!(
+                    "/api/logos/{}/{}?v={:08x}",
+                    key.stream_id,
+                    key.service_id,
+                    crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&png)
+                )
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn put_logo(&self, key: ServiceKey, png: &[u8]) {
+        if self.get_service(key).is_none()
+            || self.get_logo(key).is_some_and(|old| old.as_slice() == png)
+        {
+            return;
+        }
+        if let Some(writer) = &self.logo_writer
+            && !writer.enqueue(crate::store::StoredLogo {
+                key,
+                png: png.to_vec(),
+            })
+        {
+            return; // The repeated SI will retry once the queue has room.
+        }
+        self.logos.pin().insert(key, Arc::new(png.to_vec()));
+    }
+
     /// Keeps the schedule this collects between runs.
     pub fn storing_events(mut self, events: EventWriter) -> Self {
         self.events = Some(events);
@@ -139,6 +210,9 @@ impl Registry {
         self.services
             .pin()
             .retain(|_, service| served.contains_key(&service.channel_id));
+        self.logos
+            .pin()
+            .retain(|key, _| self.services.pin().contains_key(key));
     }
 
     /// Serves one channel carrying the stream, for a test that has no store to
@@ -679,6 +753,55 @@ mod tests {
                 provider_name: "Provider".to_string(),
             }],
         }
+    }
+
+    #[test]
+    fn current_programme_uses_start_inclusive_end_exclusive_times() {
+        let now = chrono::Local::now().naive_local();
+        let service = Service {
+            key: ServiceKey {
+                stream_id: 1,
+                service_id: 1,
+            },
+            name: String::new(),
+            provider_name: String::new(),
+            channel_id: 0,
+            events: Arc::new(HashMap::new()),
+        };
+        let event = Event {
+            id: 1,
+            start_time: Some(now),
+            duration: Some(TimeDelta::minutes(30)),
+            language_code: None,
+            name: Some("Current".into()),
+            text: None,
+            description: vec![],
+        };
+        service.events.pin().insert(1, event.clone());
+        assert!(service.current_event(now - TimeDelta::seconds(1)).is_none());
+        assert_eq!(service.current_event(now).unwrap().id, 1);
+        assert!(
+            service
+                .current_event(now + TimeDelta::minutes(30))
+                .is_none()
+        );
+        service.events.pin().insert(
+            2,
+            Event {
+                id: 2,
+                start_time: None,
+                ..event.clone()
+            },
+        );
+        service.events.pin().insert(
+            3,
+            Event {
+                id: 3,
+                duration: None,
+                ..event
+            },
+        );
+        assert_eq!(service.current_event(now).unwrap().id, 1);
     }
 
     #[test]

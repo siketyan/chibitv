@@ -24,17 +24,45 @@ pub async fn serve(addr: SocketAddr, state: Arc<Workspace>) -> anyhow::Result<()
 }
 
 fn app(state: Arc<Workspace>) -> Router {
-    let service = ChibitvServiceImpl::new(state).register(connectrpc::Router::new());
+    let service = ChibitvServiceImpl::new(Arc::clone(&state)).register(connectrpc::Router::new());
 
     // The RPC service handles every path it is given on its own, so it is
     // nested under a prefix to tell its routes apart from the GUI ones.
-    let router =
-        Router::new().nest_service(RPC_PREFIX, connectrpc::ConnectRpcService::new(service));
+    let router = Router::new()
+        .route(
+            "/api/logos/{stream_id}/{service_id}",
+            axum::routing::get(logo),
+        )
+        .with_state(state)
+        .nest_service(RPC_PREFIX, connectrpc::ConnectRpcService::new(service));
 
     #[cfg(feature = "gui")]
     let router = router.fallback(gui::handle);
 
     router
+}
+
+async fn logo(
+    axum::extract::State(state): axum::extract::State<Arc<Workspace>>,
+    axum::extract::Path((stream_id, service_id)): axum::extract::Path<(u16, u16)>,
+) -> axum::response::Response {
+    use axum::http::{StatusCode, header};
+    use axum::response::IntoResponse;
+    match state.registry().get_logo(crate::registry::ServiceKey {
+        stream_id,
+        service_id,
+    }) {
+        Some(png) => (
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "public, max-age=300"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            png.as_ref().clone(),
+        )
+            .into_response(),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
 }
 
 /// Serves the GUI built into `gui/dist` from the binary itself.
@@ -103,6 +131,107 @@ mod tests {
 
     fn empty_workspace() -> Arc<Workspace> {
         Arc::new(Workspace::new(Arc::new(Registry::default()), vec![], None))
+    }
+
+    #[tokio::test]
+    async fn lists_current_programmes_and_logos_restored_after_restart() {
+        use crate::store::{SectionId, StoredEvent, StoredLogo};
+        let directory = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}", directory.path().join("guide.db").display());
+        let key = ServiceKey {
+            stream_id: 1,
+            service_id: 101,
+        };
+        let now = chrono::Local::now().naive_local();
+        let store = crate::store::open(&url).await.unwrap();
+        store
+            .save_logo(&StoredLogo {
+                key,
+                png: b"image".to_vec(),
+            })
+            .await
+            .unwrap();
+        store
+            .replace_section(
+                SectionId {
+                    original_network_id: 4,
+                    stream_id: 1,
+                    service_id: 101,
+                    table_id: 0x50,
+                    section_number: 0,
+                },
+                &[StoredEvent {
+                    key,
+                    event_id: 7,
+                    start_time: Some(now - chrono::TimeDelta::minutes(1)),
+                    duration: Some(chrono::TimeDelta::minutes(30)),
+                    name: Some("On air".into()),
+                    language_code: None,
+                    text: None,
+                    description: vec![],
+                }],
+            )
+            .await
+            .unwrap();
+        drop(store);
+        let store = crate::store::open(&url).await.unwrap();
+        let registry = Arc::new(Registry::default());
+        registry.put_cached_service(0, key, "Station".into(), String::new());
+        registry.restore_events(&store).await.unwrap();
+        registry.restore_logos(&store).await.unwrap();
+        let expected_logo = registry.logo_url(key);
+        assert_eq!(registry.get_logo(key).unwrap().as_slice(), b"image");
+        let response = app(Arc::new(Workspace::new(registry, vec![], None)))
+            .oneshot(
+                Request::post("/api/chibitv.v1.ChibitvService/ListServices")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 10000).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response["services"][0]["currentEvent"]["title"], "On air");
+        assert_eq!(response["services"][0]["logoUrl"], expected_logo);
+    }
+
+    #[tokio::test]
+    async fn serves_logo_pngs_and_missing_logos_without_shadowing_rpc() {
+        let registry = Arc::new(Registry::default());
+        let key = ServiceKey {
+            stream_id: 1,
+            service_id: 101,
+        };
+        registry.put_cached_service(0, key, "Station".into(), String::new());
+        registry.put_logo(key, b"png");
+        let workspace = Arc::new(Workspace::new(registry, vec![], None));
+        let router = app(workspace);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/logos/1/101?v=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(
+            to_bytes(response.into_body(), 100).await.unwrap().as_ref(),
+            b"png"
+        );
+        let response = router
+            .oneshot(
+                Request::get("/api/logos/2/101")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]
