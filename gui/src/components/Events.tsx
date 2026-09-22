@@ -5,7 +5,7 @@ import { type CSSProperties, type JSX, useMemo, useState } from "react";
 
 import { chibitvClient, queryKeys } from "../api";
 import { groupByDeliverySystem, useChannels } from "../api/channels";
-import { type ServiceKey, serviceKeyId, useServices } from "../api/services";
+import { isSameService, type ServiceKey, serviceKeyId, useServices } from "../api/services";
 import { isTaskRunning, useRefreshEvents, useTasks } from "../api/tasks";
 import { toDate } from "../api/time";
 import { type Channel, DeliverySystem, type Event, TaskKind } from "../gen/chibitv/v1/chibitv_pb";
@@ -67,7 +67,7 @@ function fromDateKey(dateKey: string): Date {
   return new Date(year, month - 1, day);
 }
 
-export function Events(): JSX.Element {
+export function Events({ service, compact = false }: { service?: ServiceKey; compact?: boolean }): JSX.Element {
   const now = new Date();
   const todayKey = toDateKey(now);
   const [requestedDateKey, setRequestedDateKey] = useState<string>();
@@ -82,14 +82,22 @@ export function Events(): JSX.Element {
   // still has channels, so that a guide opened before the channels arrive
   // settles on the first wave rather than on nothing.
   const waves = groupByDeliverySystem(channels);
-  const selectedWave = waves.find((wave) => wave.id === requestedDeliverySystem)?.id ?? waves[0]?.id;
+  const currentChannel = channels.find((channel) =>
+    services.some((listed) => listed.channelId === channel.id && isSameService(listed.key, service)),
+  );
+  const selectedWave =
+    waves.find((wave) => wave.id === requestedDeliverySystem)?.id ?? currentChannel?.deliverySystem ?? waves[0]?.id;
 
-  // The server lists the schedule of the wave alone, so switching tabs asks it
-  // for that wave rather than sifting through every event it knows.
-  const { data: events = [] } = useQuery({
-    queryKey: queryKeys.eventsOfWave(selectedWave ?? DeliverySystem.UNSPECIFIED),
-    queryFn: async () => (await chibitvClient.listEvents({ deliverySystem: selectedWave })).events,
-    enabled: selectedWave !== undefined,
+  // The pane asks for the watched service; the expanded guide asks for one wave.
+  const {
+    data: events = [],
+    isPending,
+    isError,
+  } = useQuery({
+    queryKey: compact ? queryKeys.events(service) : queryKeys.eventsOfWave(selectedWave ?? DeliverySystem.UNSPECIFIED),
+    queryFn: async () =>
+      (await chibitvClient.listEvents(compact ? { service } : { deliverySystem: selectedWave })).events,
+    enabled: compact ? service !== undefined : selectedWave !== undefined,
   });
 
   // Refreshing is a background task: this button only starts one, and how it
@@ -116,14 +124,14 @@ export function Events(): JSX.Element {
   // ones its lanes are filled with.
   const laneGroupsOf = (waveChannels: Channel[]) =>
     waveChannels.map((channel) => {
-      const channelServices = services.flatMap((service) => {
-        if (service.channelId !== channel.id || !service.key) {
+      const channelServices = services.flatMap((listed) => {
+        if (listed.channelId !== channel.id || !listed.key || (compact && !isSameService(listed.key, service))) {
           return [];
         }
 
-        const id = serviceKeyId(service.key);
+        const id = serviceKeyId(listed.key);
 
-        return [{ id, serviceName: service.name, events: eventsByService.get(id) ?? [] }];
+        return [{ id, serviceName: listed.name, events: eventsByService.get(id) ?? [] }];
       });
 
       return {
@@ -150,7 +158,7 @@ export function Events(): JSX.Element {
     const laneGroups = laneGroupsOf(waveChannels);
 
     return (
-      <div className="min-w-max">
+      <div className={compact ? "min-w-0" : "min-w-max"}>
         <div className="sticky top-0 z-30 flex h-18 border-b border-white/10 bg-surface/90 backdrop-blur-xl">
           <div className="sticky left-0 z-40 w-16 shrink-0 border-r border-white/10 bg-surface/95" />
           {laneGroups.map(({ channel, services: channelServices, canExpand, isExpanded }) => {
@@ -159,7 +167,7 @@ export function Events(): JSX.Element {
               <div
                 key={channel.id}
                 className="shrink-0 border-r border-white/10"
-                style={{ width: laneCount * SERVICE_WIDTH }}
+                style={{ width: compact ? "calc(100% - 4rem)" : laneCount * SERVICE_WIDTH }}
               >
                 <div className="flex h-8 items-center justify-center gap-1 border-b border-white/10 px-2 text-xs font-semibold">
                   <span className="truncate">{channel.name}</span>
@@ -212,7 +220,7 @@ export function Events(): JSX.Element {
                 key={channel.id}
                 className="grid shrink-0 border-r border-white/10"
                 style={{
-                  width: laneCount * SERVICE_WIDTH,
+                  width: compact ? "calc(100% - 4rem)" : laneCount * SERVICE_WIDTH,
                   gridTemplateColumns: `repeat(${laneCount}, minmax(0, 1fr))`,
                   height: GUIDE_HEIGHT,
                 }}
@@ -245,21 +253,16 @@ export function Events(): JSX.Element {
     );
   };
 
-  // The wave tabs sit in the title bar rather than on a row of their own, which
-  // would eat into the little height the guide has. The columns beside them are
-  // of one width, which is what centres them. A panel too narrow for all three
-  // drops the title rather than the tabs or the day it is showing, both of
-  // which are what the guide is steered by.
+  // The toolbar wraps on narrow screens, and the pane needs only the date controls.
   const titleBar = (
-    <div className="grid shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-white/10 px-3 py-2 sm:grid-cols-[1fr_minmax(0,auto)_1fr]">
-      <h2 className="hidden min-w-0 truncate font-semibold sm:block">Program guide</h2>
-      {waves.length === 0 ? (
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+      {compact || waves.length === 0 ? (
         <div />
       ) : (
         <Tabs.ListContainer className="min-w-0">
           <Tabs.List aria-label="Broadcast waves">
             {waves.map((wave) => (
-              <Tabs.Tab key={wave.id} id={wave.id}>
+              <Tabs.Tab key={wave.id} id={wave.id} className="w-auto shrink-0">
                 <Tabs.Indicator />
                 {wave.label}
               </Tabs.Tab>
@@ -267,7 +270,7 @@ export function Events(): JSX.Element {
           </Tabs.List>
         </Tabs.ListContainer>
       )}
-      <div className="flex items-center justify-end gap-3">
+      <div className="flex flex-1 items-center justify-end gap-1">
         <Button
           aria-label="Refresh events"
           isDisabled={isRefreshing || refreshEvents.isPending}
@@ -315,6 +318,28 @@ export function Events(): JSX.Element {
       onClose={() => setSelectedEvent(undefined)}
     />
   );
+
+  if (compact) {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        {titleBar}
+        {details}
+        <div className="min-h-0 flex-1 overflow-auto">
+          {!service ? (
+            <p className="p-3 text-sm text-muted">Select a channel to see its schedule.</p>
+          ) : isError ? (
+            <p className="p-3 text-sm text-danger">Could not load the schedule.</p>
+          ) : isPending ? (
+            <p className="p-3 text-sm text-muted">Loading schedule</p>
+          ) : !currentChannel || allEvents.length === 0 ? (
+            <p className="p-3 text-sm text-muted">No schedule is available for this channel.</p>
+          ) : (
+            renderGuide([currentChannel])
+          )}
+        </div>
+      </div>
+    );
+  }
 
   if (waves.length === 0) {
     return (
