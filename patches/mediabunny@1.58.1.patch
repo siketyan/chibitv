@@ -1,8 +1,8 @@
 diff --git a/dist/mediabunny.d.ts b/dist/mediabunny.d.ts
-index bb1e32f..4e94063 100644
+index 1e2f2c2..1bf2063 100644
 --- a/dist/mediabunny.d.ts
 +++ b/dist/mediabunny.d.ts
-@@ -4611,7 +4611,7 @@ export declare type UrlSourceOptions = {
+@@ -4734,7 +4734,7 @@ export declare type UrlSourceOptions = {
   * @group Codecs
   * @public
   */
@@ -90,10 +90,10 @@ index f21174c..6b85059 100644
      if (codecString === 'mp3'
          || codecString === 'mp4a.69'
 diff --git a/dist/modules/src/isobmff/isobmff-demuxer.js b/dist/modules/src/isobmff/isobmff-demuxer.js
-index 575d5ed..2433c2d 100644
+index e21972d..19e9bd8 100644
 --- a/dist/modules/src/isobmff/isobmff-demuxer.js
 +++ b/dist/modules/src/isobmff/isobmff-demuxer.js
-@@ -721,6 +721,12 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -718,6 +718,12 @@ export class IsobmffDemuxer extends Demuxer {
                                  track.info.codec = 'prores';
                                  track.info.proresFormat = lowercaseBoxName;
                              }
@@ -106,7 +106,7 @@ index 575d5ed..2433c2d 100644
                              else if (codecName === null) {
                                  Logging._warn(`Unknown encrypted video codec due to missing frma box.`);
                              }
-@@ -1165,7 +1171,7 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1176,7 +1182,7 @@ export class IsobmffDemuxer extends Demuxer {
              case 'esds':
                  {
                      const track = this.currentTrack;
@@ -115,7 +115,7 @@ index 575d5ed..2433c2d 100644
                          break;
                      }
                      slice.skip(4); // Version + flags
-@@ -1192,6 +1198,15 @@ export class IsobmffDemuxer extends Demuxer {
+@@ -1203,6 +1209,15 @@ export class IsobmffDemuxer extends Demuxer {
                      const decoderConfigDescriptorLength = readIsomVariableInteger(slice); // Length
                      const payloadStart = slice.filePos;
                      const objectTypeIndication = readU8(slice);
@@ -131,7 +131,7 @@ index 575d5ed..2433c2d 100644
                      if (objectTypeIndication === 0x40 || objectTypeIndication === 0x67) {
                          track.info.codec = 'aac';
                          track.info.aacCodecInfo = {
-@@ -2644,7 +2659,7 @@ class IsobmffTrackBacking {
+@@ -2655,7 +2670,7 @@ class IsobmffTrackBacking {
          const timestamp = (sampleInfo.presentationTimestamp - this.internalTrack.editListOffset)
              / this.internalTrack.timescale;
          const duration = sampleInfo.duration / this.internalTrack.timescale;
@@ -140,7 +140,7 @@ index 575d5ed..2433c2d 100644
          this.packetToSampleIndex.set(packet, sampleIndex);
          return packet;
      }
-@@ -2678,7 +2693,7 @@ class IsobmffTrackBacking {
+@@ -2689,7 +2704,7 @@ class IsobmffTrackBacking {
          const timestamp = (fragmentSample.presentationTimestamp - this.internalTrack.editListOffset)
              / this.internalTrack.timescale;
          const duration = fragmentSample.duration / this.internalTrack.timescale;
@@ -150,10 +150,10 @@ index 575d5ed..2433c2d 100644
          return packet;
      }
 diff --git a/dist/modules/src/media-source.js b/dist/modules/src/media-source.js
-index d05b967..baf6e15 100644
+index d9867a0..8e8df66 100644
 --- a/dist/modules/src/media-source.js
 +++ b/dist/modules/src/media-source.js
-@@ -680,6 +680,15 @@ class VideoEncoderWrapper {
+@@ -690,6 +690,15 @@ class VideoEncoderWrapper {
                  let encodedAlphaChunkCount = 0;
                  let alphaEncoderQueue = 0;
                  const addPacket = (colorChunk, alphaChunk, meta) => {

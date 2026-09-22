@@ -163,7 +163,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  mediabunny@1.56.1: a6a5e4d1a09eeb0089f9dbc88137fa6acfc1c5fafca078b93e635c8f92a8efa2
+  mediabunny@1.58.1: 9238585b155806536511ad473e365979a0155542e20e517551ca0f83b0d93299
 
 importers:
 
@@ -199,8 +199,8 @@ importers:
         specifier: 2.1.1
         version: 2.1.1
       mediabunny:
-        specifier: 1.56.1
-        version: 1.56.1(patch_hash=a6a5e4d1a09eeb0089f9dbc88137fa6acfc1c5fafca078b93e635c8f92a8efa2)
+        specifier: 1.58.1
+        version: 1.58.1(patch_hash=9238585b155806536511ad473e365979a0155542e20e517551ca0f83b0d93299)
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.13
@@ -251,8 +251,8 @@ importers:
         specifier: 24.13.4
         version: 24.13.4
       mediabunny:
-        specifier: 1.56.1
-        version: 1.56.1(patch_hash=a6a5e4d1a09eeb0089f9dbc88137fa6acfc1c5fafca078b93e635c8f92a8efa2)
+        specifier: 1.58.1
+        version: 1.58.1(patch_hash=9238585b155806536511ad473e365979a0155542e20e517551ca0f83b0d93299)
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -1806,8 +1806,8 @@ packages:
   mdast-util-to-hast@13.2.1:
     resolution: {integrity: sha512-cctsq2wp5vTsLIcaymblUriiTcZd0CwWtCbLvrOzYCDZoWyMNV8sZ7krj09FSnsiJi3WVsHLM4k6Dq/yaPyCXA==}
 
-  mediabunny@1.56.1:
-    resolution: {integrity: sha512-DNOm0bRBmeOxJgCK/g3LxNWbxY5morTauNdlychujGmJ9L37ezVezkNoI1WtO2Xdb4WlWWJlYfIKnOEzd5phRw==}
+  mediabunny@1.58.1:
+    resolution: {integrity: sha512-edscMXOwBgUlMT+45wpAHdiXTGukCQb1nOJPE2D+fM4esNhAvGyB2yGGgnEer2VSwhEg+7gMliZDDQQqLaR7nA==}
 
   micromark-util-character@2.1.1:
     resolution: {integrity: sha512-wv8tdUTJ3thSFFFJKtpYKOYiGP2+v96Hvk4Tu8KpCAsTMs6yi+nVmGh1syvSCsaxz45J6Jbw+9DD6g97+NV67Q==}
@@ -3463,7 +3463,7 @@ snapshots:
       unist-util-visit: 5.1.0
       vfile: 6.0.3
 
-  mediabunny@1.56.1(patch_hash=a6a5e4d1a09eeb0089f9dbc88137fa6acfc1c5fafca078b93e635c8f92a8efa2):
+  mediabunny@1.58.1(patch_hash=9238585b155806536511ad473e365979a0155542e20e517551ca0f83b0d93299):
     dependencies:
       '@types/dom-mediacapture-transform': 0.1.12
       '@types/dom-webcodecs': 0.1.13
