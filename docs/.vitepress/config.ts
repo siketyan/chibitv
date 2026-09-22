@@ -10,10 +10,6 @@ export default defineConfig({
     ["link", { rel: "icon", type: "image/svg+xml", href: "/chibitv/favicon.svg" }],
   ],
 
-  // The site is published to https://siketyan.github.io/chibitv/, so every
-  // asset and link has to be prefixed with the repository name.
-  base: "/chibitv/",
-
   // A dead link is a broken page once deployed, so fail the build on one.
   ignoreDeadLinks: false,
 
