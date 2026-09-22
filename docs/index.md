@@ -3,21 +3,17 @@ layout: home
 
 hero:
   name: chibitv
-  text: Yet another implementation for ARIB standards
-  tagline: Tune, descramble and remux Japanese ISDB-T/S/S3 broadcasts.
+  tagline: The most lightweight way to watch Japanese TV streams in your home.
   image:
     src: /favicon.svg
     alt: chibitv
   actions:
     - theme: brand
-      text: Getting started
+      text: Get Started
       link: /guide/getting-started
     - theme: alt
-      text: Configuration reference
-      link: /reference/configuration
-    - theme: alt
-      text: CLI reference
-      link: /reference/cli
+      text: View on GitHub
+      link: https://github.com/siketyan/chibitv
 
 features:
   - title: Getting started
@@ -37,13 +33,3 @@ features:
 > [!WARNING]
 > This software is intended for experimental purposes to understand the
 > standards and is not recommended for any other use.
-
-chibitv tunes Japanese ISDB-T/S/S3 broadcasts, descrambles them, and remuxes
-them to MPEG-2 TS / MP4 / fragmented MP4, with an HTTP streaming server and a
-React GUI on top.
-
-Start with [getting started](./guide/getting-started) to set up the tuner, the
-CAS module and `config.toml`. The reference pages then cover every key of the
-[configuration](./reference/configuration) and every subcommand of the
-[CLI](./reference/cli), and [Docker](./deployment/docker) covers running the
-published image.
