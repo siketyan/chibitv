@@ -40,10 +40,36 @@ descrambling (B25) derives its keys from the card alone, so a setup without a
 ## `[[tuners]]`
 
 An array of tables, one per tuner. `type` picks the implementation, and the
-remaining keys belong to that variant.
+remaining keys belong to that variant, apart from `delivery_systems`, which
+every variant takes.
 
-The `live`, `record`, `scan` and `status` subcommands currently acquire the
-first entry; `serve` manages every configured tuner in its registry.
+| Key                | Type     | Default | Description                                                                                       |
+| ------------------ | -------- | ------- | ------------------------------------------------------------------------------------------------- |
+| `delivery_systems` | string[] | all     | The broadcasts the tuner receives, out of `"ISDB-T"`, `"ISDB-S"` and `"ISDB-S3"` (BS/CS 4K). |
+
+A tuner is picked for the broadcast the channel is on: the first free one in
+the file that receives it. Unless `delivery_systems` is given, a tuner is taken
+to receive every broadcast, so a setup where every tuner does can leave it out.
+Where a tuner receives only some, naming them keeps a channel it cannot reach
+from being tuned on it, and keeps the tuner free for what it can, such as a 4K
+satellite tuner beside a terrestrial one:
+
+```toml
+[[tuners]]
+type = "dvb"
+adapter_num = 0
+frontend_num = 0
+delivery_systems = ["ISDB-S", "ISDB-S3"]
+
+[[tuners]]
+type = "px4"
+path = "/dev/pxmlt5video0"
+delivery_systems = ["ISDB-T", "ISDB-S"]
+```
+
+The `live`, `record`, `scan` and `status` subcommands take the first free
+tuner receiving the channel or the broadcast scanned; `serve` manages every
+configured tuner in its registry the same way.
 
 ### `type = "dvb"`
 

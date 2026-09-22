@@ -11,7 +11,7 @@ use chibitv_b25::B25Descrambler;
 use chibitv_b61::Descrambler;
 
 use crate::cas::PcscCasModule;
-use crate::channel::{Channel, ChannelInner};
+use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::demux::Demux;
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
@@ -43,6 +43,8 @@ struct StreamTarget {
 
 pub enum SubscribeError {
     TunerBusy,
+    /// No tuner receives the broadcast the channel is on.
+    NoTuner(DeliverySystem),
     Internal(anyhow::Error),
 }
 
@@ -188,10 +190,13 @@ impl Streams {
         let channel = channel.clone();
 
         move || {
-            let tuner = tuners.try_acquire().map_err(|error| match error {
-                AcquireError::Busy => SubscribeError::TunerBusy,
-                AcquireError::NotConfigured => SubscribeError::Internal(error.into()),
-            })?;
+            let tuner = tuners
+                .try_acquire(channel.inner.delivery_system())
+                .map_err(|error| match error {
+                    AcquireError::Busy => SubscribeError::TunerBusy,
+                    AcquireError::Unsupported(system) => SubscribeError::NoTuner(system),
+                    AcquireError::NotConfigured => SubscribeError::Internal(error.into()),
+                })?;
             info!(
                 tuner_id = tuner.id(),
                 service_id = key.service_id,

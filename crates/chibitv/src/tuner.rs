@@ -6,16 +6,15 @@ mod dvb;
 mod px4;
 mod stdin;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read;
 use std::sync::Arc;
 
-use anyhow::bail;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tracing::warn;
 
-use crate::channel::Channel;
-use crate::config::TunerConfig;
+use crate::channel::{Channel, DeliverySystem};
+use crate::config::{TunerConfig, TunerKind};
 
 pub trait Tuner: Send + Sync {
     fn open(&self) -> anyhow::Result<Box<dyn Read + Send + Sync>>;
@@ -34,6 +33,8 @@ pub trait Tuner: Send + Sync {
 struct TunerSlot {
     id: u32,
     tuner: Arc<dyn Tuner>,
+    /// The broadcasts the tuner receives, which it is picked for.
+    delivery_systems: BTreeSet<DeliverySystem>,
     semaphore: Arc<Semaphore>,
 }
 
@@ -41,7 +42,9 @@ struct TunerSlot {
 pub enum AcquireError {
     /// No tuners are defined in the configuration.
     NotConfigured,
-    /// Every configured tuner is currently leased.
+    /// No configured tuner receives the broadcast.
+    Unsupported(DeliverySystem),
+    /// Every configured tuner receiving the broadcast is currently leased.
     Busy,
 }
 
@@ -49,6 +52,7 @@ impl std::fmt::Display for AcquireError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NotConfigured => write!(f, "No tuners are configured"),
+            Self::Unsupported(system) => write!(f, "No tuner receives {system}"),
             Self::Busy => write!(f, "All tuners are in use"),
         }
     }
@@ -108,12 +112,20 @@ pub struct Tuners {
 }
 
 impl Tuners {
-    pub fn try_acquire(&self) -> Result<TunerLease, AcquireError> {
+    /// Takes a free tuner receiving the broadcast, the first one configured
+    /// that is.
+    pub fn try_acquire(&self, delivery_system: DeliverySystem) -> Result<TunerLease, AcquireError> {
         if self.tuners.is_empty() {
             return Err(AcquireError::NotConfigured);
         }
 
+        let mut supported = false;
         for slot in self.tuners.values() {
+            if !slot.delivery_systems.contains(&delivery_system) {
+                continue;
+            }
+            supported = true;
+
             if let Ok(permit) = Arc::clone(&slot.semaphore).try_acquire_owned() {
                 return Ok(TunerLease {
                     slot: Arc::clone(slot),
@@ -122,21 +134,11 @@ impl Tuners {
             }
         }
 
-        Err(AcquireError::Busy)
-    }
-
-    pub fn try_acquire_by_id(&self, id: u32) -> anyhow::Result<TunerLease> {
-        let Some(slot) = self.tuners.get(&id) else {
-            bail!("Tuner {id} is not configured");
-        };
-        let permit = Arc::clone(&slot.semaphore)
-            .try_acquire_owned()
-            .map_err(|_| anyhow::anyhow!("Tuner {id} is in use"))?;
-
-        Ok(TunerLease {
-            slot: Arc::clone(slot),
-            _permit: permit,
-        })
+        if supported {
+            Err(AcquireError::Busy)
+        } else {
+            Err(AcquireError::Unsupported(delivery_system))
+        }
     }
 
     #[cfg(test)]
@@ -146,39 +148,51 @@ impl Tuners {
             .map(|slot| slot.semaphore.available_permits() == 0)
     }
 
-    pub fn add_tuner<T: Tuner + 'static>(&mut self, id: u32, tuner: T) {
+    /// Adds a tuner, to be picked for the broadcasts it receives.
+    pub fn add_tuner<T: Tuner + 'static>(
+        &mut self,
+        id: u32,
+        tuner: T,
+        delivery_systems: impl IntoIterator<Item = DeliverySystem>,
+    ) {
         self.tuners.insert(
             id,
             Arc::new(TunerSlot {
                 id,
                 tuner: Arc::new(tuner),
+                delivery_systems: delivery_systems.into_iter().collect(),
                 semaphore: Arc::new(Semaphore::new(1)),
             }),
         );
     }
 
     pub fn add_tuner_from_config(&mut self, id: u32, config: &TunerConfig) -> anyhow::Result<()> {
-        match config {
-            TunerConfig::Stdin => {
-                self.add_tuner(id, stdin::StdinTuner);
+        let systems = config.delivery_systems();
+        match &config.kind {
+            TunerKind::Stdin => {
+                self.add_tuner(id, stdin::StdinTuner, systems);
             }
 
             #[cfg(all(feature = "dvb", target_os = "linux"))]
-            TunerConfig::Dvb {
+            TunerKind::Dvb {
                 adapter_num,
                 frontend_num,
             } => {
-                self.add_tuner(id, dvb::DvbTuner::new(*adapter_num, *frontend_num)?);
+                self.add_tuner(
+                    id,
+                    dvb::DvbTuner::new(*adapter_num, *frontend_num)?,
+                    systems,
+                );
             }
 
             #[cfg(all(feature = "bon", windows))]
-            TunerConfig::Bon { path } => {
-                self.add_tuner(id, bon::BonTuner::new(path)?);
+            TunerKind::Bon { path } => {
+                self.add_tuner(id, bon::BonTuner::new(path)?, systems);
             }
 
             #[cfg(all(feature = "px4", target_os = "linux"))]
-            TunerConfig::Px4 { path, lnb_voltage } => {
-                self.add_tuner(id, px4::Px4Tuner::new(path, *lnb_voltage)?);
+            TunerKind::Px4 { path, lnb_voltage } => {
+                self.add_tuner(id, px4::Px4Tuner::new(path, *lnb_voltage)?, systems);
             }
         }
 
@@ -211,28 +225,31 @@ mod tests {
     #[test]
     fn keeps_tuner_locked_for_the_input_lifetime() {
         let mut tuners = Tuners::default();
-        tuners.add_tuner(7, FakeTuner);
+        tuners.add_tuner(7, FakeTuner, DeliverySystem::ALL);
         assert_eq!(tuners.is_in_use(7), Some(false));
 
-        let lease = tuners.try_acquire_by_id(7).unwrap();
+        let lease = tuners.try_acquire(DeliverySystem::IsdbT).unwrap();
         assert_eq!(lease.id(), 7);
         assert_eq!(tuners.is_in_use(7), Some(true));
-        assert!(tuners.try_acquire_by_id(7).is_err());
+        assert!(matches!(
+            tuners.try_acquire(DeliverySystem::IsdbT),
+            Err(AcquireError::Busy)
+        ));
 
         let input = lease.open().unwrap();
         assert_eq!(tuners.is_in_use(7), Some(true));
 
         drop(input);
         assert_eq!(tuners.is_in_use(7), Some(false));
-        assert!(tuners.try_acquire_by_id(7).is_ok());
+        assert!(tuners.try_acquire(DeliverySystem::IsdbT).is_ok());
     }
 
     #[test]
     fn keeps_tuner_locked_while_reopening_inputs_from_a_lease() {
         let mut tuners = Tuners::default();
-        tuners.add_tuner(7, FakeTuner);
+        tuners.add_tuner(7, FakeTuner, DeliverySystem::ALL);
 
-        let lease = tuners.try_acquire_by_id(7).unwrap();
+        let lease = tuners.try_acquire(DeliverySystem::IsdbT).unwrap();
         let input = lease.open_reader().unwrap();
         assert_eq!(tuners.is_in_use(7), Some(true));
 
@@ -247,22 +264,73 @@ mod tests {
     #[test]
     fn acquires_another_available_tuner() {
         let mut tuners = Tuners::default();
-        tuners.add_tuner(0, FakeTuner);
-        tuners.add_tuner(1, FakeTuner);
+        tuners.add_tuner(0, FakeTuner, DeliverySystem::ALL);
+        tuners.add_tuner(1, FakeTuner, DeliverySystem::ALL);
 
-        let first = tuners.try_acquire_by_id(0).unwrap();
-        let second = tuners.try_acquire().unwrap();
+        let first = tuners.try_acquire(DeliverySystem::IsdbT).unwrap();
+        let second = tuners.try_acquire(DeliverySystem::IsdbT).unwrap();
 
         assert_eq!(first.id(), 0);
         assert_eq!(second.id(), 1);
     }
 
     #[test]
+    fn acquires_a_tuner_receiving_the_broadcast() {
+        let mut tuners = Tuners::default();
+        tuners.add_tuner(0, FakeTuner, [DeliverySystem::IsdbT, DeliverySystem::IsdbS]);
+        tuners.add_tuner(1, FakeTuner, [DeliverySystem::IsdbS3]);
+
+        // The 4K tuner is passed over for a broadcast the first one receives.
+        let terrestrial = tuners.try_acquire(DeliverySystem::IsdbT).unwrap();
+        assert_eq!(terrestrial.id(), 0);
+        assert!(matches!(
+            tuners.try_acquire(DeliverySystem::IsdbS),
+            Err(AcquireError::Busy)
+        ));
+
+        let satellite_4k = tuners.try_acquire(DeliverySystem::IsdbS3).unwrap();
+        assert_eq!(satellite_4k.id(), 1);
+
+        drop(satellite_4k);
+        tuners.add_tuner(2, FakeTuner, [DeliverySystem::IsdbT]);
+        assert!(matches!(
+            tuners.try_acquire(DeliverySystem::IsdbS),
+            Err(AcquireError::Busy)
+        ));
+        assert_eq!(tuners.try_acquire(DeliverySystem::IsdbT).unwrap().id(), 2);
+    }
+
+    #[test]
+    fn tells_a_broadcast_no_tuner_receives_from_a_busy_one() {
+        let mut tuners = Tuners::default();
+        assert!(matches!(
+            tuners.try_acquire(DeliverySystem::IsdbS3),
+            Err(AcquireError::NotConfigured)
+        ));
+
+        tuners.add_tuner(0, FakeTuner, [DeliverySystem::IsdbT]);
+        assert!(matches!(
+            tuners.try_acquire(DeliverySystem::IsdbS3),
+            Err(AcquireError::Unsupported(DeliverySystem::IsdbS3))
+        ));
+        assert_eq!(
+            AcquireError::Unsupported(DeliverySystem::IsdbS3).to_string(),
+            "No tuner receives ISDB-S3"
+        );
+    }
+
+    #[test]
     fn releases_tuner_when_open_fails() {
         let mut tuners = Tuners::default();
-        tuners.add_tuner(0, FailingTuner);
+        tuners.add_tuner(0, FailingTuner, DeliverySystem::ALL);
 
-        assert!(tuners.try_acquire_by_id(0).unwrap().open().is_err());
+        assert!(
+            tuners
+                .try_acquire(DeliverySystem::IsdbT)
+                .unwrap()
+                .open()
+                .is_err()
+        );
         assert_eq!(tuners.is_in_use(0), Some(false));
     }
 }
