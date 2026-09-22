@@ -5,10 +5,7 @@ export default defineConfig({
   description: "Yet another implementation for ARIB standards",
   lang: "en-US",
 
-  head: [
-    // Head links are not prefixed with `base`, so it is spelled out here.
-    ["link", { rel: "icon", type: "image/svg+xml", href: "/chibitv/favicon.svg" }],
-  ],
+  head: [["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }]],
 
   // A dead link is a broken page once deployed, so fail the build on one.
   ignoreDeadLinks: false,
