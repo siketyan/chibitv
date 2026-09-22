@@ -1,73 +1,151 @@
+import { MapPinIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { Button, Modal } from "@heroui/react";
 import clsx from "clsx";
 import { type JSX, useState } from "react";
 
-import { usePlayerChrome } from "../player/chrome";
+import { useChromeHold, usePlayerChrome } from "../player/chrome";
+import { useServiceKey } from "../router";
 import { Channels } from "./Channels";
 import { Events } from "./Events";
 import { OverlayNavbar } from "./OverlayNavbar";
 import { Player } from "./Player";
+import { ProgramPane } from "./ProgramPane";
 import { ScanChannels } from "./ScanChannels";
 import { Tasks } from "./Tasks";
 
-const isNarrowScreen = () => window.matchMedia("(max-width: 767px)").matches;
+const isNarrowScreen = () => window.matchMedia("(max-width: 1023px)").matches;
+type PaneState = "closed" | "peek" | "open";
 
 export function Page(): JSX.Element {
-  const [isChannelsOpen, setIsChannelsOpen] = useState(() => !isNarrowScreen());
+  const [channelsPane, setChannelsPane] = useState<PaneState>("closed");
+  const [programPane, setProgramPane] = useState<PaneState>("closed");
+  const isChannelsOpen = channelsPane !== "closed";
+  const isProgramOpen = programPane !== "closed";
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
   const [areTasksOpen, setAreTasksOpen] = useState(false);
-  // The panels stay put while they are open: the viewer asked for them, and
-  // only the UI drawn over the picture fades away.
   const { isVisible } = usePlayerChrome();
+  const service = useServiceKey();
+
+  useChromeHold("panes", isChannelsOpen || isProgramOpen || isScheduleOpen || areTasksOpen);
 
   const changeChannelsOpen = (open: boolean) => {
-    setIsChannelsOpen(open);
+    setChannelsPane(open ? "open" : "closed");
     if (open && isNarrowScreen()) {
-      setIsScheduleOpen(false);
+      setProgramPane("closed");
     }
   };
 
-  const changeScheduleOpen = (open: boolean) => {
-    setIsScheduleOpen(open);
+  const changeProgramOpen = (open: boolean) => {
+    setProgramPane(open ? "open" : "closed");
     if (open && isNarrowScreen()) {
-      setIsChannelsOpen(false);
+      setChannelsPane("closed");
     }
   };
 
   return (
-    <main className={clsx("relative h-viewport overflow-hidden bg-black text-foreground", !isVisible && "cursor-none")}>
+    <main
+      className={clsx("relative h-viewport overflow-hidden bg-black text-foreground", !isVisible && "cursor-none")}
+      onPointerMove={(event) => {
+        if (event.pointerType !== "mouse" || isScheduleOpen || !window.matchMedia("(any-hover: hover)").matches) return;
+        const target = event.target as Element;
+        if (target.closest('[role="dialog"]')) return;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        const pane = target.closest("aside")?.id;
+        if (event.clientX <= bounds.left + 8) {
+          if (!isChannelsOpen) {
+            setChannelsPane("peek");
+            if (isNarrowScreen()) setProgramPane("closed");
+          }
+        } else if (channelsPane === "peek" && pane !== "channels-pane") {
+          setChannelsPane("closed");
+        }
+        if (event.clientX >= bounds.right - 8) {
+          if (!isProgramOpen) {
+            setProgramPane("peek");
+            if (isNarrowScreen()) setChannelsPane("closed");
+          }
+        } else if (programPane === "peek" && pane !== "program-pane") {
+          setProgramPane("closed");
+        }
+      }}
+      onPointerLeave={() => {
+        setChannelsPane((current) => (current === "peek" ? "closed" : current));
+        setProgramPane((current) => (current === "peek" ? "closed" : current));
+      }}
+    >
       <Player />
-      {/* The video fills the display, while everything drawn on top of it stays
-          inside the safe area so that an installed app keeps it reachable. */}
+      {/* The picture fills the display; controls stay inside the safe area. */}
       <div className="pointer-events-none absolute inset-safe">
         <OverlayNavbar
           areTasksOpen={areTasksOpen}
           isChannelsOpen={isChannelsOpen}
-          isScheduleOpen={isScheduleOpen}
+          isProgramOpen={isProgramOpen}
           onChangeChannelsOpen={changeChannelsOpen}
-          onChangeScheduleOpen={changeScheduleOpen}
+          onChangeProgramOpen={changeProgramOpen}
           onChangeTasksOpen={setAreTasksOpen}
         />
-        {isChannelsOpen && (
-          <aside className="pointer-events-auto absolute bottom-18 left-3 top-18 z-20 flex w-[min(18rem,calc(100%-1.5rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-surface/75 p-3 shadow-2xl backdrop-blur-xl sm:bottom-20 sm:left-4 sm:top-20">
-            <div className="flex items-center justify-between px-2 pb-3 pt-1">
-              <h2 className="font-semibold">Channels</h2>
-              <ScanChannels />
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-              <Channels />
-            </div>
-          </aside>
-        )}
-        {isScheduleOpen && (
-          <aside className="pointer-events-auto absolute inset-x-3 bottom-18 top-18 z-20 flex min-h-0 overflow-hidden rounded-2xl border border-white/10 bg-surface/80 shadow-2xl backdrop-blur-xl sm:inset-x-4 sm:bottom-20 sm:top-20">
-            <Events />
-          </aside>
-        )}
-        {/* The tasks are drawn over the other panels rather than beside them:
-            the panel is small, and it is opened to look at while whatever
-            started the task stays where it was. */}
+        {/* Keep pane contents mounted so a details/scan dialog survives the pointer leaving its pane. */}
+        <aside
+          id="channels-pane"
+          aria-label="Channels"
+          className={clsx(
+            "pointer-events-auto absolute inset-y-0 left-0 z-40 w-[min(19rem,100%)] min-h-0 flex-col overflow-hidden border-r border-white/10 bg-surface/95 p-3 shadow-2xl backdrop-blur-xl",
+            isChannelsOpen ? "flex" : "hidden",
+          )}
+        >
+          <div className="flex items-center justify-between gap-2 px-2 pb-3 pt-1">
+            <h2 className="flex-1 font-semibold">Channels</h2>
+            <ScanChannels />
+            <Button
+              aria-label={channelsPane === "open" ? "Unpin channels" : "Pin channels"}
+              aria-pressed={channelsPane === "open"}
+              className="hidden [@media(hover:hover)_and_(pointer:fine)]:inline-flex"
+              isIconOnly
+              size="sm"
+              variant={channelsPane === "open" ? "secondary" : "ghost"}
+              onPress={() => setChannelsPane(channelsPane === "open" ? "peek" : "open")}
+            >
+              <MapPinIcon />
+            </Button>
+            <Button
+              aria-label="Close channels"
+              className="[@media(hover:hover)_and_(pointer:fine)]:hidden"
+              isIconOnly
+              size="sm"
+              variant="ghost"
+              onPress={() => changeChannelsOpen(false)}
+            >
+              <XMarkIcon />
+            </Button>
+          </div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            <Channels
+              onServiceChange={() => {
+                if (isNarrowScreen()) changeChannelsOpen(false);
+              }}
+            />
+          </div>
+        </aside>
+        <aside
+          id="program-pane"
+          aria-label="Program"
+          className={clsx(
+            "pointer-events-auto absolute inset-y-0 right-0 z-40 w-[min(24rem,100%)] min-h-0 flex-col overflow-hidden border-l border-white/10 bg-surface/95 shadow-2xl backdrop-blur-xl",
+            isProgramOpen ? "flex" : "hidden",
+          )}
+        >
+          <ProgramPane
+            isPinned={programPane === "open"}
+            onChangePinned={() => setProgramPane(programPane === "open" ? "peek" : "open")}
+            onClose={() => changeProgramOpen(false)}
+            onExpand={() => {
+              setIsScheduleOpen(true);
+              if (programPane === "peek") setProgramPane("open");
+            }}
+          />
+        </aside>
         {areTasksOpen && (
-          <aside className="pointer-events-auto absolute right-3 top-18 z-20 flex max-h-[min(24rem,calc(100%-6rem))] w-[min(22rem,calc(100%-1.5rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-surface/75 p-3 shadow-2xl backdrop-blur-xl sm:right-4 sm:top-20">
+          <aside className="pointer-events-auto absolute right-3 top-18 z-50 flex max-h-[min(24rem,calc(100%-6rem))] w-[min(22rem,calc(100%-1.5rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-surface/95 p-3 shadow-2xl backdrop-blur-xl sm:right-4 sm:top-20">
             <div className="flex items-center justify-between px-2 pb-3 pt-1">
               <h2 className="font-semibold">Background tasks</h2>
             </div>
@@ -77,6 +155,21 @@ export function Page(): JSX.Element {
           </aside>
         )}
       </div>
+      <Modal isOpen={isScheduleOpen} onOpenChange={setIsScheduleOpen}>
+        <Modal.Backdrop>
+          <Modal.Container size="full">
+            <Modal.Dialog className="h-viewport min-h-0 overflow-hidden bg-surface">
+              <Modal.Header>
+                <Modal.Heading>Program guide</Modal.Heading>
+              </Modal.Header>
+              <Modal.CloseTrigger aria-label="Close full-screen program guide" />
+              <Modal.Body className="flex min-h-0 flex-1 flex-col overflow-hidden p-0">
+                <Events service={service} />
+              </Modal.Body>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal>
     </main>
   );
 }
