@@ -5,10 +5,7 @@ export default defineConfig({
   description: "Yet another implementation for ARIB standards",
   lang: "en-US",
 
-  head: [
-    // Head links are not prefixed with `base`, so it is spelled out here.
-    ["link", { rel: "icon", type: "image/svg+xml", href: "/chibitv/favicon.svg" }],
-  ],
+  head: [["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }]],
 
   // A dead link is a broken page once deployed, so fail the build on one.
   ignoreDeadLinks: false,
@@ -16,30 +13,35 @@ export default defineConfig({
   themeConfig: {
     logo: "/favicon.svg",
 
+    // Two sections, each with its own sidebar: the guide walks through
+    // running chibitv, the reference documents every key and option of it.
     nav: [
-      { text: "Getting started", link: "/guide/getting-started" },
-      { text: "Configuration", link: "/reference/configuration" },
-      { text: "CLI", link: "/reference/cli" },
-      { text: "Docker", link: "/deployment/docker" },
+      { text: "Guide", link: "/guide/getting-started", activeMatch: "/guide/" },
+      { text: "Reference", link: "/reference/configuration", activeMatch: "/reference/" },
     ],
 
-    sidebar: [
-      {
-        text: "Guide",
-        items: [{ text: "Getting started", link: "/guide/getting-started" }],
-      },
-      {
-        text: "Reference",
-        items: [
-          { text: "Configuration", link: "/reference/configuration" },
-          { text: "CLI", link: "/reference/cli" },
-        ],
-      },
-      {
-        text: "Deployment",
-        items: [{ text: "Docker", link: "/deployment/docker" }],
-      },
-    ],
+    sidebar: {
+      "/guide/": [
+        {
+          text: "Introduction",
+          items: [{ text: "Getting started", link: "/guide/getting-started" }],
+        },
+        {
+          text: "Deployment",
+          items: [{ text: "Docker", link: "/guide/docker" }],
+        },
+      ],
+
+      "/reference/": [
+        {
+          text: "Reference",
+          items: [
+            { text: "Configuration", link: "/reference/configuration" },
+            { text: "CLI", link: "/reference/cli" },
+          ],
+        },
+      ],
+    },
 
     socialLinks: [
       { icon: "github", link: "https://github.com/siketyan/chibitv" },

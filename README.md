@@ -5,20 +5,20 @@
 
 ## Documentation
 
-The documentation is published at https://siketyan.github.io/chibitv/:
+The documentation is published at https://chibitv.p.s6n.jp/:
 
-- [Getting started](https://siketyan.github.io/chibitv/guide/getting-started) covers the prerequisites, the device
+- [Getting started](https://chibitv.p.s6n.jp/guide/getting-started) covers the prerequisites, the device
   permissions needed on Linux, configuring `config.toml`, and running the server alongside the GUI.
-- The [configuration reference](https://siketyan.github.io/chibitv/reference/configuration) documents every key of
+- The [configuration reference](https://chibitv.p.s6n.jp/reference/configuration) documents every key of
   `config.toml`.
-- The [CLI reference](https://siketyan.github.io/chibitv/reference/cli) documents every subcommand and option.
-- [Docker](https://siketyan.github.io/chibitv/deployment/docker) covers running the published image.
+- The [CLI reference](https://chibitv.p.s6n.jp/reference/cli) documents every subcommand and option.
+- [Docker](https://chibitv.p.s6n.jp/guide/docker) covers running the published image.
 
 ## Development
 
 The instructions below are for building chibitv from a checkout. Running it
 also needs a tuner, a CAS card and a `config.toml`, which the
-[getting started guide](https://siketyan.github.io/chibitv/guide/getting-started)
+[getting started guide](https://chibitv.p.s6n.jp/guide/getting-started)
 covers.
 
 ### Toolchains
