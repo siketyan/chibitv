@@ -1,5 +1,10 @@
 declare module "*.css";
 
+declare module "*.svg" {
+  const url: string;
+  export default url;
+}
+
 // rsbuild replaces `import.meta.env` at build time; only the flags used here are declared.
 interface ImportMetaEnv {
   /** Whether the bundle was built in production mode. */

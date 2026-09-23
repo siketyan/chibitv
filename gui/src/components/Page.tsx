@@ -3,6 +3,7 @@ import { Button, Modal } from "@heroui/react";
 import clsx from "clsx";
 import { type JSX, useState } from "react";
 
+import logo from "../logo.svg";
 import { useChromeHold, usePlayerChrome } from "../player/chrome";
 import { useServiceKey } from "../router";
 import { Channels } from "./Channels";
@@ -106,7 +107,9 @@ export function Page(): JSX.Element {
           )}
         >
           <div className="flex items-center justify-between gap-2 px-2 pb-3 pt-1">
-            <h2 className="flex-1 font-semibold">Channels</h2>
+            <h2 className="flex-1">
+              <img src={logo} alt="chibitv" className="h-6" />
+            </h2>
             <ScanChannels />
             <Button
               aria-label={channelsPane === "open" ? "Unpin channels" : "Pin channels"}
