@@ -1,20 +1,40 @@
-import { Spinner } from "@heroui/react";
+import { Button, Spinner } from "@heroui/react";
 import { type JSX, useEffect, useState } from "react";
 
 import { useServices } from "../api/services";
-import { useStream } from "../api/stream";
+import { type StreamFailure, useStream } from "../api/stream";
+import { StreamErrorKind } from "../gen/chibitv/v1/chibitv_pb";
 import { bindMediaSession, publishNowPlaying } from "../player/mediaSession";
 import { startPlayback } from "../player/playback";
 import { useIsWaitingForMedia } from "../player/readiness";
 import { useServiceKey } from "../router";
 import { PlayerControls } from "./PlayerControls";
 
+/**
+ * What to tell the viewer about the error that stopped the stream.
+ *
+ * The message the server sends explains it the way the standard numbers it,
+ * which says nothing to whoever is only trying to watch television, so the
+ * kinds worth knowing about are put in their own words and the message is kept
+ * for the ones that are not.
+ */
+function describeStreamError(error: StreamFailure): string {
+  switch (error.kind) {
+    case StreamErrorKind.NOT_CONTRACTED:
+      return "This programme cannot be descrambled: the card holds no contract for it.";
+    case StreamErrorKind.DESCRAMBLING_REFUSED:
+      return "The card handed over no key to descramble this programme with.";
+    default:
+      return error.message || "The stream stopped.";
+  }
+}
+
 export function Player(): JSX.Element {
   // The controls act on the element, so hold it in state rather than a ref to
   // render them once it is mounted.
   const [video, setVideo] = useState<HTMLVideoElement | null>(null);
   const [error, setError] = useState<string>();
-  const { state, subscribeFmp4, playbackGeneration, reconnect } = useStream();
+  const { state, error: streamError, stopped, subscribeFmp4, playbackGeneration, reconnect, retry } = useStream();
   const service = useServiceKey();
   const { data: services = [] } = useServices();
   const isWaitingForMedia = useIsWaitingForMedia(video);
@@ -62,7 +82,7 @@ export function Player(): JSX.Element {
       {video && <PlayerControls video={video} />}
       {/* Tuning, descrambling and transcoding all happen before the first frame
           arrives, and the picture stays black until then, so say it is coming. */}
-      {service !== undefined && !error && isWaitingForMedia && (
+      {service !== undefined && !error && !streamError && isWaitingForMedia && (
         // The colour lives on the wrapper because the spinner inherits it.
         <div className="pointer-events-none absolute z-10 text-white/70">
           <Spinner aria-label="Loading the picture" color="current" size="lg" />
@@ -71,10 +91,25 @@ export function Player(): JSX.Element {
       {service === undefined && services.length === 0 && (
         <p className="absolute z-10 text-sm text-white/70">No channels are available.</p>
       )}
-      {error && (
-        <div className="absolute inset-x-4 bottom-20 z-30 rounded-lg bg-danger/90 p-3 text-sm text-white shadow-lg">
-          {error}
+      {/* The stream stopping is what the viewer is owed an explanation for,
+          so it is said over whatever the player itself made of the silence. */}
+      {streamError ? (
+        <div className="absolute inset-x-4 bottom-20 z-30 flex items-center gap-3 rounded-lg bg-danger/90 p-3 text-sm text-white shadow-lg">
+          <p className="min-w-0 flex-1">{describeStreamError(streamError)}</p>
+          {/* A stream that is still reconnecting takes itself back up, so
+              there is only something to ask for once it has given up. */}
+          {stopped && (
+            <Button className="shrink-0" size="sm" variant="secondary" onPress={retry}>
+              Try again
+            </Button>
+          )}
         </div>
+      ) : (
+        error && (
+          <div className="absolute inset-x-4 bottom-20 z-30 rounded-lg bg-danger/90 p-3 text-sm text-white shadow-lg">
+            {error}
+          </div>
+        )
       )}
     </div>
   );
