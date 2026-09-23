@@ -1,4 +1,11 @@
-# chibitv - Yet another implementation for ARIB standards
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/public/logo-dark.svg">
+    <img src="docs/public/logo.svg" alt="chibitv" height="96">
+  </picture>
+</h1>
+
+<p align="center">Yet another implementation for ARIB standards</p>
 
 > [!WARNING]
 > This software is intended for experimental purposes to understand the standards and is not recommended for any other use.
