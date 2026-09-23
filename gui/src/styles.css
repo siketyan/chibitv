@@ -51,6 +51,23 @@
   right: var(--player-right);
 }
 
+/* Stacked on a portrait display, the picture sits under the top inset the page
+   already pads and above the panes, so no edge of it meets the display's: the
+   bars drawn over it would otherwise be pushed in by insets that are not theirs,
+   which only an installed app on iOS, drawn under the status bar and the home
+   indicator, has. */
+@media (orientation: portrait) {
+  .player-area .inset-safe {
+    inset: 0;
+  }
+
+  .player-area .pad-safe {
+    padding-right: 0;
+    padding-bottom: 0;
+    padding-left: 0;
+  }
+}
+
 /* Pane interaction keeps the controls visible without shading the picture. */
 .viewer:has(.side-pane[data-open="true"]) .player-chrome {
   background-image: none;
