@@ -94,17 +94,7 @@ pub struct TunerConfig {
     pub kind: TunerKind,
 
     /// The broadcasts the tuner receives, which is what it is picked for.
-    /// Every one of them, unless listed.
-    pub delivery_systems: Option<Vec<DeliverySystem>>,
-}
-
-impl TunerConfig {
-    /// The broadcasts the tuner is picked for.
-    pub fn delivery_systems(&self) -> Vec<DeliverySystem> {
-        self.delivery_systems
-            .clone()
-            .unwrap_or_else(|| DeliverySystem::ALL.to_vec())
-    }
+    pub delivery_systems: Vec<DeliverySystem>,
 }
 
 /// How a tuner is driven, which `type` picks along with the keys of it.
@@ -205,11 +195,13 @@ mod tests {
                 [[tuners]]
                 type = "px4"
                 path = "/dev/pxmlt5video0"
+                delivery_systems = ["ISDB-T"]
 
                 [[tuners]]
                 type = "px4"
                 path = "/dev/pxmlt5video1"
                 lnb_voltage = 15
+                delivery_systems = ["ISDB-S"]
             "#,
         )
         .unwrap();
@@ -240,7 +232,7 @@ mod tests {
     }
 
     #[test]
-    fn takes_a_tuner_as_receiving_every_broadcast_unless_told() {
+    fn requires_the_delivery_systems_of_a_tuner() {
         #[derive(Deserialize)]
         struct Tuners {
             tuners: Vec<TunerConfig>,
@@ -250,9 +242,6 @@ mod tests {
             r#"
                 [[tuners]]
                 type = "stdin"
-
-                [[tuners]]
-                type = "stdin"
                 delivery_systems = ["ISDB-S3"]
             "#,
         )
@@ -260,14 +249,19 @@ mod tests {
 
         assert!(matches!(configured.tuners[0].kind, TunerKind::Stdin));
         assert_eq!(
-            configured.tuners[0].delivery_systems(),
-            DeliverySystem::ALL.to_vec()
-        );
-        assert_eq!(
-            configured.tuners[1].delivery_systems(),
+            configured.tuners[0].delivery_systems,
             vec![DeliverySystem::IsdbS3]
         );
 
+        assert!(
+            toml::from_str::<Tuners>(
+                r#"
+                    [[tuners]]
+                    type = "stdin"
+                "#
+            )
+            .is_err()
+        );
         assert!(
             toml::from_str::<Tuners>(
                 r#"
