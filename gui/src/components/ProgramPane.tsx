@@ -1,4 +1,4 @@
-import { ArrowsPointingOutIcon, MapPinIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { ArrowsPointingOutIcon, XMarkIcon } from "@heroicons/react/24/outline";
 import { Button, Tabs } from "@heroui/react";
 import { type JSX, useState } from "react";
 
@@ -7,6 +7,7 @@ import { useStream } from "../api/stream";
 import { useServiceKey } from "../router";
 import { EventInformation } from "./EventDetails";
 import { Events } from "./Events";
+import { PinIcon } from "./PinIcon";
 
 export function ProgramPane({
   isPinned,
@@ -30,7 +31,7 @@ export function ProgramPane({
       selectedKey={tab}
       onSelectionChange={(key) => setTab(String(key))}
     >
-      <div className="flex shrink-0 items-center justify-between gap-1 border-b border-white/10 p-2">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-1 border-b border-white/10 p-2">
         <Tabs.ListContainer className="min-w-0">
           <Tabs.List aria-label="Program">
             <Tabs.Tab id="information" className="w-auto shrink-0">
@@ -58,7 +59,7 @@ export function ProgramPane({
             variant={isPinned ? "secondary" : "ghost"}
             onPress={onChangePinned}
           >
-            <MapPinIcon />
+            <PinIcon />
           </Button>
           <Button
             aria-label="Close program pane"
