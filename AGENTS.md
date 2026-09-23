@@ -64,16 +64,18 @@ The shared data flow is a pipeline:
 5. Output
 
 `serve` (`server.rs`, `rpc.rs`) runs an axum server exposing the ConnectRPC `ChibitvService` plus the live stream;
-`registry.rs`/`stream.rs`/`event_crawler.rs` manage shared tuner/channel state and EPG events.
+`stream.rs`/`event_crawler.rs` share the tuners between streams and EPG crawls. The services and the EPG are
+read from the store rather than held in memory: `service.rs`/`event.rs` are their domain types (built from the SI
+tables), and `guide.rs` queues what the demultiplexers find (`service_information.rs`) and writes it through the
+repositories.
 `task.rs` runs the work that outlives the call asking for it — refreshing the programme guide, recording a
 programme — as background tasks with progress and cooperative cancellation, reported over `ListTasks`/`WatchTasks`,
 stopped with `CancelTask` and forgotten once over with `DeleteTask`; `scheduler.rs` starts such a task at a given
 time, which is what a recording booked from the guide (`recorder.rs`) waits in until the programme begins.
 `storage.rs` is where a recording is written: one object per recording, streamed and finished at the end, so
 that a remote store can be added beside the local directory the `[storage]` config section names.
-`store.rs` is the persistence layer: `Store` is one database, made of one trait per kind of thing kept in it
-(`store/channel.rs` for the channels, `store/event.rs` for the EPG and the writer the demultiplexers queue EIT
-sections on). The SQLite backend (sqlx, bundled SQLite) is in `store/sqlite.rs`, with its schema in
+`store.rs` is the persistence layer: `Store` is one database, made of one repository trait per kind of thing kept in it
+(`store/channel.rs` for the channels, `store/service.rs` for their services, `store/event.rs` for the EPG). The SQLite backend (sqlx, bundled SQLite) is in `store/sqlite.rs`, with its schema in
 `crates/chibitv/migrations/sqlite/`.
 The channels are kept there rather than in the configuration, and a scan is what writes them (`channel.rs`,
 `channel_scanner.rs`).
