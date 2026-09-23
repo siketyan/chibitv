@@ -6,34 +6,49 @@ use bytes::Buf;
 
 use crate::registry::{Registry, ServiceKey};
 
+type NetworkId = u16;
+type LogoId = u16;
+type LogoVersion = u16;
+type LogoType = u8;
+type DownloadDataId = u16;
+/// The DSM-CC `downloadId`, which DDBs carry as their transaction ID.
+type DownloadId = u32;
+type ModuleId = u16;
+
 #[derive(Clone, Debug)]
 struct Reference {
-    network: u16,
-    id: u16,
-    download: Option<(u16, u16)>, // download_data_id, logo_version
-    ranges: Vec<(u8, u8, u8)>,    // MH logo_type, first section, count
+    network: NetworkId,
+    id: LogoId,
+    download: Option<(DownloadDataId, LogoVersion)>,
+    ranges: Vec<(LogoType, u8, u8)>, // MH logo_type, first section, count
 }
 
 struct Image {
-    download: u16,
-    version: u16,
-    kind: u8,
+    download: DownloadDataId,
+    version: LogoVersion,
+    kind: LogoType,
     png: Vec<u8>,
 }
 
 #[derive(Default)]
 pub struct Logos {
     references: HashMap<ServiceKey, Reference>,
-    images: HashMap<(u16, u16), Image>,
-    modules: HashMap<(u32, u16), Module>,
-    carousel_kinds: HashMap<ServiceKey, u8>,
-    mh_sections: HashMap<(u16, u16), Fragments>,
+    images: HashMap<(NetworkId, LogoId), Image>,
+    modules: HashMap<(DownloadId, ModuleId), Module>,
+    carousel_kinds: HashMap<ServiceKey, LogoType>,
+    mh_sections: HashMap<(NetworkId, DownloadDataId), Fragments>,
 }
 
 impl Logos {
     /// B10 0xcf and B60 0x8025 share the reference prefix. The optional MH
     /// section ranges follow it and do not change the logo's identity.
-    pub fn reference(&mut self, registry: &Registry, key: ServiceKey, network: u16, bytes: &[u8]) {
+    pub fn reference(
+        &mut self,
+        registry: &Registry,
+        key: ServiceKey,
+        network: NetworkId,
+        bytes: &[u8],
+    ) {
         let Some(&kind) = bytes.first() else {
             return;
         };
@@ -68,7 +83,13 @@ impl Logos {
         self.publish(registry);
     }
 
-    pub fn data(&mut self, registry: &Registry, network: u16, download: u16, data: &[u8]) {
+    pub fn data(
+        &mut self,
+        registry: &Registry,
+        network: NetworkId,
+        download: DownloadDataId,
+        data: &[u8],
+    ) {
         if data.len() < 7 || data[0] > 7 {
             return;
         }
