@@ -90,6 +90,7 @@ pub struct ServiceInformationProcessor {
     signal_tx: Option<Sender<Signal>>,
     current_event_id: Option<u16>,
     stored_sections: HashMap<SectionKey, SectionVersion>,
+    logos: crate::logo::Logos,
 }
 
 impl ServiceInformationProcessor {
@@ -105,6 +106,7 @@ impl ServiceInformationProcessor {
             signal_tx,
             current_event_id: None,
             stored_sections: HashMap::new(),
+            logos: crate::logo::Logos::default(),
         }
     }
 
@@ -149,6 +151,23 @@ impl ServiceInformationProcessor {
             {
                 self.process_b10_eit(table_id, table)
             }
+            B10Table::Dsmcc(data) => {
+                if let Some(registry) = &self.registry {
+                    let _ = self.logos.carousel(registry, &data);
+                }
+                Ok(())
+            }
+            B10Table::Cdt(table) if table.current_next_indicator && table.data_type == 1 => {
+                if let Some(registry) = &self.registry {
+                    self.logos.data(
+                        registry,
+                        table.original_network_id,
+                        table.download_data_id,
+                        &table.data,
+                    );
+                }
+                Ok(())
+            }
             B10Table::Sdt(table) if table_id == SDT_ACTUAL_TABLE_ID => {
                 self.process_b10_sdt(table);
                 Ok(())
@@ -157,10 +176,26 @@ impl ServiceInformationProcessor {
         }
     }
 
-    fn process_b10_sdt(&self, table: Sdt) {
+    fn process_b10_sdt(&mut self, table: Sdt) {
+        if !table.current_next_indicator {
+            return;
+        }
         if let Some(registry) = &self.registry {
             for service in &table.services {
                 registry.put_b10_service(self.channel_id, table.transport_stream_id, service);
+                for descriptor in &service.descriptors {
+                    if let chibitv_b10::descriptor::Descriptor::Unknown(0xcf, data) = descriptor {
+                        self.logos.reference(
+                            registry,
+                            ServiceKey {
+                                stream_id: table.transport_stream_id,
+                                service_id: service.service_id,
+                            },
+                            table.original_network_id,
+                            data,
+                        );
+                    }
+                }
             }
         }
     }
@@ -202,6 +237,12 @@ impl ServiceInformationProcessor {
 
     fn process_m2_section_message(&mut self, message: M2SectionMessage) -> anyhow::Result<()> {
         match message.table {
+            Table::MhCdt(table) if table.current_next_indicator && table.data_type == 1 => {
+                if let Some(registry) = &self.registry {
+                    self.logos.mh_data(registry, table);
+                }
+                Ok(())
+            }
             Table::MhEit(table) => self.process_mh_eit(table),
             Table::MhBit(table) => {
                 self.process_mh_bit(table);
@@ -258,10 +299,26 @@ impl ServiceInformationProcessor {
         }
     }
 
-    fn process_mh_sdt(&self, table: MhSdt) {
+    fn process_mh_sdt(&mut self, table: MhSdt) {
+        if !table.current_next_indicator {
+            return;
+        }
         if let Some(registry) = &self.registry {
             for service in &table.services {
                 registry.put_service(self.channel_id, table.tlv_stream_id, service);
+                for descriptor in &service.descriptors {
+                    if let chibitv_b60::descriptor::Descriptor::Unknown(0x8025, data) = descriptor {
+                        self.logos.reference(
+                            registry,
+                            ServiceKey {
+                                stream_id: table.tlv_stream_id,
+                                service_id: service.service_id,
+                            },
+                            table.original_network_id,
+                            data,
+                        );
+                    }
+                }
             }
         }
     }

@@ -210,6 +210,19 @@ impl<R: Read> M2tsDemuxer<R> {
 
             match payload {
                 TsPayload::Pmt(pmt) => {
+                    // The engineering service carries common receiver logos even
+                    // while a different TV service on this multiplex is watched.
+                    for info in &pmt.es_info {
+                        if matches!(
+                            info.stream_type,
+                            StreamType::DsmCcUnMessages | StreamType::DsmCcTabledData
+                        ) && info.descriptors.iter().any(|descriptor| {
+                            descriptor.tag == 0x52
+                                && matches!(descriptor.data.as_slice(), [0x79 | 0x7a])
+                        }) {
+                            self.reader.add_section_pid(info.elementary_pid);
+                        }
+                    }
                     if self
                         .target_service_id
                         .is_some_and(|service_id| service_id != pmt.program_num)
@@ -286,7 +299,14 @@ impl<R: Read> M2tsDemuxer<R> {
                         };
 
                         let mut bytes = Bytes::from(section);
-                        let table = B10Table::read(&mut bytes)?;
+                        let table = match B10Table::read(&mut bytes) {
+                            Ok(table) => table,
+                            Err(error) if table_id == 0xc8 => {
+                                warn!(%error, "Ignoring a malformed logo CDT");
+                                continue;
+                            }
+                            Err(error) => return Err(error.into()),
+                        };
                         if !matches!(table, B10Table::Unknown(_, _)) {
                             out.push(Packet::Signaling(SignalingEvent::B10Table {
                                 table_id,
@@ -584,6 +604,7 @@ const B10_SECTION_PIDS: &[u16] = &[
     0x0025, // NBIT, LDT
     0x0026, // EIT for terrestrial digital TV and multimedia broadcasting
     0x0027, // EIT for terrestrial digital TV and multimedia broadcasting
+    0x0029, // CDT (station logos)
     0x002E, // AMT
 ];
 

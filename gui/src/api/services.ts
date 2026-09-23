@@ -28,13 +28,12 @@ export function serviceKeyId(key: ServiceKey): string {
 /**
  * Lists every service the server knows about.
  *
- * The server discovers them while it tunes, so an empty list is polled until it
- * yields something.
+ * Poll for services discovered while tuning, updated logos and programme changes.
  */
 export function useServices(): UseQueryResult<Service[]> {
   return useQuery({
     queryKey: queryKeys.services,
     queryFn: async () => (await chibitvClient.listServices({})).services,
-    refetchInterval: (query) => (query.state.data?.length ? false : 1000),
+    refetchInterval: (query) => (query.state.data?.length ? 15000 : 1000),
   });
 }

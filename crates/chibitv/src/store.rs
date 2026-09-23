@@ -10,6 +10,7 @@
 
 mod channel;
 mod event;
+mod logo;
 mod sqlite;
 
 use std::sync::Arc;
@@ -18,13 +19,14 @@ use anyhow::bail;
 
 pub use channel::{ChannelStore, NewChannel, StoredChannel, StoredService};
 pub use event::{EventStore, EventWriter, SectionId, SectionUpdate, StoredEvent};
+pub use logo::{LogoStore, LogoWriter, StoredLogo};
 pub use sqlite::SqliteStore;
 
 /// A database chibitv keeps its state in.
 ///
 /// A backend implements every trait this is made of, so that one connection
 /// serves all of them.
-pub trait Store: ChannelStore + EventStore + Send + Sync {}
+pub trait Store: ChannelStore + EventStore + LogoStore + Send + Sync {}
 
 /// Opens the store the URL points at.
 ///

@@ -44,8 +44,11 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("Could not open the database at `{}`", config.database.url))?;
 
-    let registry =
-        Arc::new(Registry::default().storing_events(EventWriter::spawn(Arc::clone(&store))));
+    let registry = Arc::new(
+        Registry::default()
+            .storing_events(EventWriter::spawn(Arc::clone(&store)))
+            .storing_logos(crate::store::LogoWriter::spawn(Arc::clone(&store))),
+    );
 
     // The channels are the database's, which a scan writes: nothing is served
     // until one has found something.
@@ -61,6 +64,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     // The schedule of the previous run is restored before anything is tuned,
     // so the programme guide is there without crawling first.
     registry.restore_events(&store).await?;
+    registry.restore_logos(&store).await?;
 
     let channels = stored_channels
         .iter()

@@ -158,6 +158,17 @@ so that an installed app still opens while the server is unreachable; the RPC
 API and the live stream are never cached. It is registered in production
 builds only, which leaves the rsbuild development server above unaffected.
 
+The channel pane shows each station's main service and the current programme
+when its schedule is available. Use the arrow beside a station to show its
+subchannels; a selected subchannel stays visible when the group is collapsed.
+Separate stations sharing a satellite multiplex remain individually selectable.
+
+Station logos are collected from broadcast SI while watching or refreshing the
+programme guide and saved in the database. Reception can take several minutes,
+depending on the broadcaster's transmission cycle. The GUI updates automatically
+when a logo arrives. Supported carriers are CDT, MH-CDT (including fragmented
+logos), and the named BS/CS logo modules in DSM-CC common receiver data.
+
 ## Next steps
 
 - The [configuration reference](../reference/configuration) for every key of

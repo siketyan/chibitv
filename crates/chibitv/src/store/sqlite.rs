@@ -447,6 +447,32 @@ fn read_event(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<StoredEvent> {
     })
 }
 
+#[async_trait]
+impl super::LogoStore for SqliteStore {
+    async fn load_logos(&self) -> anyhow::Result<Vec<super::StoredLogo>> {
+        sqlx::query("SELECT stream_id, service_id, png FROM service_logos")
+            .fetch_all(&self.pool)
+            .await?
+            .into_iter()
+            .map(|row| {
+                Ok(super::StoredLogo {
+                    key: ServiceKey {
+                        stream_id: row.try_get("stream_id")?,
+                        service_id: row.try_get("service_id")?,
+                    },
+                    png: row.try_get("png")?,
+                })
+            })
+            .collect()
+    }
+
+    async fn save_logo(&self, logo: &super::StoredLogo) -> anyhow::Result<()> {
+        sqlx::query("INSERT INTO service_logos (stream_id, service_id, png) VALUES (?, ?, ?) ON CONFLICT (stream_id, service_id) DO UPDATE SET png = excluded.png")
+            .bind(logo.key.stream_id).bind(logo.key.service_id).bind(&logo.png).execute(&self.pool).await?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
@@ -494,6 +520,33 @@ mod tests {
                 provider_name: "Provider".to_string(),
             }],
         }
+    }
+
+    #[tokio::test]
+    async fn saves_and_replaces_logos_for_the_full_service_key() {
+        use crate::store::{LogoStore, StoredLogo};
+        let store = SqliteStore::open("sqlite::memory:").await.unwrap();
+        let mut first = StoredLogo {
+            key: ServiceKey {
+                stream_id: 1,
+                service_id: 101,
+            },
+            png: vec![1, 2],
+        };
+        let other = StoredLogo {
+            key: ServiceKey {
+                stream_id: 2,
+                service_id: 101,
+            },
+            png: vec![3],
+        };
+        store.save_logo(&first).await.unwrap();
+        store.save_logo(&other).await.unwrap();
+        first.png = vec![4, 5];
+        store.save_logo(&first).await.unwrap();
+        let mut restored = store.load_logos().await.unwrap();
+        restored.sort_by_key(|logo| logo.key);
+        assert_eq!(restored, vec![first, other]);
     }
 
     #[tokio::test]
