@@ -117,8 +117,7 @@ export function Page(): JSX.Element {
           aria-label="Channels"
           data-open={isChannelsOpen}
           className={clsx(
-            "side-pane pointer-events-auto absolute inset-y-0 left-0 z-40 w-(--channels-pane-width) min-h-0 flex-col overflow-hidden border-r border-white/10 bg-surface/95 p-3",
-            isChannelsOpen ? "flex" : "hidden",
+            "side-pane pointer-events-auto absolute inset-y-0 left-0 z-40 w-(--channels-pane-width) flex min-h-0 flex-col overflow-hidden border-r border-white/10 bg-surface/95 p-3",
           )}
         >
           <div className="flex items-center justify-between gap-2 px-2 pb-3 pt-1">
@@ -161,8 +160,7 @@ export function Page(): JSX.Element {
           aria-label="Program"
           data-open={isProgramOpen}
           className={clsx(
-            "side-pane pointer-events-auto absolute inset-y-0 right-0 z-40 w-(--program-pane-width) min-h-0 flex-col overflow-hidden border-l border-white/10 bg-surface/95",
-            isProgramOpen ? "flex" : "hidden",
+            "side-pane pointer-events-auto absolute inset-y-0 right-0 z-40 w-(--program-pane-width) flex min-h-0 flex-col overflow-hidden border-l border-white/10 bg-surface/95",
           )}
         >
           <ProgramPane
