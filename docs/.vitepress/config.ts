@@ -5,7 +5,12 @@ export default defineConfig({
   description: "Yet another implementation for ARIB standards",
   lang: "en-US",
 
-  head: [["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }]],
+  head: [
+    ["link", { rel: "icon", type: "image/svg+xml", href: "/favicon.svg" }],
+    // Crawlers need an absolute URL for the image.
+    ["meta", { property: "og:image", content: "https://chibitv.p.s6n.jp/og.png" }],
+    ["meta", { name: "twitter:card", content: "summary_large_image" }],
+  ],
 
   // A dead link is a broken page once deployed, so fail the build on one.
   ignoreDeadLinks: false,
