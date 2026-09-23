@@ -235,7 +235,7 @@ mod tests {
             .collect();
         let expected_logo = format!(
             "/api/logos/1/101?v={:08x}",
-            crate::logo::PNG_CRC.checksum(b"image")
+            crate::service_information::logo::PNG_CRC.checksum(b"image")
         );
         let response = app(Arc::new(Workspace::new(store, channels, None)))
             .oneshot(

@@ -10,6 +10,7 @@ use crate::demux::SignalingEvent;
 use crate::service::{ServiceKey, StoredService};
 use crate::store::SectionId;
 
+pub mod logo;
 mod writer;
 
 pub use writer::{EventEntries, ServiceInformationUpdate, ServiceInformationWriter};
@@ -69,7 +70,7 @@ pub struct ServiceInformationProcessor {
     signal_tx: Option<Sender<Signal>>,
     current_event_id: Option<u16>,
     stored_sections: HashMap<SectionKey, SectionVersion>,
-    logos: crate::logo::Logos,
+    logos: logo::Logos,
 }
 
 impl ServiceInformationProcessor {
@@ -85,7 +86,7 @@ impl ServiceInformationProcessor {
             signal_tx,
             current_event_id: None,
             stored_sections: HashMap::new(),
-            logos: crate::logo::Logos::default(),
+            logos: logo::Logos::default(),
         }
     }
 

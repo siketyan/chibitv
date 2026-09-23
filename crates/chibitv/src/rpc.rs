@@ -857,7 +857,7 @@ fn logo_url(key: service::ServiceKey, png: &[u8]) -> String {
         "/api/logos/{}/{}?v={:08x}",
         key.stream_id,
         key.service_id,
-        crate::logo::PNG_CRC.checksum(png)
+        crate::service_information::logo::PNG_CRC.checksum(png)
     )
 }
 
