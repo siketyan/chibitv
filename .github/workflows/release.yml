@@ -68,10 +68,15 @@ jobs:
     strategy:
       matrix:
         include:
-          # ponytail: built on the glibc of ubuntu-latest, so older
-          # distributions cannot run it; pin an older runner if they matter.
+          # ponytail: built on the glibc of the Ubuntu runners, which the
+          # packages do not declare, so older distributions install them but
+          # cannot run the binary; pin older runners if they matter.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            arch: arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
@@ -79,7 +84,7 @@ jobs:
     permissions:
       contents: read
     env:
-      ARCHIVE: chibitv-${{ needs.release-please.outputs.tag_name }}-${{ matrix.target }}
+      ARCHIVE: dist/chibitv-${{ needs.release-please.outputs.tag_name }}-${{ matrix.target }}
     steps:
       - name: Checkout sources
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -101,16 +106,32 @@ jobs:
         run: cargo build --release --locked --features gui
       - name: Archive the binary
         if: runner.os == 'Linux'
-        run: tar --create --gzip --file "$ARCHIVE.tar.gz" --directory target/release chibitv
+        run: |
+          mkdir dist
+          tar --create --gzip --file "$ARCHIVE.tar.gz" --directory target/release chibitv
+      - name: Package the binary
+        if: runner.os == 'Linux'
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.release-please.outputs.version }}
+        run: |
+          for packager in deb rpm archlinux; do
+            docker run --rm --user "$(id -u):$(id -g)" \
+              --volume "$PWD:/work" --workdir /work --env ARCH --env VERSION \
+              goreleaser/nfpm:v2.47.0@sha256:a662cb167d7b6d3a83920c83d76b12d02b8ac5dd2c13e5c62c15270b23f6df0c \
+              package --config nfpm.yaml --packager "$packager" --target dist/
+          done
       - name: Archive the binary
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path target/release/chibitv.exe -DestinationPath "$env:ARCHIVE.zip"
-      - name: Upload the archive
+        run: |
+          New-Item -ItemType Directory dist
+          Compress-Archive -Path target/release/chibitv.exe -DestinationPath "$env:ARCHIVE.zip"
+      - name: Upload the archives
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: archive-${{ matrix.target }}
-          path: ${{ env.ARCHIVE }}.*
+          path: dist/
           if-no-files-found: error
 
   docker:

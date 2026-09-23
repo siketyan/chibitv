@@ -1,0 +1,41 @@
+# Packages the release binary for Linux distributions. The release workflow
+# sets ARCH to the Go name of the architecture (amd64, arm64), which nFPM
+# translates into the name each package format uses, and VERSION to the
+# version being released.
+name: chibitv
+arch: ${ARCH}
+platform: linux
+version: ${VERSION}
+maintainer: Naoki Ikeguchi <me@s6n.jp>
+description: An experimental implementation of the ARIB broadcasting standards
+section: video
+homepage: https://github.com/siketyan/chibitv
+
+contents:
+  - src: target/release/chibitv
+    dst: /usr/bin/chibitv
+    file_info:
+      mode: 0755
+  - src: config.toml.example
+    dst: /usr/share/doc/chibitv/config.toml.example
+
+# The binary links against libdvbv5 and libpcsclite, and talks to the CAS
+# module through the PC/SC daemon.
+depends:
+  - libdvbv5-0
+  - libpcsclite1
+recommends:
+  - pcscd
+overrides:
+  # The libraries are required by their sonames, which every RPM based
+  # distribution provides whatever the package holding them is named.
+  rpm:
+    depends:
+      - libdvbv5.so.0()(64bit)
+      - libpcsclite.so.1()(64bit)
+    recommends:
+      - pcsc-lite
+  archlinux:
+    depends:
+      - v4l-utils
+      - pcsclite
