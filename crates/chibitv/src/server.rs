@@ -24,17 +24,53 @@ pub async fn serve(addr: SocketAddr, state: Arc<Workspace>) -> anyhow::Result<()
 }
 
 fn app(state: Arc<Workspace>) -> Router {
-    let service = ChibitvServiceImpl::new(state).register(connectrpc::Router::new());
+    let service = ChibitvServiceImpl::new(Arc::clone(&state)).register(connectrpc::Router::new());
 
     // The RPC service handles every path it is given on its own, so it is
     // nested under a prefix to tell its routes apart from the GUI ones.
-    let router =
-        Router::new().nest_service(RPC_PREFIX, connectrpc::ConnectRpcService::new(service));
+    let router = Router::new()
+        .route(
+            "/api/logos/{stream_id}/{service_id}",
+            axum::routing::get(logo),
+        )
+        .with_state(state)
+        .nest_service(RPC_PREFIX, connectrpc::ConnectRpcService::new(service));
 
     #[cfg(feature = "gui")]
     let router = router.fallback(gui::handle);
 
     router
+}
+
+async fn logo(
+    axum::extract::State(state): axum::extract::State<Arc<Workspace>>,
+    axum::extract::Path((stream_id, service_id)): axum::extract::Path<(u16, u16)>,
+) -> axum::response::Response {
+    use axum::http::{StatusCode, header};
+    use axum::response::IntoResponse;
+    let logo = state
+        .store()
+        .find_logo(crate::service::ServiceKey {
+            stream_id,
+            service_id,
+        })
+        .await;
+    match logo {
+        Ok(Some(logo)) => (
+            [
+                (header::CONTENT_TYPE, "image/png"),
+                (header::CACHE_CONTROL, "public, max-age=300"),
+                (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
+            ],
+            logo.png,
+        )
+            .into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => {
+            tracing::error!(?error, "Could not read a station logo");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
 }
 
 /// Serves the GUI built into `gui/dist` from the binary itself.
@@ -134,6 +170,128 @@ mod tests {
         };
 
         workspace
+    }
+
+    #[tokio::test]
+    async fn lists_current_programmes_and_logos_restored_after_restart() {
+        use crate::store::StoredLogo;
+        let directory = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}", directory.path().join("guide.db").display());
+        let key = ServiceKey {
+            stream_id: 1,
+            service_id: 101,
+        };
+        let now = chrono::Local::now().naive_local();
+        let store = crate::store::open(&url).await.unwrap();
+        store
+            .create_channels(&[NewChannel {
+                name: "Station".to_string(),
+                inner: ChannelInner::IsdbT {
+                    frequency: 515_142_857,
+                    bandwidth_hz: 6_000_000,
+                },
+                transport_stream_id: Some(key.stream_id),
+                services: vec![StoredService {
+                    id: key.service_id,
+                    name: "Station".to_string(),
+                    provider_name: String::new(),
+                }],
+            }])
+            .await
+            .unwrap();
+        store
+            .save_logo(&StoredLogo {
+                key,
+                png: b"image".to_vec(),
+            })
+            .await
+            .unwrap();
+        store
+            .replace_section(
+                SectionId {
+                    original_network_id: 4,
+                    stream_id: 1,
+                    service_id: 101,
+                    table_id: 0x50,
+                    section_number: 0,
+                },
+                &[Event {
+                    start_time: Some(now - chrono::TimeDelta::minutes(1)),
+                    duration: Some(chrono::TimeDelta::minutes(30)),
+                    name: Some("On air".into()),
+                    ..Event::new(key, 7)
+                }],
+            )
+            .await
+            .unwrap();
+        drop(store);
+        let store = crate::store::open(&url).await.unwrap();
+        let channels = store
+            .load_channels()
+            .await
+            .unwrap()
+            .iter()
+            .map(crate::channel::Channel::from)
+            .collect();
+        let expected_logo = format!(
+            "/api/logos/1/101?v={:08x}",
+            crate::logo::PNG_CRC.checksum(b"image")
+        );
+        let response = app(Arc::new(Workspace::new(store, channels, None)))
+            .oneshot(
+                Request::post("/api/chibitv.v1.ChibitvService/ListServices")
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from("{}"))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = to_bytes(response.into_body(), 10000).await.unwrap();
+        let response: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(response["services"][0]["currentEvent"]["title"], "On air");
+        assert_eq!(response["services"][0]["logoUrl"], expected_logo);
+    }
+
+    #[tokio::test]
+    async fn serves_logo_pngs_and_missing_logos_without_shadowing_rpc() {
+        let workspace = workspace_serving(&[(1, 101)]).await;
+        workspace
+            .store()
+            .save_logo(&crate::store::StoredLogo {
+                key: ServiceKey {
+                    stream_id: 1,
+                    service_id: 101,
+                },
+                png: b"png".to_vec(),
+            })
+            .await
+            .unwrap();
+        let router = app(workspace);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::get("/api/logos/1/101?v=1")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "image/png");
+        assert_eq!(
+            to_bytes(response.into_body(), 100).await.unwrap().as_ref(),
+            b"png"
+        );
+        let response = router
+            .oneshot(
+                Request::get("/api/logos/2/101")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

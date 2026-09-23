@@ -13,7 +13,7 @@ use crate::scheduler::Scheduler;
 use crate::service::{Service, ServiceKey};
 use crate::service_information::Signal;
 use crate::store::{NewChannel, Store};
-use crate::stream::{Stream, Streams, SubscribeError};
+use crate::stream::{Stream, StreamFailure, Streams, SubscribeError};
 use crate::task::{CancelError, DeleteError, SpawnError, Task, TaskId, TaskKind, Tasks};
 
 /// How long before a programme starts its recording does, so that a broadcast
@@ -57,6 +57,9 @@ pub struct StreamSubscription {
     pub init_segment: Option<Bytes>,
     pub fmp4: BroadcastStream<Bytes>,
     pub signals: BroadcastStream<Signal>,
+    /// What had already stopped the stream by the time it was attached to.
+    pub failure: Option<StreamFailure>,
+    pub failures: BroadcastStream<StreamFailure>,
 }
 
 pub struct Workspace {
@@ -355,12 +358,15 @@ impl Workspace {
 
         let (init_segment, fmp4) = stream.subscribe_fmp4();
         let signals = stream.subscribe_signal();
+        let (failure, failures) = stream.subscribe_failure();
 
         Ok(StreamSubscription {
             stream,
             init_segment,
             fmp4: BroadcastStream::new(fmp4),
             signals: BroadcastStream::new(signals),
+            failure,
+            failures: BroadcastStream::new(failures),
         })
     }
 }

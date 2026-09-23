@@ -1,11 +1,11 @@
-import { CheckIcon } from "@heroicons/react/24/outline";
-import { Disclosure, DisclosureGroup, ListBox, Spinner, Tabs } from "@heroui/react";
+import { CheckIcon, ChevronDownIcon, TvIcon } from "@heroicons/react/24/outline";
+import { Spinner, Tabs } from "@heroui/react";
 import { type JSX, useEffect, useState } from "react";
 
 import { groupByDeliverySystem, useChannels } from "../api/channels";
 import { isSameService, type ServiceKey, serviceKeyId, useServices } from "../api/services";
 import { useStream } from "../api/stream";
-import type { Channel, DeliverySystem, Service } from "../gen/chibitv/v1/chibitv_pb";
+import { type Channel, DeliverySystem, type Service } from "../gen/chibitv/v1/chibitv_pb";
 import { useSelectService, useServiceKey } from "../router";
 
 interface ChannelsProps {
@@ -16,7 +16,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
   const { state } = useStream();
   const service = useServiceKey();
   const selectServiceKey = useSelectService();
-  const [expandedChannelId, setExpandedChannelId] = useState<number>();
+  const [expandedGroupId, setExpandedGroupId] = useState<string>();
   const [selectedDeliverySystem, setSelectedDeliverySystem] = useState<DeliverySystem>();
   const { data: services = [], isLoading: areServicesLoading, isError: areServicesError } = useServices();
   const { data: channels = [], isLoading: areChannelsLoading, isError: areChannelsError } = useChannels();
@@ -34,12 +34,6 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     channelServices.push(listed);
     servicesByChannel.set(listed.channelId, channelServices);
   }
-
-  useEffect(() => {
-    if (currentChannelId !== undefined) {
-      setExpandedChannelId(currentChannelId);
-    }
-  }, [currentChannelId]);
 
   useEffect(() => {
     if (currentDeliverySystem !== undefined) {
@@ -66,87 +60,97 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     return <p className="p-3 text-sm text-muted">No channels are available.</p>;
   }
 
+  const renderService = (listed: Service) => {
+    const selected = isSameService(listed.key, service);
+    return (
+      <button
+        key={listed.key && serviceKeyId(listed.key)}
+        type="button"
+        aria-pressed={selected}
+        disabled={!listed.key}
+        onClick={() => listed.key && selectService(listed.key)}
+        className={`flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-start transition-colors hover:bg-default focus-visible:outline-2 focus-visible:outline-accent ${selected ? "bg-accent-soft text-accent-soft-foreground" : ""}`}
+      >
+        <span className="relative flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded bg-white text-gray-400">
+          <TvIcon className="size-5" />
+          {listed.logoUrl && (
+            <img
+              key={listed.logoUrl}
+              src={listed.logoUrl}
+              alt=""
+              className="absolute inset-0 h-full w-full bg-white object-contain"
+              onError={(event) => {
+                event.currentTarget.hidden = true;
+              }}
+            />
+          )}
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+          <span className="truncate text-sm font-semibold">{listed.name}</span>
+          {listed.currentEvent?.title && (
+            <span className="line-clamp-2 text-xs text-muted">{listed.currentEvent.title}</span>
+          )}
+        </span>
+        {selected &&
+          (isTuning ? (
+            <Spinner className="shrink-0" size="sm" />
+          ) : (
+            <CheckIcon className="size-4 shrink-0 text-accent" />
+          ))}
+      </button>
+    );
+  };
+
   const renderChannels = (groupChannels: Channel[]) => (
-    <DisclosureGroup
-      className="gap-1"
-      // Keys must be strings: react-aria's Disclosure drops a falsy id (`id ||= defaultId`),
-      // so the first channel (id 0) would never match its numeric key.
-      expandedKeys={expandedChannelId === undefined ? [] : [String(expandedChannelId)]}
-      onExpandedChange={(keys) => {
-        const [key] = keys;
-        if (key === undefined) {
-          setExpandedChannelId(undefined);
-          return;
+    <div className="flex flex-col gap-1">
+      {groupChannels.flatMap((channel) => {
+        const grouped = new Map<string, Service[]>();
+        for (const listed of servicesByChannel.get(channel.id) ?? []) {
+          // ponytail: SI has no universal subchannel flag. Group terrestrial
+          // services by multiplex and satellite variants by their station name;
+          // keep unrelated stations on the same CS multiplex individually visible.
+          const name =
+            channel.deliverySystem === DeliverySystem.ISDB_T
+              ? ""
+              : listed.name
+                  .normalize("NFKC")
+                  .trim()
+                  .replace(/[・\s]*\d+$/, "");
+          const group = grouped.get(name) ?? [];
+          group.push(listed);
+          grouped.set(name, group);
         }
-
-        const channelId = Number(key);
-        setExpandedChannelId(channelId);
-
-        const firstService = servicesByChannel.get(channelId)?.[0];
-        if (firstService?.key && !isSameService(firstService.key, service)) {
-          selectService(firstService.key);
-        }
-      }}
-    >
-      {groupChannels.map((channel) => {
-        const channelServices = servicesByChannel.get(channel.id) ?? [];
-
-        return (
-          <Disclosure key={channel.id} id={String(channel.id)} isDisabled={channelServices.length === 0}>
-            <Disclosure.Heading>
-              <Disclosure.Trigger className="flex min-h-12 w-full flex-row items-center gap-2 rounded-xl px-3 text-sm font-semibold data-[expanded=true]:bg-accent-soft data-[expanded=true]:text-accent-soft-foreground">
-                <span className="min-w-0 flex-1 truncate text-start">{channel.name}</span>
-                <Disclosure.Indicator className="size-4 shrink-0" />
-              </Disclosure.Trigger>
-            </Disclosure.Heading>
-            <Disclosure.Content>
-              <Disclosure.Body className="pb-1 ps-3 pt-1">
-                <ListBox
-                  aria-label={`${channel.name} services`}
-                  className="gap-1 p-0"
-                  selectedKeys={service === undefined ? [] : [serviceKeyId(service)]}
-                  selectionMode="single"
-                  onSelectionChange={(keys) => {
-                    if (keys === "all") {
-                      return;
-                    }
-
-                    const [key] = keys;
-                    const selected = channelServices.find(({ key: id }) => id && serviceKeyId(id) === key)?.key;
-                    if (selected && !isSameService(selected, service)) {
-                      selectService(selected);
-                    }
-                  }}
-                >
-                  {channelServices.map((channelService) => (
-                    <ListBox.Item
-                      key={channelService.key && serviceKeyId(channelService.key)}
-                      id={channelService.key && serviceKeyId(channelService.key)}
-                      className="min-h-12 rounded-xl px-3 data-[selected=true]:bg-accent-soft data-[selected=true]:text-accent-soft-foreground"
-                      textValue={channelService.name}
-                    >
-                      <div className="flex min-w-0 flex-1 flex-col">
-                        <span className="truncate text-sm font-medium">{channelService.name}</span>
-                        {channelService.providerName && (
-                          <span className="truncate text-xs text-muted">{channelService.providerName}</span>
-                        )}
-                      </div>
-                      {isTuning && isSameService(channelService.key, service) ? (
-                        <Spinner className="ms-auto shrink-0" size="sm" />
-                      ) : (
-                        <ListBox.ItemIndicator className="text-accent">
-                          <CheckIcon className="size-4" />
-                        </ListBox.ItemIndicator>
-                      )}
-                    </ListBox.Item>
-                  ))}
-                </ListBox>
-              </Disclosure.Body>
-            </Disclosure.Content>
-          </Disclosure>
-        );
+        return [...grouped.values()].map(([primary, ...branches]) => {
+          if (!primary) return null;
+          const groupId = primary.key ? serviceKeyId(primary.key) : String(channel.id);
+          const expanded = expandedGroupId === groupId;
+          // Keep a selected branch visible even when the rest are collapsed.
+          const visibleBranches = expanded ? branches : branches.filter((listed) => isSameService(listed.key, service));
+          return (
+            <div key={groupId}>
+              <div className="flex items-center">
+                {renderService(primary)}
+                {branches.length > 0 && (
+                  <button
+                    type="button"
+                    aria-label={`${expanded ? "Hide" : "Show"} subchannels for ${primary.name}`}
+                    aria-expanded={expanded}
+                    aria-controls={`subchannels-${groupId}`}
+                    onClick={() => setExpandedGroupId(expanded ? undefined : groupId)}
+                    className="flex size-10 shrink-0 items-center justify-center rounded-xl text-muted hover:bg-default focus-visible:outline-2 focus-visible:outline-accent"
+                  >
+                    <ChevronDownIcon className={`size-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                  </button>
+                )}
+              </div>
+              <div id={`subchannels-${groupId}`} className="ms-6 flex flex-col gap-1 border-s border-default ps-1">
+                {visibleBranches.map(renderService)}
+              </div>
+            </div>
+          );
+        });
       })}
-    </DisclosureGroup>
+    </div>
   );
 
   const selectedKey = groups.find((group) => group.id === selectedDeliverySystem)?.id ?? groups[0].id;
@@ -155,24 +159,7 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     <Tabs
       className="min-h-0 flex-1"
       selectedKey={selectedKey}
-      onSelectionChange={(key) => {
-        const deliverySystem = Number(key) as DeliverySystem;
-        setSelectedDeliverySystem(deliverySystem);
-
-        // Tune to the first service on the wave when the current service is on another wave.
-        if (deliverySystem === currentDeliverySystem) {
-          return;
-        }
-
-        const group = groups.find((group) => group.id === deliverySystem);
-        const firstService = group?.channels
-          .map((channel) => servicesByChannel.get(channel.id)?.[0])
-          .find((first) => first !== undefined);
-        if (firstService?.key && !isSameService(firstService.key, service)) {
-          setExpandedChannelId(firstService.channelId);
-          selectService(firstService.key);
-        }
-      }}
+      onSelectionChange={(key) => setSelectedDeliverySystem(Number(key) as DeliverySystem)}
     >
       <Tabs.ListContainer className="shrink-0">
         <Tabs.List aria-label="Broadcast waves">

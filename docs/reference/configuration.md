@@ -225,7 +225,7 @@ machine it runs on. Run it on JST, or set `TZ` for it, or else it cannot tell
 which programme is on air. `serve` warns when the clock disagrees.
 
 ```shell
-TZ=JST-9 cargo run -- serve
+TZ=JST-9 chibitv serve
 ```
 
 The Docker image sets `TZ=JST-9` itself.

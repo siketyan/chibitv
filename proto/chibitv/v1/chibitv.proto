@@ -97,6 +97,10 @@ message Service {
   string name = 2;
   string provider_name = 3;
   uint32 channel_id = 4;
+  // Empty until a logo has been received from broadcast SI.
+  string logo_url = 5;
+  // The programme on air, if its times are known from the EPG.
+  Event current_event = 6;
 }
 
 // ServiceKey identifies one service among the ones on air. A service id alone
@@ -356,5 +360,34 @@ message StreamResponse {
   oneof payload {
     StreamState state = 1;
     bytes fmp4 = 2;
+
+    // What stopped the stream. It is the last message of the call: nothing
+    // more is coming once the pipeline behind it has stopped.
+    StreamError error = 3;
   }
+}
+
+// StreamError is what stopped a stream for good.
+message StreamError {
+  StreamErrorKind kind = 1;
+
+  // What went wrong, as the server put it, for whoever has nothing better to
+  // show than the kind alone.
+  string message = 2;
+}
+
+// StreamErrorKind is why a stream stopped, told apart only as far as a viewer
+// can be told something useful about it.
+enum StreamErrorKind {
+  STREAM_ERROR_KIND_UNSPECIFIED = 0;
+
+  // No contract on the card covers the programme being watched.
+  STREAM_ERROR_KIND_NOT_CONTRACTED = 1;
+
+  // The card handed over no key to descramble the programme with, for a
+  // reason other than a missing contract.
+  STREAM_ERROR_KIND_DESCRAMBLING_REFUSED = 2;
+
+  // Anything else that stopped the stream.
+  STREAM_ERROR_KIND_INTERNAL = 3;
 }

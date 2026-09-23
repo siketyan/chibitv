@@ -3,7 +3,8 @@
 //! A [`Store`] is one database, and the repositories it is made of are one per
 //! kind of thing kept in it — [`ChannelRepository`] for the channels being
 //! served, [`ServiceRepository`] for the services they carry,
-//! [`EventRepository`] for the broadcast schedule so far.
+//! [`EventRepository`] for the broadcast schedule so far, [`LogoRepository`]
+//! for the logos of the services.
 //! Everything the rest of the program asks a database for is declared here, so
 //! another database is a second implementation of those traits and one more
 //! URL scheme in [`open`] rather than a rewrite, and whatever is worth keeping
@@ -11,6 +12,7 @@
 
 mod channel;
 mod event;
+mod logo;
 mod service;
 mod sqlite;
 
@@ -21,6 +23,7 @@ use anyhow::bail;
 pub use crate::service::StoredService;
 pub use channel::{ChannelRepository, NewChannel, StoredChannel};
 pub use event::{EventRepository, SectionId};
+pub use logo::{LogoRepository, StoredLogo};
 pub use service::ServiceRepository;
 pub use sqlite::SqliteStore;
 
@@ -28,7 +31,10 @@ pub use sqlite::SqliteStore;
 ///
 /// A backend implements every repository this is made of, so that one
 /// connection serves all of them.
-pub trait Store: ChannelRepository + ServiceRepository + EventRepository + Send + Sync {}
+pub trait Store:
+    ChannelRepository + ServiceRepository + EventRepository + LogoRepository + Send + Sync
+{
+}
 
 /// Opens the store the URL points at.
 ///

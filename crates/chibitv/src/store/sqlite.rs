@@ -14,8 +14,8 @@ use crate::event::Event;
 use crate::service::{Service, ServiceKey, StoredService};
 
 use super::{
-    ChannelRepository, EventRepository, NewChannel, SectionId, ServiceRepository, Store,
-    StoredChannel,
+    ChannelRepository, EventRepository, LogoRepository, NewChannel, SectionId, ServiceRepository,
+    Store, StoredChannel, StoredLogo,
 };
 
 /// How long a statement waits for the database to be free again.
@@ -40,6 +40,12 @@ macro_rules! select_events {
 const SELECT_CHANNELS: &str = "SELECT id, name, delivery_system, tuning, frequency, bandwidth_hz, \
                                stream_id, space, channel_number, transport_stream_id FROM \
                                channels ORDER BY id";
+
+macro_rules! select_logos {
+    () => {
+        "SELECT stream_id, service_id, png FROM service_logos"
+    };
+}
 
 macro_rules! select_services {
     () => {
@@ -115,6 +121,31 @@ impl EventRepository for SqliteStore {
         .bind(i64::from(key.stream_id))
         .bind(i64::from(key.service_id))
         .bind(i64::from(event_id))
+        .fetch_optional(&self.pool)
+        .await?
+        .as_ref()
+        .map(read_event)
+        .transpose()
+    }
+
+    async fn find_event_on_air(
+        &self,
+        key: ServiceKey,
+        at: NaiveDateTime,
+    ) -> anyhow::Result<Option<Event>> {
+        // An event runs from its start up to, but not including, its end, and
+        // the one that started last wins where two announced overlap.
+        let at = to_timestamp(at);
+        sqlx::query(concat!(
+            select_events!(),
+            " WHERE stream_id = ? AND service_id = ? AND start_time <= ? \
+             AND start_time + duration_seconds > ? \
+             ORDER BY start_time DESC, event_id DESC LIMIT 1"
+        ))
+        .bind(i64::from(key.stream_id))
+        .bind(i64::from(key.service_id))
+        .bind(at)
+        .bind(at)
         .fetch_optional(&self.pool)
         .await?
         .as_ref()
@@ -573,6 +604,53 @@ fn read_event(row: &SqliteRow) -> anyhow::Result<Event> {
     })
 }
 
+#[async_trait]
+impl LogoRepository for SqliteStore {
+    async fn find_logos(&self) -> anyhow::Result<Vec<StoredLogo>> {
+        sqlx::query(concat!(select_logos!(), " ORDER BY stream_id, service_id"))
+            .fetch_all(&self.pool)
+            .await?
+            .iter()
+            .map(read_logo)
+            .collect()
+    }
+
+    async fn find_logo(&self, key: ServiceKey) -> anyhow::Result<Option<StoredLogo>> {
+        sqlx::query(concat!(
+            select_logos!(),
+            " WHERE stream_id = ? AND service_id = ?"
+        ))
+        .bind(i64::from(key.stream_id))
+        .bind(i64::from(key.service_id))
+        .fetch_optional(&self.pool)
+        .await?
+        .as_ref()
+        .map(read_logo)
+        .transpose()
+    }
+
+    async fn save_logo(&self, logo: &StoredLogo) -> anyhow::Result<()> {
+        sqlx::query(
+            "INSERT INTO service_logos (stream_id, service_id, png) VALUES (?, ?, ?) \
+             ON CONFLICT (stream_id, service_id) DO UPDATE SET png = excluded.png",
+        )
+        .bind(i64::from(logo.key.stream_id))
+        .bind(i64::from(logo.key.service_id))
+        .bind(&logo.png)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(())
+    }
+}
+
+fn read_logo(row: &SqliteRow) -> anyhow::Result<StoredLogo> {
+    Ok(StoredLogo {
+        key: read_key(row)?,
+        png: row.try_get("png")?,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::NaiveDate;
@@ -617,6 +695,69 @@ mod tests {
                 provider_name: "Provider".to_string(),
             }],
         }
+    }
+
+    #[tokio::test]
+    async fn saves_and_replaces_logos_for_the_full_service_key() {
+        let store = store().await;
+        let mut first = StoredLogo {
+            key: ServiceKey {
+                stream_id: 1,
+                service_id: 101,
+            },
+            png: vec![1, 2],
+        };
+        let other = StoredLogo {
+            key: ServiceKey {
+                stream_id: 2,
+                service_id: 101,
+            },
+            png: vec![3],
+        };
+        store.save_logo(&first).await.unwrap();
+        store.save_logo(&other).await.unwrap();
+        first.png = vec![4, 5];
+        store.save_logo(&first).await.unwrap();
+        assert_eq!(
+            store.find_logos().await.unwrap(),
+            vec![first.clone(), other]
+        );
+        assert_eq!(store.find_logo(first.key).await.unwrap(), Some(first));
+    }
+
+    #[tokio::test]
+    async fn finds_the_event_on_air_from_its_start_up_to_its_end() {
+        let store = store().await;
+        let start = NaiveDate::from_ymd_opt(2026, 7, 11)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        let unscheduled = Event {
+            start_time: None,
+            ..event(0x0002, "Unscheduled", 12)
+        };
+        let endless = Event {
+            duration: None,
+            ..event(0x0003, "Endless", 12)
+        };
+        store
+            .replace_section(
+                SECTION,
+                &[event(0x0001, "On air", 12), unscheduled, endless],
+            )
+            .await
+            .unwrap();
+        let on_air = async |at| {
+            store
+                .find_event_on_air(SECTION.service(), at)
+                .await
+                .unwrap()
+                .map(|event| event.id)
+        };
+
+        assert_eq!(on_air(start - TimeDelta::seconds(1)).await, None);
+        assert_eq!(on_air(start).await, Some(0x0001));
+        assert_eq!(on_air(start + TimeDelta::minutes(30)).await, None);
     }
 
     #[tokio::test]

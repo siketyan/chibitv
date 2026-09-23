@@ -7,14 +7,14 @@
 use std::sync::Arc;
 
 use tokio::sync::mpsc;
-use tracing::{debug, error};
+use tracing::{debug, error, info};
 
 use chibitv_b10::table::EventInformation as B10EventInformation;
 use chibitv_b60::table::EventInformation as B60EventInformation;
 
 use crate::event::Event;
 use crate::service::StoredService;
-use crate::store::{SectionId, Store};
+use crate::store::{SectionId, Store, StoredLogo};
 
 /// How many updates wait for the store before one is refused.
 const QUEUE_CAPACITY: usize = 256;
@@ -40,6 +40,8 @@ pub enum ServiceInformationUpdate {
         replaces: bool,
         entries: EventEntries,
     },
+    /// The logo of a service, as the SI delivered it.
+    Logo(StoredLogo),
     /// Runs once every update queued before it is written.
     Notify(Box<dyn FnOnce() + Send>),
 }
@@ -142,6 +144,10 @@ async fn write(store: &dyn Store, update: ServiceInformationUpdate) -> anyhow::R
                 store.save_events(section, &events).await?;
             }
             debug!(?section, events = events.len(), "Stored a section");
+        }
+        ServiceInformationUpdate::Logo(logo) => {
+            store.save_logo(&logo).await?;
+            info!(key = ?logo.key, size = logo.png.len(), "Stored a station logo");
         }
         ServiceInformationUpdate::Notify(f) => f(),
     }

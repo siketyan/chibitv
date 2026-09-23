@@ -1,13 +1,17 @@
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
 
 use chrono::{Local, NaiveDateTime, TimeZone};
 use connectrpc::{
     ConnectError, RequestContext, Response, Router, ServiceRequest, ServiceResult, ServiceStream,
 };
-use tokio_stream::StreamExt;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
+use tokio_stream::{Stream, StreamExt};
 use tracing::warn;
 
 use crate::channel::ChannelInner;
@@ -17,6 +21,7 @@ use crate::proto::chibitv::v1::*;
 use crate::service;
 use crate::service_information::Signal;
 use crate::store;
+use crate::stream::{StreamFailure, StreamFailureKind};
 use crate::task;
 use crate::workspace::{StreamSubscription, Workspace, WorkspaceError};
 
@@ -60,14 +65,33 @@ impl ChibitvService for ChibitvServiceImpl {
         _ctx: RequestContext,
         _request: ServiceRequest<'_, ListServicesRequest>,
     ) -> ServiceResult<ListServicesResponse> {
-        let services = self
-            .workspace
-            .services()
+        let store = self.workspace.store();
+        let now = Local::now().naive_local();
+        // The logos are read in one statement rather than one per service.
+        let logos = store
+            .find_logos()
             .await
-            .map_err(workspace_error)?
-            .iter()
-            .map(|(service, channel)| service_message(service, channel))
-            .collect();
+            .map_err(store_error)?
+            .into_iter()
+            .map(|logo| (logo.key, logo.png))
+            .collect::<HashMap<_, _>>();
+
+        let mut services = vec![];
+        for (service, channel) in self.workspace.services().await.map_err(workspace_error)? {
+            let mut message = service_message(&service, &channel);
+            message.current_event = store
+                .find_event_on_air(service.key, now)
+                .await
+                .map_err(store_error)?
+                .as_ref()
+                .map(event_message)
+                .into();
+            message.logo_url = logos
+                .get(&service.key)
+                .map(|png| logo_url(service.key, png))
+                .unwrap_or_default();
+            services.push(message);
+        }
 
         Response::ok(ListServicesResponse {
             services,
@@ -347,6 +371,8 @@ impl ChibitvService for ChibitvServiceImpl {
             init_segment,
             fmp4,
             signals,
+            failure,
+            failures,
         } = self
             .workspace
             .subscribe_stream(key)
@@ -388,11 +414,32 @@ impl ChibitvService for ChibitvServiceImpl {
                 .filter_map(|state| state)
         };
 
+        // What stopped the stream, once something has. Nothing else ends the
+        // call: the channels it reads stay open for as long as the stream held
+        // below is alive.
+        let failure = async move {
+            if let Some(failure) = failure {
+                return failure;
+            }
+
+            let mut failures = failures;
+            loop {
+                match failures.next().await {
+                    Some(Ok(failure)) => return failure,
+                    Some(Err(BroadcastStreamRecvError::Lagged(_))) => continue,
+                    None => std::future::pending().await,
+                }
+            }
+        };
+
         // The stream keeps the tuner occupied, so it is moved into the
         // response stream to release the tuner once every client is gone.
         Response::stream_ok(
             initial_state
-                .chain(init_segment.chain(fmp4).merge(states))
+                .chain(ending_with_failure(
+                    init_segment.chain(fmp4).merge(states),
+                    failure,
+                ))
                 .map(move |response| {
                     let _stream = &stream;
                     Ok(response)
@@ -480,6 +527,67 @@ async fn stream_state(
             ..Default::default()
         }))),
         ..Default::default()
+    }
+}
+
+/// A response stream that ends on the failure stopping the stream behind it,
+/// which it hands over as its last message.
+///
+/// Nothing more is coming by then — a card that hands over no key answers the
+/// next ECM the same way — so the call ends rather than leaving the client to
+/// sit through its own timeout before taking the stream up again.
+struct EndingWithFailure {
+    body: Pin<Box<dyn Stream<Item = StreamResponse> + Send>>,
+    /// Taken once the failure has been sent, which is what ends the stream.
+    failure: Option<Pin<Box<dyn Future<Output = StreamFailure> + Send>>>,
+}
+
+impl Stream for EndingWithFailure {
+    type Item = StreamResponse;
+
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let this = self.get_mut();
+        let Some(failure) = this.failure.as_mut() else {
+            return Poll::Ready(None);
+        };
+
+        // The failure comes first: whatever the body has left to say is media
+        // from before the pipeline stopped, and there is nobody to play it.
+        if let Poll::Ready(failure) = failure.as_mut().poll(cx) {
+            this.failure = None;
+            return Poll::Ready(Some(failure_response(failure)));
+        }
+
+        this.body.as_mut().poll_next(cx)
+    }
+}
+
+fn ending_with_failure(
+    body: impl Stream<Item = StreamResponse> + Send + 'static,
+    failure: impl Future<Output = StreamFailure> + Send + 'static,
+) -> impl Stream<Item = StreamResponse> + Send + 'static {
+    EndingWithFailure {
+        body: Box::pin(body),
+        failure: Some(Box::pin(failure)),
+    }
+}
+
+fn failure_response(failure: StreamFailure) -> StreamResponse {
+    StreamResponse {
+        payload: Some(stream_response::Payload::Error(Box::new(StreamError {
+            kind: stream_error_kind(failure.kind).into(),
+            message: failure.message,
+            ..Default::default()
+        }))),
+        ..Default::default()
+    }
+}
+
+fn stream_error_kind(value: StreamFailureKind) -> StreamErrorKind {
+    match value {
+        StreamFailureKind::NotContracted => StreamErrorKind::NotContracted,
+        StreamFailureKind::DescramblingRefused => StreamErrorKind::DescramblingRefused,
+        StreamFailureKind::Internal => StreamErrorKind::Internal,
     }
 }
 
@@ -742,6 +850,17 @@ fn service_key_message(value: service::ServiceKey) -> ServiceKey {
     }
 }
 
+/// Where the logo of the service is served from, which changes with the
+/// logo so that a client caching the old one asks for the new one.
+fn logo_url(key: service::ServiceKey, png: &[u8]) -> String {
+    format!(
+        "/api/logos/{}/{}?v={:08x}",
+        key.stream_id,
+        key.service_id,
+        crate::logo::PNG_CRC.checksum(png)
+    )
+}
+
 fn service_message(service: &service::Service, channel: &crate::channel::Channel) -> Service {
     Service {
         key: Some(service_key_message(service.key)).into(),
@@ -912,5 +1031,37 @@ mod tests {
             local_time.and_utc().timestamp() - 9 * 60 * 60
         );
         assert_eq!(converted.nanos, 123_000_000);
+    }
+
+    #[tokio::test]
+    async fn ends_a_response_stream_on_the_failure_that_stopped_the_stream() {
+        let (stopped, failure) = tokio::sync::oneshot::channel();
+        // A live stream does not end of its own accord, so neither does this.
+        let body = tokio_stream::iter([fmp4_response(bytes::Bytes::from_static(b"a fragment"))])
+            .chain(tokio_stream::pending());
+        let mut responses =
+            std::pin::pin!(ending_with_failure(
+                body,
+                async move { failure.await.unwrap() }
+            ));
+
+        assert!(matches!(
+            responses.next().await.unwrap().payload,
+            Some(stream_response::Payload::Fmp4(_))
+        ));
+
+        stopped
+            .send(StreamFailure {
+                kind: StreamFailureKind::NotContracted,
+                message: "the card holds no contract for this programme".to_string(),
+            })
+            .unwrap();
+
+        let Some(stream_response::Payload::Error(error)) = responses.next().await.unwrap().payload
+        else {
+            panic!("the failure should be the next response");
+        };
+        assert_eq!(error.kind, StreamErrorKind::NotContracted);
+        assert!(responses.next().await.is_none());
     }
 }

@@ -7,7 +7,7 @@ use chibitv_b60::message::{M2SectionMessage, Message};
 use chibitv_b60::table::{MhEit, MhSdt, Table};
 
 use crate::demux::SignalingEvent;
-use crate::service::StoredService;
+use crate::service::{ServiceKey, StoredService};
 use crate::store::SectionId;
 
 mod writer;
@@ -69,6 +69,7 @@ pub struct ServiceInformationProcessor {
     signal_tx: Option<Sender<Signal>>,
     current_event_id: Option<u16>,
     stored_sections: HashMap<SectionKey, SectionVersion>,
+    logos: crate::logo::Logos,
 }
 
 impl ServiceInformationProcessor {
@@ -84,6 +85,7 @@ impl ServiceInformationProcessor {
             signal_tx,
             current_event_id: None,
             stored_sections: HashMap::new(),
+            logos: crate::logo::Logos::default(),
         }
     }
 
@@ -128,6 +130,23 @@ impl ServiceInformationProcessor {
             {
                 self.process_b10_eit(table_id, table)
             }
+            B10Table::Dsmcc(data) => {
+                if let Some(writer) = &self.writer {
+                    let _ = self.logos.carousel(writer, &data);
+                }
+                Ok(())
+            }
+            B10Table::Cdt(table) if table.current_next_indicator && table.data_type == 1 => {
+                if let Some(writer) = &self.writer {
+                    self.logos.data(
+                        writer,
+                        table.original_network_id,
+                        table.download_data_id,
+                        &table.data,
+                    );
+                }
+                Ok(())
+            }
             B10Table::Sdt(table) if table_id == SDT_ACTUAL_TABLE_ID => {
                 self.process_b10_sdt(table);
                 Ok(())
@@ -137,6 +156,10 @@ impl ServiceInformationProcessor {
     }
 
     fn process_b10_sdt(&mut self, table: Sdt) {
+        if !table.current_next_indicator {
+            return;
+        }
+
         let stream_id = table.transport_stream_id;
         self.store_section(
             SectionKey {
@@ -159,6 +182,24 @@ impl ServiceInformationProcessor {
                     .collect(),
             },
         );
+
+        if let Some(writer) = &self.writer {
+            for service in &table.services {
+                for descriptor in &service.descriptors {
+                    if let chibitv_b10::descriptor::Descriptor::Unknown(0xcf, data) = descriptor {
+                        self.logos.reference(
+                            writer,
+                            ServiceKey {
+                                stream_id,
+                                service_id: service.service_id,
+                            },
+                            table.original_network_id,
+                            data,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn process_b10_eit(&mut self, table_id: u8, table: Eit) -> anyhow::Result<()> {
@@ -196,6 +237,12 @@ impl ServiceInformationProcessor {
 
     fn process_m2_section_message(&mut self, message: M2SectionMessage) -> anyhow::Result<()> {
         match message.table {
+            Table::MhCdt(table) if table.current_next_indicator && table.data_type == 1 => {
+                if let Some(writer) = &self.writer {
+                    self.logos.mh_data(writer, table);
+                }
+                Ok(())
+            }
             Table::MhEit(table) => self.process_mh_eit(table),
             Table::MhSdt(table) => {
                 self.process_mh_sdt(table);
@@ -239,6 +286,10 @@ impl ServiceInformationProcessor {
     }
 
     fn process_mh_sdt(&mut self, table: MhSdt) {
+        if !table.current_next_indicator {
+            return;
+        }
+
         let stream_id = table.tlv_stream_id;
         self.store_section(
             SectionKey {
@@ -261,6 +312,24 @@ impl ServiceInformationProcessor {
                     .collect(),
             },
         );
+
+        if let Some(writer) = &self.writer {
+            for service in &table.services {
+                for descriptor in &service.descriptors {
+                    if let chibitv_b60::descriptor::Descriptor::Unknown(0x8025, data) = descriptor {
+                        self.logos.reference(
+                            writer,
+                            ServiceKey {
+                                stream_id,
+                                service_id: service.service_id,
+                            },
+                            table.original_network_id,
+                            data,
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Queues what a section says for the store, unless it already has it.

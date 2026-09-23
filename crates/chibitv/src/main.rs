@@ -8,6 +8,7 @@ mod demux;
 mod event;
 mod event_crawler;
 mod hevc;
+mod logo;
 mod m2ts;
 mod mmt;
 mod mp2;

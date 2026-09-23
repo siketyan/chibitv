@@ -8,6 +8,7 @@
 //! [`crate::service_information`].
 
 use async_trait::async_trait;
+use chrono::NaiveDateTime;
 
 use crate::event::Event;
 use crate::service::ServiceKey;
@@ -41,6 +42,14 @@ pub trait EventRepository: Send + Sync {
     async fn find_events(&self, key: ServiceKey) -> anyhow::Result<Vec<Event>>;
 
     async fn find_event(&self, key: ServiceKey, event_id: u16) -> anyhow::Result<Option<Event>>;
+
+    /// The event of the service on air at the time, which is the one that
+    /// started last where two announced overlap.
+    async fn find_event_on_air(
+        &self,
+        key: ServiceKey,
+        at: NaiveDateTime,
+    ) -> anyhow::Result<Option<Event>>;
 
     /// Replaces everything a section delivered with the events it lists now.
     async fn replace_section(&self, section: SectionId, events: &[Event]) -> anyhow::Result<()>;

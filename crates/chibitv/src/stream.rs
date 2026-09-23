@@ -12,7 +12,7 @@ use chibitv_b61::Descrambler;
 
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
-use crate::demux::Demux;
+use crate::demux::{Demux, DescramblingRefusal, descrambling_refusal};
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
 use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
@@ -48,6 +48,82 @@ pub enum SubscribeError {
     Internal(anyhow::Error),
 }
 
+/// Why a stream stopped, as far as it is worth telling a viewer apart.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum StreamFailureKind {
+    /// No contract on the card covers the programme being watched.
+    NotContracted,
+    /// The card handed over no key to descramble the programme with, for some
+    /// other reason.
+    DescramblingRefused,
+    /// Anything else that stopped the pipeline.
+    Internal,
+}
+
+/// What stopped a stream, on its way to whoever is watching it.
+#[derive(Clone, Debug)]
+pub struct StreamFailure {
+    pub kind: StreamFailureKind,
+    /// What went wrong, as the error put it.
+    pub message: String,
+}
+
+impl StreamFailure {
+    fn of(error: &anyhow::Error) -> Self {
+        let kind = match descrambling_refusal(error) {
+            Some(DescramblingRefusal::NotContracted) => StreamFailureKind::NotContracted,
+            Some(DescramblingRefusal::Other) => StreamFailureKind::DescramblingRefused,
+            None => StreamFailureKind::Internal,
+        };
+
+        Self {
+            kind,
+            message: error.to_string(),
+        }
+    }
+}
+
+/// Where a stream leaves what stopped it.
+///
+/// A stream stops for good — the card answers the next ECM the way it answered
+/// this one — so what stopped it is kept beside the channel it is announced
+/// on, and a client attaching afterwards is told as readily as the ones that
+/// were already watching.
+#[derive(Clone)]
+struct StreamFailures {
+    last: Arc<Mutex<Option<StreamFailure>>>,
+    tx: Sender<StreamFailure>,
+}
+
+impl StreamFailures {
+    fn new() -> Self {
+        let (tx, _) = broadcast_channel(1);
+        Self {
+            last: Arc::new(Mutex::new(None)),
+            tx,
+        }
+    }
+
+    /// Announcing under the lock is what keeps a client from being told twice,
+    /// or not at all: whoever subscribes either reads the failure below or
+    /// receives it, never both.
+    fn record(&self, failure: StreamFailure) {
+        let mut last = self.last.lock().unwrap();
+        if last.is_some() {
+            return;
+        }
+
+        *last = Some(failure.clone());
+        let _ = self.tx.send(failure);
+    }
+
+    fn subscribe(&self) -> (Option<StreamFailure>, Receiver<StreamFailure>) {
+        let last = self.last.lock().unwrap();
+        let rx = self.tx.subscribe();
+        (last.clone(), rx)
+    }
+}
+
 struct Fmp4StreamWriter {
     tx: Sender<Bytes>,
     init_segment: Arc<Mutex<Option<Bytes>>>,
@@ -65,6 +141,31 @@ impl WriteMp4Fragment for Fmp4StreamWriter {
     }
 }
 
+/// What a remuxer thread writes and the clients of a [`Stream`] read.
+#[derive(Clone)]
+struct StreamOutputs {
+    fmp4_tx: Sender<Bytes>,
+    fmp4_init_segment: Arc<Mutex<Option<Bytes>>>,
+    signal_tx: Sender<Signal>,
+    failures: StreamFailures,
+    event_id: Arc<RwLock<Option<u16>>>,
+}
+
+impl StreamOutputs {
+    fn new() -> Self {
+        let (fmp4_tx, _) = broadcast_channel::<Bytes>(BROADCAST_CAPACITY);
+        let (signal_tx, _) = broadcast_channel::<Signal>(16);
+
+        Self {
+            fmp4_tx,
+            fmp4_init_segment: Arc::new(Mutex::new(None)),
+            signal_tx,
+            failures: StreamFailures::new(),
+            event_id: Arc::new(RwLock::new(None)),
+        }
+    }
+}
+
 /// A single tuned service, shared by every client streaming it.
 ///
 /// The tuner stays occupied as long as at least one `Arc` of the stream is
@@ -72,10 +173,7 @@ impl WriteMp4Fragment for Fmp4StreamWriter {
 /// closes the tuner device and releases the lease.
 pub struct Stream {
     key: ServiceKey,
-    event_id: Arc<RwLock<Option<u16>>>,
-    fmp4_tx: Sender<Bytes>,
-    fmp4_init_segment: Arc<Mutex<Option<Bytes>>>,
-    signal_tx: Sender<Signal>,
+    outputs: StreamOutputs,
     kill_tx: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
@@ -85,22 +183,27 @@ impl Stream {
     }
 
     pub fn event_id(&self) -> Option<u16> {
-        *self.event_id.read().unwrap()
+        *self.outputs.event_id.read().unwrap()
     }
 
     pub fn subscribe_fmp4(&self) -> (Option<Bytes>, Receiver<Bytes>) {
-        let init_segment = self.fmp4_init_segment.lock().unwrap();
-        let rx = self.fmp4_tx.subscribe();
+        let init_segment = self.outputs.fmp4_init_segment.lock().unwrap();
+        let rx = self.outputs.fmp4_tx.subscribe();
         info!(
             service_id = self.key.service_id,
-            receivers = self.fmp4_tx.receiver_count(),
+            receivers = self.outputs.fmp4_tx.receiver_count(),
             "fMP4 stream client subscribed"
         );
         (init_segment.clone(), rx)
     }
 
     pub fn subscribe_signal(&self) -> Receiver<Signal> {
-        self.signal_tx.subscribe()
+        self.outputs.signal_tx.subscribe()
+    }
+
+    /// What stopped the stream, if it already has, and whatever stops it next.
+    pub fn subscribe_failure(&self) -> (Option<StreamFailure>, Receiver<StreamFailure>) {
+        self.outputs.failures.subscribe()
     }
 }
 
@@ -220,10 +323,7 @@ fn start_stream(
     tuner.tune(channel.clone())?;
     let reader = tuner.open()?;
 
-    let (fmp4_tx, _) = broadcast_channel::<Bytes>(BROADCAST_CAPACITY);
-    let fmp4_init_segment = Arc::new(Mutex::new(None));
-    let (signal_tx, _) = broadcast_channel::<Signal>(16);
-    let event_id = Arc::new(RwLock::new(None));
+    let outputs = StreamOutputs::new();
 
     let kill_tx = match &channel.inner {
         ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
@@ -237,10 +337,7 @@ fn start_stream(
                     service_id: Some(key.service_id),
                 },
                 writer,
-                &fmp4_tx,
-                &fmp4_init_segment,
-                &signal_tx,
-                &event_id,
+                &outputs,
             )
         }
         ChannelInner::IsdbT { .. }
@@ -262,10 +359,7 @@ fn start_stream(
                     service_id: target_service_id,
                 },
                 writer,
-                &fmp4_tx,
-                &fmp4_init_segment,
-                &signal_tx,
-                &event_id,
+                &outputs,
             )
         }
     }?;
@@ -274,10 +368,7 @@ fn start_stream(
 
     Ok(Arc::new(Stream {
         key,
-        event_id,
-        fmp4_tx,
-        fmp4_init_segment,
-        signal_tx,
+        outputs,
         kill_tx: Some(kill_tx),
     }))
 }
@@ -286,25 +377,24 @@ fn spawn_remuxer<D>(
     demux: D,
     target: StreamTarget,
     writer: ServiceInformationWriter,
-    fmp4_tx: &Sender<Bytes>,
-    fmp4_init_segment: &Arc<Mutex<Option<Bytes>>>,
-    signal_tx: &Sender<Signal>,
-    event_id: &Arc<RwLock<Option<u16>>>,
+    outputs: &StreamOutputs,
 ) -> anyhow::Result<tokio::sync::oneshot::Sender<()>>
 where
     D: Demux + Send + 'static,
 {
     let fmp4_writer = Fmp4StreamWriter {
-        tx: fmp4_tx.clone(),
-        init_segment: Arc::clone(fmp4_init_segment),
+        tx: outputs.fmp4_tx.clone(),
+        init_segment: Arc::clone(&outputs.fmp4_init_segment),
     };
     let mux = FragmentedMp4Muxer::new(fmp4_writer);
     let mut remuxer = Remuxer::new(demux, mux)?;
-    let mut processor = ServiceInformationProcessor::new(Some(writer), Some(signal_tx.clone()))
-        .watching_service(target.service_id);
+    let mut processor =
+        ServiceInformationProcessor::new(Some(writer), Some(outputs.signal_tx.clone()))
+            .watching_service(target.service_id);
 
     let (kill_tx, mut kill_rx) = tokio::sync::oneshot::channel();
-    let event_id = Arc::clone(event_id);
+    let failures = outputs.failures.clone();
+    let event_id = Arc::clone(&outputs.event_id);
     std::thread::spawn(move || {
         let result = (|| -> anyhow::Result<()> {
             loop {
@@ -324,8 +414,67 @@ where
 
         if let Err(error) = result {
             tracing::error!(channel_id = target.channel_id, %error, "Stream remuxer failed");
+            // Nothing is coming out of this stream any more, so whoever is
+            // watching it is told why rather than left with a frozen picture.
+            failures.record(StreamFailure::of(&error));
         }
     });
 
     Ok(kill_tx)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tells_a_programme_no_contract_covers_from_anything_else_that_stops_a_stream() {
+        assert_eq!(
+            StreamFailure::of(
+                &chibitv_b25::EcmRefusedError {
+                    return_code: 0x8901
+                }
+                .into()
+            )
+            .kind,
+            StreamFailureKind::NotContracted
+        );
+        assert_eq!(
+            StreamFailure::of(
+                &chibitv_b61::EcmRefusedError {
+                    return_code: 0xA101
+                }
+                .into()
+            )
+            .kind,
+            StreamFailureKind::DescramblingRefused
+        );
+        assert_eq!(
+            StreamFailure::of(&anyhow::anyhow!("the tuner went away")).kind,
+            StreamFailureKind::Internal
+        );
+    }
+
+    #[tokio::test]
+    async fn tells_a_client_what_stopped_the_stream_whichever_side_of_it_it_arrived() {
+        let failures = StreamFailures::new();
+
+        let (before, mut watching) = failures.subscribe();
+        assert!(before.is_none());
+
+        failures.record(StreamFailure {
+            kind: StreamFailureKind::NotContracted,
+            message: "no contract".to_string(),
+        });
+
+        assert_eq!(
+            watching.recv().await.unwrap().kind,
+            StreamFailureKind::NotContracted
+        );
+
+        // One that attaches afterwards reads it instead of waiting for a
+        // second announcement that is never coming.
+        let (after, _) = failures.subscribe();
+        assert_eq!(after.unwrap().kind, StreamFailureKind::NotContracted);
+    }
 }
