@@ -34,8 +34,8 @@ pub enum DeliverySystem {
 }
 
 impl DeliverySystem {
-    /// Every broadcast there is, which is what a tuner receives unless the
-    /// configuration says otherwise.
+    /// Every broadcast there is.
+    #[cfg(test)]
     pub const ALL: [Self; 3] = [Self::IsdbT, Self::IsdbS, Self::IsdbS3];
 
     /// The name the configuration and the database call it by.

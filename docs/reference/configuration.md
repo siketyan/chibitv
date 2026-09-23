@@ -41,18 +41,16 @@ descrambling (B25) derives its keys from the card alone, so a setup without a
 
 An array of tables, one per tuner. `type` picks the implementation, and the
 remaining keys belong to that variant, apart from `delivery_systems`, which
-every variant takes.
+every variant requires.
 
 | Key                | Type     | Default | Description                                                                                       |
 | ------------------ | -------- | ------- | ------------------------------------------------------------------------------------------------- |
-| `delivery_systems` | string[] | all     | The broadcasts the tuner receives, out of `"ISDB-T"`, `"ISDB-S"` and `"ISDB-S3"` (BS/CS 4K). |
+| `delivery_systems` | string[] | _required_ | The broadcasts the tuner receives, out of `"ISDB-T"`, `"ISDB-S"` and `"ISDB-S3"` (BS/CS 4K). |
 
 A tuner is picked for the broadcast the channel is on: the first free one in
-the file that receives it. Unless `delivery_systems` is given, a tuner is taken
-to receive every broadcast, so a setup where every tuner does can leave it out.
-Where a tuner receives only some, naming them keeps a channel it cannot reach
-from being tuned on it, and keeps the tuner free for what it can, such as a 4K
-satellite tuner beside a terrestrial one:
+the file that receives it. Naming only the broadcasts a tuner receives keeps a
+channel it cannot reach from being tuned on it, and keeps the tuner free for
+what it can, such as a 4K satellite tuner beside a terrestrial one:
 
 ```toml
 [[tuners]]
@@ -85,6 +83,7 @@ A Linux DVB device. Available on Linux with the default `dvb` Cargo feature.
 type = "dvb"
 adapter_num = 0
 frontend_num = 0
+delivery_systems = ["ISDB-T"]
 ```
 
 ### `type = "px4"`
@@ -118,6 +117,7 @@ Device files of the driver belong to the `video` group, as the
 type = "px4"
 path = "/dev/pxmlt5video0"
 lnb_voltage = 15
+delivery_systems = ["ISDB-T", "ISDB-S"]
 ```
 
 ### `type = "bon"`
@@ -137,16 +137,19 @@ rather than a frequency.
 [[tuners]]
 type = "bon"
 path = 'C:\BonDriver\BonDriver_BDA.dll'
+delivery_systems = ["ISDB-T"]
 ```
 
 ### `type = "stdin"`
 
 Reads the stream from standard input instead of a device, which is how a
-captured file is fed through the same pipeline. Takes no further keys.
+captured file is fed through the same pipeline. Takes no further keys than
+`delivery_systems`, the broadcast of the stream fed.
 
 ```toml
 [[tuners]]
 type = "stdin"
+delivery_systems = ["ISDB-T"]
 ```
 
 ## Channels

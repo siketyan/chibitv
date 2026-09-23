@@ -167,7 +167,7 @@ impl Tuners {
     }
 
     pub fn add_tuner_from_config(&mut self, id: u32, config: &TunerConfig) -> anyhow::Result<()> {
-        let systems = config.delivery_systems();
+        let systems = config.delivery_systems.clone();
         match &config.kind {
             TunerKind::Stdin => {
                 self.add_tuner(id, stdin::StdinTuner, systems);
