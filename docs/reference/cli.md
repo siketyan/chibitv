@@ -5,11 +5,7 @@ chibitv [OPTIONS] <COMMAND>
 ```
 
 Every subcommand loads [`./config.toml`](./configuration) from the working
-directory before it runs. During development, run the binary through Cargo:
-
-```shell
-cargo run -- <COMMAND>
-```
+directory before it runs.
 
 ## Global options
 
@@ -21,7 +17,7 @@ cargo run -- <COMMAND>
 The global options go before the subcommand:
 
 ```shell
-cargo run -- --verbose live --channel 1
+chibitv --verbose live --channel 1
 ```
 
 Logs are written to stderr, which leaves stdout free for the stream a
@@ -52,7 +48,7 @@ Print the channels the database keeps, one line per channel with the identifier
 per service of it. Takes no options.
 
 ```shell
-cargo run -- channels
+chibitv channels
 ```
 
 ```
@@ -86,10 +82,10 @@ with <kbd>Ctrl</kbd>+<kbd>C</kbd>.
 
 ```shell
 # Watch the first channel the database keeps with a player that accepts stdin.
-cargo run -- live --channel 1 | mpv -
+chibitv live --channel 1 | mpv -
 
 # Alternatively, save the remuxed stream.
-cargo run -- live --channel 1 > live.m2ts
+chibitv live --channel 1 > live.m2ts
 ```
 
 Every delivery system is supported; the one the channel names picks the
@@ -109,10 +105,10 @@ descrambling or remuxing it. The stream continues until interrupted with
 | `-o`, `--output <PATH>` | string  | stdout     | Destination path of the output stream. `-` means stdout. |
 
 ```shell
-cargo run -- record --channel 1 --output capture.mmts
+chibitv record --channel 1 --output capture.mmts
 
 # The explicit output value `-` also means stdout.
-cargo run -- record --channel 1 --output - > capture.mmts
+chibitv record --channel 1 --output - > capture.mmts
 ```
 
 What is written is the scrambled stream as the tuner produced it, so
@@ -134,16 +130,16 @@ MPEG-4 / ISO BMFF file and `fmp4` a fragmented MP4.
 
 ```shell
 # MMT/TLV to MPEG-2 TS.
-cargo run -- remux capture.mmts --output program.m2ts
+chibitv remux capture.mmts --output program.m2ts
 
 # MMT/TLV to a regular MP4 file.
-cargo run -- remux capture.mmts --format mp4 --output program.mp4
+chibitv remux capture.mmts --format mp4 --output program.mp4
 
 # ISDB-T MPEG-2 TS descrambling/remuxing.
-cargo run -- remux terrestrial.m2ts --input-format m2ts --format m2ts --output descrambled.m2ts
+chibitv remux terrestrial.m2ts --input-format m2ts --format m2ts --output descrambled.m2ts
 
 # MMT/TLV to fragmented MP4 on stdout.
-cargo run -- remux capture.mmts --format fmp4 > program.fmp4
+chibitv remux capture.mmts --format fmp4 > program.fmp4
 ```
 
 Two limits are worth knowing before picking a format:
@@ -214,19 +210,19 @@ a longer `--timeout` than a walk needs.
 
 ```shell
 # The terrestrial channels, replacing the ones kept for terrestrial.
-cargo run -- scan
+chibitv scan
 
 # Scan a smaller range and wait up to 5 seconds per channel.
-cargo run -- scan --start-channel 20 --end-channel 30 --timeout 5
+chibitv scan --start-channel 20 --end-channel 30 --timeout 5
 
 # Scan the BS and CS110 transponders instead.
-cargo run -- scan --delivery-system ISDB-S
+chibitv scan --delivery-system ISDB-S
 
 # The 4K broadcasting on the BS transponders.
-cargo run -- scan --delivery-system ISDB-S3
+chibitv scan --delivery-system ISDB-S3
 
 # The same, read off one transponder per network rather than tuning to each.
-cargo run -- scan --delivery-system ISDB-S --fast --timeout 30
+chibitv scan --delivery-system ISDB-S --fast --timeout 30
 ```
 
 A scan replaces the channels kept for the broadcast it walked, so one that has
@@ -252,8 +248,8 @@ current events from the B10 SI tables.
 | `--timeout <SECONDS>`     | integer | `3`        | Maximum time to wait for SI tables before printing. |
 
 ```shell
-cargo run -- status --channel 1
-cargo run -- status --channel 1 --timeout 10
+chibitv status --channel 1
+chibitv status --channel 1 --timeout 10
 ```
 
 This command supports the channels carrying MPEG-2 TS, ISDB-T and ISDB-S; an
@@ -268,15 +264,12 @@ address is `[::1]:3001`, and the first configured channel is selected when the
 server starts. The command takes no options.
 
 ```shell
-# Terminal 1: start the backend.
-cargo run -- serve
-
-# Terminal 2: start the GUI development server.
-pnpm install
-pnpm --filter chibitv dev
+chibitv serve
 ```
 
-Open `http://localhost:3000/` in your browser and enjoy!
+Open `http://localhost:3001/` in your browser and enjoy! A binary built from
+source serves the API alone, and the GUI comes from the
+[development server](../guide/getting-started#starting-the-server) instead.
 
 The server supports every delivery system and requires at least one
 configured tuner and channel. For the MPEG-2 TS ones, ISDB-T and ISDB-S,
