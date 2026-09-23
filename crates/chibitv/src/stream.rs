@@ -13,13 +13,12 @@ use chibitv_b61::Descrambler;
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::demux::Demux;
-use crate::guide::GuideWriter;
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
 use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
 use crate::remux::Remuxer;
 use crate::service::ServiceKey;
-use crate::service_information::{ServiceInformationProcessor, Signal};
+use crate::service_information::{ServiceInformationProcessor, ServiceInformationWriter, Signal};
 use crate::tuner::{AcquireError, TunerLease, Tuners};
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
@@ -117,7 +116,7 @@ impl Drop for Stream {
 
 /// Starts and shares [`Stream`]s, one per requested service.
 pub struct Streams {
-    writer: GuideWriter,
+    writer: ServiceInformationWriter,
     tuners: Arc<Tuners>,
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
@@ -126,7 +125,7 @@ pub struct Streams {
 
 impl Streams {
     pub fn new(
-        writer: GuideWriter,
+        writer: ServiceInformationWriter,
         tuners: Arc<Tuners>,
         cas: Arc<PcscCasModule>,
         b61_descrambler: Option<Descrambler>,
@@ -211,7 +210,7 @@ impl Streams {
 }
 
 fn start_stream(
-    writer: GuideWriter,
+    writer: ServiceInformationWriter,
     cas: Arc<PcscCasModule>,
     b61_descrambler: Option<Descrambler>,
     tuner: TunerLease,
@@ -286,7 +285,7 @@ fn start_stream(
 fn spawn_remuxer<D>(
     demux: D,
     target: StreamTarget,
-    writer: GuideWriter,
+    writer: ServiceInformationWriter,
     fmp4_tx: &Sender<Bytes>,
     fmp4_init_segment: &Arc<Mutex<Option<Bytes>>>,
     signal_tx: &Sender<Signal>,

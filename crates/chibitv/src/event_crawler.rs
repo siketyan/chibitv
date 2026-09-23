@@ -11,10 +11,9 @@ use chibitv_b61::Descrambler;
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::demux::{Demux, Packet, is_descrambling_refused};
-use crate::guide::GuideWriter;
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
-use crate::service_information::ServiceInformationProcessor;
+use crate::service_information::{ServiceInformationProcessor, ServiceInformationWriter};
 use crate::task::TaskHandle;
 use crate::tuner::{AcquireError, Tuners};
 
@@ -24,7 +23,7 @@ pub struct EventCrawler {
     tuners: Arc<Tuners>,
     cas: Arc<PcscCasModule>,
     cas_master_key: [u8; 32],
-    writer: GuideWriter,
+    writer: ServiceInformationWriter,
 }
 
 impl EventCrawler {
@@ -32,7 +31,7 @@ impl EventCrawler {
         tuners: Arc<Tuners>,
         cas: Arc<PcscCasModule>,
         cas_master_key: [u8; 32],
-        writer: GuideWriter,
+        writer: ServiceInformationWriter,
     ) -> Self {
         Self {
             tuners,
@@ -135,7 +134,7 @@ impl EventCrawler {
 fn crawl_channel<D: Demux>(
     demux: &mut D,
     channel: &Channel,
-    writer: &GuideWriter,
+    writer: &ServiceInformationWriter,
     deadline: Instant,
     task: &TaskHandle,
 ) -> anyhow::Result<()> {

@@ -26,7 +26,7 @@ pub enum EventEntries {
 }
 
 /// One update on its way to the store.
-pub enum GuideUpdate {
+pub enum ServiceInformationUpdate {
     /// The services an SDT describes, under the stream carrying them.
     Services {
         stream_id: u16,
@@ -45,11 +45,11 @@ pub enum GuideUpdate {
 }
 
 #[derive(Clone)]
-pub struct GuideWriter {
-    tx: mpsc::Sender<GuideUpdate>,
+pub struct ServiceInformationWriter {
+    tx: mpsc::Sender<ServiceInformationUpdate>,
 }
 
-impl GuideWriter {
+impl ServiceInformationWriter {
     /// Starts writing to the store in the background.
     pub fn spawn(store: Arc<dyn Store>) -> Self {
         let (tx, mut rx) = mpsc::channel(QUEUE_CAPACITY);
@@ -67,7 +67,7 @@ impl GuideWriter {
 
     /// A writer whose updates the caller receives itself.
     #[cfg(test)]
-    pub fn for_test() -> (Self, mpsc::Receiver<GuideUpdate>) {
+    pub fn for_test() -> (Self, mpsc::Receiver<ServiceInformationUpdate>) {
         let (tx, rx) = mpsc::channel(QUEUE_CAPACITY);
 
         (Self { tx }, rx)
@@ -79,7 +79,7 @@ impl GuideWriter {
     /// demultiplexer behind it. The caller leaves the section it came from
     /// unremembered, so the next repetition of it — a few seconds away —
     /// tries again.
-    pub fn enqueue(&self, update: GuideUpdate) -> bool {
+    pub fn enqueue(&self, update: ServiceInformationUpdate) -> bool {
         self.tx.try_send(update).is_ok()
     }
 
@@ -89,24 +89,26 @@ impl GuideWriter {
     /// A queue that is full runs it at once instead, as a notice arriving a
     /// little early is better than none at all.
     pub fn notify(&self, f: impl FnOnce() + Send + 'static) {
-        if let Err(error) = self.tx.try_send(GuideUpdate::Notify(Box::new(f)))
-            && let GuideUpdate::Notify(f) = error.into_inner()
+        if let Err(error) = self
+            .tx
+            .try_send(ServiceInformationUpdate::Notify(Box::new(f)))
+            && let ServiceInformationUpdate::Notify(f) = error.into_inner()
         {
             f();
         }
     }
 }
 
-async fn write(store: &dyn Store, update: GuideUpdate) -> anyhow::Result<()> {
+async fn write(store: &dyn Store, update: ServiceInformationUpdate) -> anyhow::Result<()> {
     match update {
-        GuideUpdate::Services {
+        ServiceInformationUpdate::Services {
             stream_id,
             services,
         } => {
             store.save_services(stream_id, &services).await?;
             debug!(stream_id, services = services.len(), "Stored the services");
         }
-        GuideUpdate::Events {
+        ServiceInformationUpdate::Events {
             section,
             replaces,
             entries,
@@ -141,7 +143,7 @@ async fn write(store: &dyn Store, update: GuideUpdate) -> anyhow::Result<()> {
             }
             debug!(?section, events = events.len(), "Stored a section");
         }
-        GuideUpdate::Notify(f) => f(),
+        ServiceInformationUpdate::Notify(f) => f(),
     }
 
     Ok(())
@@ -206,11 +208,11 @@ mod tests {
     #[tokio::test]
     async fn assembles_an_event_described_across_sections() {
         let store = crate::store::open("sqlite::memory:").await.unwrap();
-        let writer = GuideWriter::spawn(Arc::clone(&store));
+        let writer = ServiceInformationWriter::spawn(Arc::clone(&store));
 
         // The basic schedule names the event, and the extended one details it
         // in a section of its own.
-        writer.enqueue(GuideUpdate::Events {
+        writer.enqueue(ServiceInformationUpdate::Events {
             section: SECTION,
             replaces: true,
             entries: entry(B10Descriptor::ShortEvent(ShortEventDescriptor {
@@ -219,7 +221,7 @@ mod tests {
                 text: vec![],
             })),
         });
-        writer.enqueue(GuideUpdate::Events {
+        writer.enqueue(ServiceInformationUpdate::Events {
             section: SectionId {
                 table_id: 0x58,
                 ..SECTION

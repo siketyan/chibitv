@@ -66,8 +66,8 @@ The shared data flow is a pipeline:
 `serve` (`server.rs`, `rpc.rs`) runs an axum server exposing the ConnectRPC `ChibitvService` plus the live stream;
 `stream.rs`/`event_crawler.rs` share the tuners between streams and EPG crawls. The services and the EPG are
 read from the store rather than held in memory: `service.rs`/`event.rs` are their domain types (built from the SI
-tables), and `guide.rs` queues what the demultiplexers find (`service_information.rs`) and writes it through the
-repositories.
+tables), and `service_information/writer.rs` queues what the demultiplexers find (`service_information.rs`) and writes
+it through the repositories.
 `task.rs` runs the work that outlives the call asking for it — refreshing the programme guide, recording a
 programme — as background tasks with progress and cooperative cancellation, reported over `ListTasks`/`WatchTasks`,
 stopped with `CancelTask` and forgotten once over with `DeleteTask`; `scheduler.rs` starts such a task at a given

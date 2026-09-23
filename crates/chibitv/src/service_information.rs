@@ -7,9 +7,12 @@ use chibitv_b60::message::{M2SectionMessage, Message};
 use chibitv_b60::table::{MhEit, MhSdt, Table};
 
 use crate::demux::SignalingEvent;
-use crate::guide::{EventEntries, GuideUpdate, GuideWriter};
 use crate::service::StoredService;
 use crate::store::SectionId;
+
+mod writer;
+
+pub use writer::{EventEntries, ServiceInformationUpdate, ServiceInformationWriter};
 
 const SDT_ACTUAL_TABLE_ID: u8 = 0x42;
 const MH_SDT_ACTUAL_TABLE_ID: u8 = 0x9F;
@@ -62,7 +65,7 @@ impl From<SectionKey> for SectionId {
 
 pub struct ServiceInformationProcessor {
     watched_service_id: Option<u16>,
-    writer: Option<GuideWriter>,
+    writer: Option<ServiceInformationWriter>,
     signal_tx: Option<Sender<Signal>>,
     current_event_id: Option<u16>,
     stored_sections: HashMap<SectionKey, SectionVersion>,
@@ -71,7 +74,10 @@ pub struct ServiceInformationProcessor {
 impl ServiceInformationProcessor {
     /// Processes the SI of a stream, keeping what it says of the services and
     /// their schedule with `writer`.
-    pub fn new(writer: Option<GuideWriter>, signal_tx: Option<Sender<Signal>>) -> Self {
+    pub fn new(
+        writer: Option<ServiceInformationWriter>,
+        signal_tx: Option<Sender<Signal>>,
+    ) -> Self {
         Self {
             watched_service_id: None,
             writer,
@@ -144,7 +150,7 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
-            || GuideUpdate::Services {
+            || ServiceInformationUpdate::Services {
                 stream_id,
                 services: table
                     .services
@@ -170,7 +176,7 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
-            || GuideUpdate::Events {
+            || ServiceInformationUpdate::Events {
                 section: key.into(),
                 replaces: EIT_ACTUAL_SCHEDULE_TABLE_IDS.contains(&table_id),
                 entries: EventEntries::B10(table.events.clone()),
@@ -214,7 +220,7 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
-            || GuideUpdate::Events {
+            || ServiceInformationUpdate::Events {
                 section: key.into(),
                 replaces: MH_EIT_ACTUAL_SCHEDULE_TABLE_IDS.contains(&table.table_id),
                 entries: EventEntries::B60(table.events.clone()),
@@ -246,7 +252,7 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
-            || GuideUpdate::Services {
+            || ServiceInformationUpdate::Services {
                 stream_id,
                 services: table
                     .services
@@ -269,7 +275,7 @@ impl ServiceInformationProcessor {
         &mut self,
         key: SectionKey,
         version: SectionVersion,
-        update: impl FnOnce() -> GuideUpdate,
+        update: impl FnOnce() -> ServiceInformationUpdate,
     ) {
         let Some(writer) = &self.writer else {
             return;
@@ -384,8 +390,8 @@ mod tests {
     }
 
     /// The name of the events an update carries, for the service it is for.
-    fn event_names(update: GuideUpdate) -> (u16, Vec<Option<String>>) {
-        let GuideUpdate::Events {
+    fn event_names(update: ServiceInformationUpdate) -> (u16, Vec<Option<String>>) {
+        let ServiceInformationUpdate::Events {
             section,
             entries: EventEntries::B10(entries),
             ..
@@ -468,7 +474,7 @@ mod tests {
     #[test]
     fn tracks_the_watched_service_only() {
         let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel(2);
-        let (writer, mut updates) = GuideWriter::for_test();
+        let (writer, mut updates) = ServiceInformationWriter::for_test();
         let mut processor = ServiceInformationProcessor::new(Some(writer), Some(signal_tx))
             .watching_service(Some(SERVICE_ID));
 
@@ -499,7 +505,7 @@ mod tests {
         // The event on air is announced once the section describing it is
         // stored, and not before.
         assert!(matches!(signal_rx.try_recv(), Err(TryRecvError::Empty)));
-        let Ok(GuideUpdate::Notify(notify)) = updates.try_recv() else {
+        let Ok(ServiceInformationUpdate::Notify(notify)) = updates.try_recv() else {
             panic!("expected the signal to wait for the store");
         };
         notify();
@@ -514,7 +520,7 @@ mod tests {
 
     #[test]
     fn stores_a_section_once_per_version() {
-        let (writer, mut updates) = GuideWriter::for_test();
+        let (writer, mut updates) = ServiceInformationWriter::for_test();
         let mut processor = ServiceInformationProcessor::new(Some(writer), None);
 
         processor
@@ -555,7 +561,7 @@ mod tests {
 
     #[test]
     fn replaces_the_schedule_but_only_adds_what_is_on_air() {
-        let (writer, mut updates) = GuideWriter::for_test();
+        let (writer, mut updates) = ServiceInformationWriter::for_test();
         let mut processor = ServiceInformationProcessor::new(Some(writer), None);
 
         // The present/following table moves on to the next programme as soon
@@ -574,7 +580,7 @@ mod tests {
             .unwrap();
 
         let replaces = |update| match update {
-            GuideUpdate::Events {
+            ServiceInformationUpdate::Events {
                 section, replaces, ..
             } => (section.table_id, replaces),
             _ => panic!("expected the events of a section"),
@@ -591,7 +597,7 @@ mod tests {
 
     #[test]
     fn stores_the_television_services_of_the_stream_once_per_version() {
-        let (writer, mut updates) = GuideWriter::for_test();
+        let (writer, mut updates) = ServiceInformationWriter::for_test();
         let mut processor = ServiceInformationProcessor::new(Some(writer), None);
         let sdt = || SignalingEvent::B10Table {
             table_id: SDT_ACTUAL_TABLE_ID,
@@ -601,7 +607,7 @@ mod tests {
         processor.process(sdt()).unwrap();
         processor.process(sdt()).unwrap();
 
-        let Ok(GuideUpdate::Services {
+        let Ok(ServiceInformationUpdate::Services {
             stream_id,
             services,
         }) = updates.try_recv()

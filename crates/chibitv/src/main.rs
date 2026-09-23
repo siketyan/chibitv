@@ -7,7 +7,6 @@ mod config;
 mod demux;
 mod event;
 mod event_crawler;
-mod guide;
 mod hevc;
 mod m2ts;
 mod mmt;

@@ -11,8 +11,8 @@ use crate::channel::{Channel, ChannelInner};
 use crate::channel_scanner::ChannelScanner;
 use crate::config::Config;
 use crate::event_crawler::EventCrawler;
-use crate::guide::GuideWriter;
 use crate::recorder::Recorder;
+use crate::service_information::ServiceInformationWriter;
 use crate::storage;
 use crate::store;
 use crate::stream::Streams;
@@ -44,7 +44,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("Could not open the database at `{}`", config.database.url))?;
 
-    let writer = GuideWriter::spawn(Arc::clone(&store));
+    let writer = ServiceInformationWriter::spawn(Arc::clone(&store));
 
     // The channels are the database's, which a scan writes: nothing is served
     // until one has found something.
