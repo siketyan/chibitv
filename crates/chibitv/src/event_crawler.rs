@@ -8,7 +8,7 @@ use tracing::{info, warn};
 use chibitv_b25::B25Descrambler;
 use chibitv_b61::Descrambler;
 
-use crate::cas::PcscCasModule;
+use crate::cas::SharedCasModule;
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::demux::{Demux, Packet, is_descrambling_refused};
 use crate::m2ts::M2tsDemuxer;
@@ -21,7 +21,7 @@ const READ_BUFFER_SIZE: usize = 188 * 8192;
 
 pub struct EventCrawler {
     tuners: Arc<Tuners>,
-    cas: Arc<PcscCasModule>,
+    cas: Arc<SharedCasModule>,
     cas_master_key: [u8; 32],
     writer: ServiceInformationWriter,
 }
@@ -29,7 +29,7 @@ pub struct EventCrawler {
 impl EventCrawler {
     pub fn new(
         tuners: Arc<Tuners>,
-        cas: Arc<PcscCasModule>,
+        cas: Arc<SharedCasModule>,
         cas_master_key: [u8; 32],
         writer: ServiceInformationWriter,
     ) -> Self {
@@ -110,13 +110,13 @@ impl EventCrawler {
                     | ChannelInner::IsdbS { .. }
                     | ChannelInner::BonIsdbT { .. }
                     | ChannelInner::BonIsdbS { .. } => {
-                        let descrambler = B25Descrambler::init(self.cas.clone())?;
+                        let descrambler = B25Descrambler::init(self.cas.clone(), true)?;
                         let mut demux = M2tsDemuxer::new(reader, descrambler);
                         crawl_channel(&mut demux, channel, &self.writer, deadline, task)?;
                     }
                     ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
                         let descrambler =
-                            Descrambler::init(self.cas.clone(), self.cas_master_key, false)?;
+                            Descrambler::init(self.cas.clone(), self.cas_master_key, true)?;
                         let mut demux = MmtDemuxer::new(
                             BufReader::with_capacity(READ_BUFFER_SIZE, reader),
                             descrambler,

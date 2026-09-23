@@ -2,13 +2,14 @@
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, ErrorKind, Read, Result};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 
+use anyhow::anyhow;
 use apdu_core::{Command, Response};
 use byteorder::{BE, ReadBytesExt};
 use strum::FromRepr;
 
-use crate::CasModule;
+use crate::{CasModule, PendingResponses};
 
 trait ReadExt: Read {
     fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N]> {
@@ -26,11 +27,9 @@ pub struct InitialSettingConditionCommand {
 }
 
 impl InitialSettingConditionCommand {
-    pub(crate) fn write(&self, buf: &mut [u8]) -> usize {
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
         let p2 = if self.acas { 0x02 } else { 0x00 };
-        let cmd = Command::new_with_le(0x90, 0x30, 0x00, p2, 0x00);
-        cmd.write(buf);
-        cmd.len()
+        Command::new_with_le(0x90, 0x30, 0x00, p2, 0x00).into()
     }
 }
 
@@ -105,11 +104,9 @@ pub struct EcmReceptionCommand {
 }
 
 impl EcmReceptionCommand {
-    fn write(&self, buf: &mut [u8]) -> usize {
+    fn to_bytes(&self) -> Vec<u8> {
         let p2 = if self.acas { 0x02 } else { 0x00 };
-        let cmd = Command::new_with_payload_le(0x90, 0x34, 0x00, p2, 0x00, &self.ecm);
-        cmd.write(buf);
-        cmd.len()
+        Command::new_with_payload_le(0x90, 0x34, 0x00, p2, 0x00, &self.ecm).into()
     }
 }
 
@@ -124,7 +121,7 @@ pub struct EcmReceptionResponse {
 }
 
 impl EcmReceptionResponse {
-    fn read(buf: &[u8]) -> Result<Self> {
+    pub(crate) fn read(buf: &[u8]) -> Result<Self> {
         let response = Response::from(buf);
         assert!(response.is_ok());
 
@@ -148,8 +145,6 @@ impl EcmReceptionResponse {
 pub(crate) struct CasClient {
     module: Arc<dyn CasModule>,
     acas: bool,
-    tx_buf: Vec<u8>,
-    rx_buf: Vec<u8>,
 }
 
 impl Debug for CasClient {
@@ -160,36 +155,41 @@ impl Debug for CasClient {
 
 impl CasClient {
     pub fn new(module: Arc<dyn CasModule>, acas: bool) -> Self {
-        Self {
-            module,
-            acas,
-            tx_buf: vec![0u8; 2048],
-            rx_buf: vec![0u8; 4096],
-        }
+        Self { module, acas }
     }
 
-    pub fn initial_setting_condition(&mut self) -> anyhow::Result<InitialSettingConditionResponse> {
-        let cmd = InitialSettingConditionCommand { acas: self.acas };
-        let len = cmd.write(&mut self.tx_buf);
-        let response_len = self
-            .module
-            .transmit(&self.tx_buf[..len], &mut self.rx_buf)?;
-        let response = InitialSettingConditionResponse::read(&self.rx_buf[..response_len])?;
+    pub fn initial_setting_condition(&self) -> anyhow::Result<InitialSettingConditionResponse> {
+        let command = InitialSettingConditionCommand { acas: self.acas }.to_bytes();
+        let pending = self.module.transmit(vec![command]);
+        let responses = receive(&pending, true).expect("waited for the responses")?;
 
-        Ok(response)
+        Ok(InitialSettingConditionResponse::read(&responses[0])?)
     }
 
-    pub fn ecm_reception(&mut self, ecm: &[u8]) -> anyhow::Result<EcmReceptionResponse> {
-        let cmd = EcmReceptionCommand {
+    /// Sends the ECM to the module, whose answer is read with [`EcmReceptionResponse::read`].
+    pub fn ecm_reception(&self, ecm: &[u8]) -> PendingResponses {
+        let command = EcmReceptionCommand {
             ecm: ecm.to_vec(),
             acas: self.acas,
         };
-        let len = cmd.write(&mut self.tx_buf);
-        let response_len = self
-            .module
-            .transmit(&self.tx_buf[..len], &mut self.rx_buf)?;
-        let response = EcmReceptionResponse::read(&self.rx_buf[..response_len])?;
+        self.module.transmit(vec![command.to_bytes()])
+    }
+}
 
-        Ok(response)
+/// Takes the responses if they have arrived, waiting for them if `wait` is set, or `None` if they
+/// are still on their way.
+pub(crate) fn receive(
+    pending: &PendingResponses,
+    wait: bool,
+) -> Option<anyhow::Result<Vec<Vec<u8>>>> {
+    let result = match wait {
+        true => pending.recv().map_err(|_| mpsc::TryRecvError::Disconnected),
+        false => pending.try_recv(),
+    };
+
+    match result {
+        Ok(responses) => Some(responses),
+        Err(mpsc::TryRecvError::Empty) => None,
+        Err(mpsc::TryRecvError::Disconnected) => Some(Err(anyhow!("CAS module is not running"))),
     }
 }

@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, Cursor, ErrorKind, Read};
 use std::sync::{Arc, Mutex};
 
-use anyhow::anyhow;
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tracing::{debug, warn};
 
@@ -18,7 +17,7 @@ use chibitv_b60::mmtp::{
 use chibitv_b60::table::Table;
 use chibitv_b60::tlv::{TlvPacket, TlvPacketType};
 use chibitv_b60::tlv_si;
-use chibitv_b61::Descrambler;
+use chibitv_b61::{Descrambler, NoDecryptionKeyError};
 
 use crate::demux::{Demux, MediaPacket, Packet, PacketQueue, SignalingEvent, TrackType};
 use crate::hevc::HevcParser;
@@ -177,11 +176,19 @@ impl<R: BufRead> MmtDemuxer<R> {
 
                 stream.deflagmenter.sync(mmtp_packet.packet_sequence_number);
 
-                self.descrambler
+                let result = self
+                    .descrambler
                     .lock()
                     .unwrap()
-                    .descramble(&mmtp_packet, mpu_fragment.payload.as_mut_slice())
-                    .map_err(|e| anyhow!("Could not descramble the payload: {}", e))?;
+                    .descramble(&mmtp_packet, mpu_fragment.payload.as_mut_slice());
+                if let Err(error) = result {
+                    // The card has not answered the first ECM yet.
+                    if error.is::<NoDecryptionKeyError>() {
+                        return Ok(Some(vec![]));
+                    }
+
+                    return Err(error.context("Could not descramble the payload"));
+                }
 
                 Self::read_mfu(&mut stream, mpu_fragment)?
             }

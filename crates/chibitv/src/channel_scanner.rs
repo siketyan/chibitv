@@ -25,7 +25,7 @@ use chibitv_b60::table::{MhSdt, ServiceInformation as MmtServiceInformation, Tab
 use chibitv_b60::tlv_si::{Descriptor as TlvDescriptor, Table as TlvTable, TlvNit};
 use chibitv_b61::Descrambler;
 
-use crate::cas::PcscCasModule;
+use crate::cas::SharedCasModule;
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::config::Config;
 use crate::demux::{Demux, Packet, SignalingEvent, is_descrambling_refused};
@@ -152,12 +152,12 @@ impl Default for ScanRequest {
 /// it reaches.
 pub struct ChannelScanner {
     tuners: Arc<Tuners>,
-    cas: Arc<PcscCasModule>,
+    cas: Arc<SharedCasModule>,
     cas_master_key: [u8; 32],
 }
 
 impl ChannelScanner {
-    pub fn new(tuners: Arc<Tuners>, cas: Arc<PcscCasModule>, cas_master_key: [u8; 32]) -> Self {
+    pub fn new(tuners: Arc<Tuners>, cas: Arc<SharedCasModule>, cas_master_key: [u8; 32]) -> Self {
         Self {
             tuners,
             cas,
@@ -175,7 +175,7 @@ impl ChannelScanner {
 
         Ok(Self::new(
             Arc::new(tuners),
-            PcscCasModule::open_shared()?,
+            SharedCasModule::open()?,
             config.cas.master_key.into(),
         ))
     }
@@ -217,7 +217,7 @@ impl ChannelScanner {
 /// that unscrambles it, and how long to wait on it.
 struct Scanner<'a> {
     tuner: TunerLease,
-    cas: Arc<PcscCasModule>,
+    cas: Arc<SharedCasModule>,
     /// The key the 4K descrambler needs, which the terrestrial and 2K ones do
     /// without.
     master_key: [u8; 32],
@@ -767,7 +767,7 @@ impl Scanner<'_> {
             return Ok(None);
         };
 
-        let descrambler = B25Descrambler::init(self.cas.clone())?;
+        let descrambler = B25Descrambler::init(self.cas.clone(), false)?;
         let mut demux = M2tsDemuxer::new(input, descrambler);
         let mut refused = false;
         let deadline = Instant::now() + self.timeout;

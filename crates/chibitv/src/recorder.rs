@@ -11,7 +11,7 @@ use tracing::info;
 use chibitv_b25::B25Descrambler;
 use chibitv_b61::Descrambler;
 
-use crate::cas::PcscCasModule;
+use crate::cas::SharedCasModule;
 use crate::channel::{Channel, ChannelInner};
 use crate::demux::Demux;
 use crate::m2ts::{M2tsDemuxer, M2tsMuxer};
@@ -53,7 +53,7 @@ pub struct Recording {
 
 pub struct Recorder {
     tuners: Arc<Tuners>,
-    cas: Arc<PcscCasModule>,
+    cas: Arc<SharedCasModule>,
     cas_master_key: [u8; 32],
     storage: Arc<dyn Storage>,
 }
@@ -61,7 +61,7 @@ pub struct Recorder {
 impl Recorder {
     pub fn new(
         tuners: Arc<Tuners>,
-        cas: Arc<PcscCasModule>,
+        cas: Arc<SharedCasModule>,
         cas_master_key: [u8; 32],
         storage: Arc<dyn Storage>,
     ) -> Self {
@@ -127,7 +127,7 @@ impl Recorder {
 
         let result = match recording.channel.inner {
             ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
-                let descrambler = Descrambler::init(self.cas.clone(), self.cas_master_key, false)?;
+                let descrambler = Descrambler::init(self.cas.clone(), self.cas_master_key, true)?;
                 let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
                 run(
                     Remuxer::new(MmtDemuxer::new(reader, descrambler), mux)?,
@@ -139,7 +139,7 @@ impl Recorder {
             | ChannelInner::IsdbS { .. }
             | ChannelInner::BonIsdbT { .. }
             | ChannelInner::BonIsdbS { .. } => {
-                let descrambler = B25Descrambler::init(self.cas.clone())?;
+                let descrambler = B25Descrambler::init(self.cas.clone(), true)?;
                 let demux = M2tsDemuxer::new_for_service(reader, descrambler, recording.service_id);
                 run(Remuxer::new(demux, mux)?, recording, task)
             }

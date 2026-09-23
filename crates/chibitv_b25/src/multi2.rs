@@ -51,6 +51,11 @@ impl Multi2 {
         ]);
     }
 
+    #[cfg(test)]
+    pub(crate) fn has_key(&self) -> bool {
+        self.work_keys.is_some()
+    }
+
     pub(crate) fn decrypt(
         &self,
         scrambling_control: TransportScramblingControl,
