@@ -5,7 +5,7 @@
   </picture>
 </h1>
 
-<h3 align="center">The most lightweight way to watch Japanese TV streams in your home.</h3>
+<h3 align="center">The most easy and lightweight way to watch Japanese TV streams in your home.</h3>
 <br />
 
 > [!WARNING]
