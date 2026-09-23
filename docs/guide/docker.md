@@ -6,8 +6,8 @@ Development is unaffected: `cargo run -- serve` still serves the API alone
 while the rsbuild dev server hosts the GUI and proxies the RPC requests to it.
 
 Prebuilt images are published to `ghcr.io/siketyan/chibitv`: `main` follows
-the main branch, and each release is tagged with its version, such as `0.2.0`,
-and its minor version, such as `0.2`. To build one locally instead:
+the main branch, and each release is tagged with its version, such as
+`v0.2.0`, and its minor version, such as `v0.2`. To build one locally instead:
 
 ```shell
 docker build --tag chibitv .
