@@ -51,24 +51,21 @@
   right: var(--player-right);
 }
 
-#channels-pane {
-  --pane-offset: -100%;
-}
-
-#program-pane {
-  --pane-offset: 100%;
+/* Pane interaction keeps the controls visible without shading the picture. */
+.viewer:has(.side-pane[data-open="true"]) .player-chrome {
+  background-image: none;
 }
 
 .side-pane[data-open="true"] {
-  animation: slide-pane-in 180ms ease-out;
+  animation: fade-pane-in 180ms ease-out;
 }
 
-@keyframes slide-pane-in {
+@keyframes fade-pane-in {
   from {
-    transform: translateX(var(--pane-offset));
+    opacity: 0;
   }
   to {
-    transform: translateX(0);
+    opacity: 1;
   }
 }
 

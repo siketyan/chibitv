@@ -110,7 +110,7 @@ export function PlayerControls({ video }: PlayerControlsProps): JSX.Element {
   return (
     <div
       className={clsx(
-        "pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 to-transparent pt-10 pad-safe",
+        "player-chrome pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 to-transparent pt-10 pad-safe",
         chromeTransition(isVisible),
       )}
     >

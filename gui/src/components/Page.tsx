@@ -14,7 +14,7 @@ import { ProgramPane } from "./ProgramPane";
 import { ScanChannels } from "./ScanChannels";
 import { Tasks } from "./Tasks";
 
-const EDGE_PEEK_WIDTH = 64;
+const EDGE_PEEK_WIDTH = 128;
 const isNarrowScreen = () => window.matchMedia("(max-width: 1023px)").matches;
 type PaneState = "closed" | "peek" | "open";
 
@@ -101,7 +101,7 @@ export function Page(): JSX.Element {
           aria-label="Channels"
           data-open={isChannelsOpen}
           className={clsx(
-            "side-pane pointer-events-auto absolute inset-y-0 left-0 z-40 w-(--channels-pane-width) min-h-0 flex-col overflow-hidden border-r border-white/10 bg-surface/95 p-3 shadow-2xl backdrop-blur-xl",
+            "side-pane pointer-events-auto absolute inset-y-0 left-0 z-40 w-(--channels-pane-width) min-h-0 flex-col overflow-hidden border-r border-white/10 bg-surface/95 p-3 backdrop-blur-xl",
             isChannelsOpen ? "flex" : "hidden",
           )}
         >
@@ -143,7 +143,7 @@ export function Page(): JSX.Element {
           aria-label="Program"
           data-open={isProgramOpen}
           className={clsx(
-            "side-pane pointer-events-auto absolute inset-y-0 right-0 z-40 w-(--program-pane-width) min-h-0 flex-col overflow-hidden border-l border-white/10 bg-surface/95 shadow-2xl backdrop-blur-xl",
+            "side-pane pointer-events-auto absolute inset-y-0 right-0 z-40 w-(--program-pane-width) min-h-0 flex-col overflow-hidden border-l border-white/10 bg-surface/95 backdrop-blur-xl",
             isProgramOpen ? "flex" : "hidden",
           )}
         >
