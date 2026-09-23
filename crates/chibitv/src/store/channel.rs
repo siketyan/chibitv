@@ -35,15 +35,7 @@ impl NewChannel {
     /// transport stream a scan found on it, and nothing but a scan can say
     /// which that is.
     pub fn stream_id(&self) -> Option<u16> {
-        self.transport_stream_id.or(match self.inner {
-            ChannelInner::IsdbS { stream_id, .. } | ChannelInner::IsdbS3 { stream_id, .. } => {
-                u16::try_from(stream_id).ok()
-            }
-            ChannelInner::IsdbT { .. }
-            | ChannelInner::BonIsdbT { .. }
-            | ChannelInner::BonIsdbS { .. }
-            | ChannelInner::BonIsdbS3 { .. } => None,
-        })
+        self.transport_stream_id.or(self.inner.stream_id())
     }
 }
 
@@ -57,6 +49,14 @@ pub struct StoredChannel {
     pub inner: ChannelInner,
     pub transport_stream_id: Option<u16>,
     pub services: Vec<StoredService>,
+}
+
+impl StoredChannel {
+    /// The stream the channel carries, when it is known. See
+    /// [`NewChannel::stream_id`].
+    pub fn stream_id(&self) -> Option<u16> {
+        self.transport_stream_id.or(self.inner.stream_id())
+    }
 }
 
 /// The part of a [`super::Store`] the channels are kept in.

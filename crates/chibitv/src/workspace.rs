@@ -25,7 +25,6 @@ const RECORDING_LEAD: TimeDelta = TimeDelta::seconds(15);
 const RECORDING_MARGIN: TimeDelta = TimeDelta::seconds(30);
 
 pub enum WorkspaceError {
-    ChannelNotFound,
     ServiceNotFound,
     TunerBusy,
     /// No tuner receives the broadcast the channel is on.
@@ -217,15 +216,10 @@ impl Workspace {
             .recorder
             .clone()
             .ok_or(WorkspaceError::RecordingUnavailable)?;
-        let service = self
-            .store
-            .find_service(key)
-            .await
-            .map_err(WorkspaceError::Internal)?
+        let (service, channel) = self
+            .service(key)
+            .await?
             .ok_or(WorkspaceError::ServiceNotFound)?;
-        let channel = self
-            .channel_of(&service)
-            .ok_or(WorkspaceError::ChannelNotFound)?;
         let event = self
             .store
             .find_event(key, event_id)
@@ -280,28 +274,57 @@ impl Workspace {
         })
     }
 
-    /// The physical channel the service of the key is carried on, when one
-    /// being served carries it.
-    pub async fn channel_of_key(&self, key: ServiceKey) -> Result<Option<Channel>, WorkspaceError> {
+    /// The services of the channels being served, each with the channel
+    /// carrying it, in the order of their keys.
+    ///
+    /// The signalling of a network describes every stream of it, and a service
+    /// of one no channel being served carries cannot be watched or recorded,
+    /// so it is left out.
+    pub async fn services(&self) -> Result<Vec<(Service, Channel)>, WorkspaceError> {
+        let services = self
+            .store
+            .find_services()
+            .await
+            .map_err(WorkspaceError::Internal)?;
+
+        Ok(services
+            .into_iter()
+            .filter_map(|service| {
+                let channel = self.channel_of(service.key)?;
+                Some((service, channel))
+            })
+            .collect())
+    }
+
+    /// The service of the key with the channel carrying it, when one being
+    /// served does.
+    pub async fn service(
+        &self,
+        key: ServiceKey,
+    ) -> Result<Option<(Service, Channel)>, WorkspaceError> {
+        let Some(channel) = self.channel_of(key) else {
+            return Ok(None);
+        };
         let service = self
             .store
             .find_service(key)
             .await
             .map_err(WorkspaceError::Internal)?;
 
-        Ok(service.and_then(|service| self.channel_of(&service)))
+        Ok(service.map(|service| (service, channel)))
     }
 
-    /// The physical channel the service is carried on.
+    /// The physical channel the service of the key is carried on, which is
+    /// the one carrying its stream.
     ///
-    /// The store reads a service back under the channel carrying its stream,
-    /// so the identifier it holds is the one to look for.
-    fn channel_of(&self, service: &Service) -> Option<Channel> {
+    /// Two channels carrying the same stream — a relay station on another
+    /// frequency — share its services, which go with the first of them.
+    pub fn channel_of(&self, key: ServiceKey) -> Option<Channel> {
         self.channels
             .read()
             .unwrap()
             .iter()
-            .find(|channel| channel.id == service.channel_id)
+            .find(|channel| channel.stream_id == Some(key.stream_id))
             .cloned()
     }
 
@@ -311,16 +334,10 @@ impl Workspace {
         &self,
         key: ServiceKey,
     ) -> Result<StreamSubscription, WorkspaceError> {
-        let service = self
-            .store
-            .find_service(key)
-            .await
-            .map_err(WorkspaceError::Internal)?
+        let (_, channel) = self
+            .service(key)
+            .await?
             .ok_or(WorkspaceError::ServiceNotFound)?;
-
-        let channel = self
-            .channel_of(&service)
-            .ok_or(WorkspaceError::ChannelNotFound)?;
 
         let streams = self
             .streams
@@ -378,6 +395,7 @@ mod tests {
                 frequency: 515_142_857,
                 bandwidth_hz: 6_000_000,
             },
+            stream_id: Some(SERVICE.stream_id),
         }
     }
 
@@ -441,8 +459,85 @@ mod tests {
 
         // The services that came along are there to be watched without the
         // server having been restarted.
-        let service = store.find_service(SERVICE).await.unwrap().unwrap();
-        assert_eq!(service.channel_id, channels[0].id);
+        let Ok(Some((_, channel))) = workspace.service(SERVICE).await else {
+            panic!("the service is not served");
+        };
+        assert_eq!(channel.id, channels[0].id);
+    }
+
+    fn channel_carrying(id: usize, stream_id: u16) -> Channel {
+        Channel {
+            id,
+            stream_id: Some(stream_id),
+            ..channel()
+        }
+    }
+
+    async fn store_with_services(streams: &[u16]) -> Arc<dyn Store> {
+        let store = store().await;
+        for &stream_id in streams {
+            store
+                .save_services(
+                    stream_id,
+                    &[crate::store::StoredService {
+                        id: 101,
+                        name: format!("Service of {stream_id}"),
+                        provider_name: String::new(),
+                    }],
+                )
+                .await
+                .unwrap();
+        }
+
+        store
+    }
+
+    /// The signalling of a network describes every stream of it, including the
+    /// ones no channel is served from.
+    #[tokio::test]
+    async fn leaves_out_the_services_no_channel_carries() {
+        let workspace = Workspace::new(
+            store_with_services(&[100, 200]).await,
+            vec![channel_carrying(1, 100)],
+            None,
+        );
+
+        let Ok(services) = workspace.services().await else {
+            panic!("the services could not be read");
+        };
+
+        assert_eq!(
+            services
+                .iter()
+                .map(|(service, channel)| (service.key.stream_id, channel.id))
+                .collect::<Vec<_>>(),
+            [(100, 1)]
+        );
+        assert!(matches!(
+            workspace
+                .service(ServiceKey {
+                    stream_id: 200,
+                    service_id: 101,
+                })
+                .await,
+            Ok(None)
+        ));
+    }
+
+    #[tokio::test]
+    async fn serves_a_stream_carried_twice_from_the_first_channel() {
+        let workspace = Workspace::new(
+            store_with_services(&[100]).await,
+            vec![channel_carrying(1, 100), channel_carrying(2, 100)],
+            None,
+        );
+
+        let Ok(services) = workspace.services().await else {
+            panic!("the services could not be read");
+        };
+
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].1.id, 1);
     }
 
     #[tokio::test]

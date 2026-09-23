@@ -35,16 +35,10 @@ impl ChibitvServiceImpl {
 
     /// The broadcast wave the service of the key is carried on, when it is one
     /// of the configured channels that carries it.
-    async fn wave_of(
-        &self,
-        key: service::ServiceKey,
-    ) -> Result<Option<DeliverySystem>, ConnectError> {
-        Ok(self
-            .workspace
-            .channel_of_key(key)
-            .await
-            .map_err(workspace_error)?
-            .map(|channel| delivery_system(&channel.inner)))
+    fn wave_of(&self, key: service::ServiceKey) -> Option<DeliverySystem> {
+        self.workspace
+            .channel_of(key)
+            .map(|channel| delivery_system(&channel.inner))
     }
 }
 
@@ -68,12 +62,11 @@ impl ChibitvService for ChibitvServiceImpl {
     ) -> ServiceResult<ListServicesResponse> {
         let services = self
             .workspace
-            .store()
-            .find_services()
+            .services()
             .await
-            .map_err(store_error)?
+            .map_err(workspace_error)?
             .iter()
-            .map(Service::from)
+            .map(|(service, channel)| service_message(service, channel))
             .collect();
 
         Response::ok(ListServicesResponse {
@@ -99,16 +92,15 @@ impl ChibitvService for ChibitvServiceImpl {
             }
         };
 
-        let store = self.workspace.store();
         let keys = if let Some(key) = request.service.as_option() {
             vec![service_key(key)?]
         } else {
-            store
-                .find_services()
+            self.workspace
+                .services()
                 .await
-                .map_err(store_error)?
+                .map_err(workspace_error)?
                 .into_iter()
-                .map(|service| service.key)
+                .map(|(service, _)| service.key)
                 .collect()
         };
 
@@ -116,13 +108,17 @@ impl ChibitvService for ChibitvServiceImpl {
         for key in keys {
             // A service no channel being served carries sits on no known
             // wave, so a request for one leaves it out rather than guessing.
-            if let Some(wave) = wave
-                && self.wave_of(key).await? != Some(wave)
-            {
+            if wave.is_some_and(|wave| self.wave_of(key) != Some(wave)) {
                 continue;
             }
 
-            events.extend(store.find_events(key).await.map_err(store_error)?);
+            events.extend(
+                self.workspace
+                    .store()
+                    .find_events(key)
+                    .await
+                    .map_err(store_error)?,
+            );
         }
         let events = events.iter().map(event_message).collect();
 
@@ -460,17 +456,12 @@ async fn stream_state(
     event_id: Option<u16>,
 ) -> StreamResponse {
     let key = stream.key();
-    let store = workspace.store();
     // What cannot be read is left out of the state rather than ending the
     // stream, which is still worth watching without it.
-    let service = store
-        .find_service(key)
-        .await
-        .inspect_err(|error| warn!(%error, "Could not read the service being streamed"))
-        .ok()
-        .flatten();
+    let service = workspace.service(key).await.ok().flatten();
     let event = match event_id.or_else(|| stream.event_id()) {
-        Some(event_id) if service.is_some() => store
+        Some(event_id) if service.is_some() => workspace
+            .store()
             .find_event(key, event_id)
             .await
             .inspect_err(|error| warn!(%error, "Could not read the event on air"))
@@ -481,7 +472,10 @@ async fn stream_state(
 
     StreamResponse {
         payload: Some(stream_response::Payload::State(Box::new(StreamState {
-            service: service.as_ref().map(Service::from).into(),
+            service: service
+                .as_ref()
+                .map(|(service, channel)| service_message(service, channel))
+                .into(),
             event: event.as_ref().map(event_message).into(),
             ..Default::default()
         }))),
@@ -680,7 +674,6 @@ fn stream_id_of(parameters: &TuningParametersView<'_>) -> Result<u32, ConnectErr
 
 fn workspace_error(error: WorkspaceError) -> ConnectError {
     match error {
-        WorkspaceError::ChannelNotFound => ConnectError::not_found("channel not found"),
         WorkspaceError::ServiceNotFound => ConnectError::not_found("service not found"),
         WorkspaceError::TunerBusy => ConnectError::resource_exhausted("all tuners are in use"),
         WorkspaceError::NoTuner(system) => {
@@ -749,15 +742,13 @@ fn service_key_message(value: service::ServiceKey) -> ServiceKey {
     }
 }
 
-impl From<&service::Service> for Service {
-    fn from(value: &service::Service) -> Self {
-        Self {
-            key: Some(service_key_message(value.key)).into(),
-            name: value.name.clone(),
-            provider_name: value.provider_name.clone(),
-            channel_id: value.channel_id as u32,
-            ..Default::default()
-        }
+fn service_message(service: &service::Service, channel: &crate::channel::Channel) -> Service {
+    Service {
+        key: Some(service_key_message(service.key)).into(),
+        name: service.name.clone(),
+        provider_name: service.provider_name.clone(),
+        channel_id: channel.id as u32,
+        ..Default::default()
     }
 }
 
@@ -824,7 +815,7 @@ fn timestamp_in<Tz: TimeZone>(value: NaiveDateTime, timezone: &Tz) -> DateTime {
 mod tests {
     use chrono::{FixedOffset, NaiveDate};
 
-    use crate::store::{NewChannel, StoredService};
+    use crate::channel::Channel;
 
     use super::*;
 
@@ -841,34 +832,21 @@ mod tests {
         };
 
         let store = crate::store::open("sqlite::memory:").await.unwrap();
-        let workspace = Workspace::new(store, vec![], None);
-        let Ok(_) = workspace
-            .create_channels(&[NewChannel {
-                name: "UHF 20".to_string(),
-                inner: ChannelInner::IsdbT {
-                    frequency: 515_142_857,
-                    bandwidth_hz: 6_000_000,
-                },
-                transport_stream_id: Some(CARRIED.stream_id),
-                services: vec![StoredService {
-                    id: CARRIED.service_id,
-                    name: "Service".to_string(),
-                    provider_name: String::new(),
-                }],
-            }])
-            .await
-        else {
-            panic!("the channels could not be kept");
+        let channel = Channel {
+            id: 0,
+            name: "UHF 20".to_string(),
+            inner: ChannelInner::IsdbT {
+                frequency: 515_142_857,
+                bandwidth_hz: 6_000_000,
+            },
+            stream_id: Some(CARRIED.stream_id),
         };
-        let service = ChibitvServiceImpl::new(Arc::new(workspace));
+        let service = ChibitvServiceImpl::new(Arc::new(Workspace::new(store, vec![channel], None)));
 
-        assert_eq!(
-            service.wave_of(CARRIED).await.unwrap(),
-            Some(DeliverySystem::IsdbT)
-        );
+        assert_eq!(service.wave_of(CARRIED), Some(DeliverySystem::IsdbT));
         // A service no channel carries belongs to no wave, rather than to the
         // first one that happens to be configured.
-        assert_eq!(service.wave_of(UNKNOWN).await.unwrap(), None);
+        assert_eq!(service.wave_of(UNKNOWN), None);
     }
 
     #[test]

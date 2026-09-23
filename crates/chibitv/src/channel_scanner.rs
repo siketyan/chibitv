@@ -953,6 +953,7 @@ impl Scanner<'_> {
             id: 0,
             name: label.to_string(),
             inner,
+            stream_id: None,
         };
 
         if let Err(error) = self.tuner.tune(channel) {

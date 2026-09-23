@@ -41,17 +41,9 @@ const SELECT_CHANNELS: &str = "SELECT id, name, delivery_system, tuning, frequen
                                stream_id, space, channel_number, transport_stream_id FROM \
                                channels ORDER BY id";
 
-/// The service catalogs of every channel, read alongside the channels.
-const SELECT_CHANNEL_SERVICES: &str = "SELECT channels.id AS channel_id, services.service_id, \
-                                       services.name, services.provider_name FROM channels JOIN \
-                                       services ON services.stream_id = \
-                                       COALESCE(channels.transport_stream_id, channels.stream_id) \
-                                       ORDER BY channels.id, services.service_id";
-
-/// The services of the channels being served.
 macro_rules! select_services {
     () => {
-        "SELECT stream_id, service_id, name, provider_name, channel_id FROM served_services"
+        "SELECT stream_id, service_id, name, provider_name FROM services"
     };
 }
 
@@ -270,21 +262,22 @@ impl ChannelRepository for SqliteStore {
             .collect::<anyhow::Result<Vec<_>>>()?;
 
         // The catalogs are read in one statement rather than one per channel,
-        // and handed to the channel each row names.
-        for row in sqlx::query(SELECT_CHANNEL_SERVICES)
-            .fetch_all(&self.pool)
-            .await?
-        {
-            let channel_id = usize::try_from(row.try_get::<i64, _>("channel_id")?)?;
-            let Some(channel) = channels.iter_mut().find(|channel| channel.id == channel_id) else {
+        // and handed to every channel carrying the stream of each.
+        let services = self.find_services().await?;
+        for channel in &mut channels {
+            let Some(stream_id) = channel.stream_id() else {
                 continue;
             };
 
-            channel.services.push(StoredService {
-                id: row.try_get::<i64, _>("service_id")?.try_into()?,
-                name: row.try_get("name")?,
-                provider_name: row.try_get("provider_name")?,
-            });
+            channel.services = services
+                .iter()
+                .filter(|service| service.key.stream_id == stream_id)
+                .map(|service| StoredService {
+                    id: service.key.service_id,
+                    name: service.name.clone(),
+                    provider_name: service.provider_name.clone(),
+                })
+                .collect();
         }
 
         Ok(channels)
@@ -558,7 +551,6 @@ fn read_service(row: &SqliteRow) -> anyhow::Result<Service> {
         key: read_key(row)?,
         name: row.try_get("name")?,
         provider_name: row.try_get("provider_name")?,
-        channel_id: usize::try_from(row.try_get::<i64, _>("channel_id")?)?,
     })
 }
 
@@ -979,55 +971,28 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn serves_the_services_of_every_channel_kept() {
+    async fn keeps_the_catalog_of_a_channel_under_its_stream() {
         let store = store().await;
-        store
-            .replace_channels(
-                DeliverySystem::IsdbT,
-                &[
-                    terrestrial_channel(515_142_857, 100, catalog(101, "Service A")),
-                    terrestrial_channel(521_142_857, 200, catalog(201, "Service B")),
-                ],
-            )
-            .await
-            .unwrap();
-        let channels = store.load_channels().await.unwrap();
-
-        assert_eq!(
-            store
-                .find_services()
-                .await
-                .unwrap()
-                .iter()
-                .map(|service| (service.key.service_id, service.channel_id))
-                .collect::<Vec<_>>(),
-            [(101, channels[0].id), (201, channels[1].id)],
-        );
-    }
-
-    #[tokio::test]
-    async fn forgets_the_services_of_a_channel_no_longer_served() {
-        let store = store().await;
-        store
-            .replace_channels(
-                DeliverySystem::IsdbT,
-                &[
-                    terrestrial_channel(515_142_857, 100, catalog(101, "Service A")),
-                    terrestrial_channel(521_142_857, 200, catalog(201, "Service B")),
-                ],
-            )
-            .await
-            .unwrap();
-
-        // A scan that no longer finds the second channel replaces the list
-        // with the first one alone.
         store
             .replace_channels(
                 DeliverySystem::IsdbT,
                 &[terrestrial_channel(
                     515_142_857,
                     100,
-                    catalog(101, "Renamed"),
+                    catalog(101, "Service A"),
+                )],
+            )
+            .await
+            .unwrap();
+
+        // Rescanning the channel writes its catalog as a whole.
+        store
+            .replace_channels(
+                DeliverySystem::IsdbT,
+                &[terrestrial_channel(
+                    515_142_857,
+                    100,
+                    catalog(102, "Service B"),
                 )],
             )
             .await
@@ -1039,51 +1004,38 @@ mod tests {
                 .await
                 .unwrap()
                 .iter()
-                .map(|service| service.name.as_str())
+                .map(|service| (service.key, service.name.as_str()))
                 .collect::<Vec<_>>(),
-            ["Renamed"],
+            [(
+                ServiceKey {
+                    stream_id: 100,
+                    service_id: 102,
+                },
+                "Service B"
+            )],
         );
     }
 
     #[tokio::test]
-    async fn keeps_a_service_under_the_channel_carrying_its_stream() {
+    async fn reads_back_the_services_the_sdt_described_as_the_catalog() {
         let store = store().await;
         store
             .replace_channels(
                 DeliverySystem::IsdbT,
-                &[
-                    terrestrial_channel(515_142_857, 100, vec![]),
-                    terrestrial_channel(521_142_857, 200, vec![]),
-                ],
+                &[terrestrial_channel(515_142_857, 100, vec![])],
             )
             .await
             .unwrap();
-        let channels = store.load_channels().await.unwrap();
 
-        // The signalling of a network describes every stream of it, including
-        // the ones no channel is served from.
         store
-            .save_services(200, &catalog(202, "Another"))
-            .await
-            .unwrap();
-        store
-            .save_services(300, &catalog(301, "Elsewhere"))
+            .save_services(100, &catalog(101, "Service A"))
             .await
             .unwrap();
 
-        let key = |stream_id, service_id| ServiceKey {
-            stream_id,
-            service_id,
-        };
         assert_eq!(
-            store
-                .find_service(key(200, 202))
-                .await
-                .unwrap()
-                .map(|service| service.channel_id),
-            Some(channels[1].id),
+            store.load_channels().await.unwrap()[0].services,
+            catalog(101, "Service A")
         );
-        assert_eq!(store.find_service(key(300, 301)).await.unwrap(), None);
     }
 
     #[tokio::test]

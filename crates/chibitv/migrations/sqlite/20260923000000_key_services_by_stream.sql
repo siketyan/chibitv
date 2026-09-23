@@ -3,7 +3,7 @@
 -- A service is kept under the stream carrying it rather than under a channel,
 -- so that what the SDT says of it can be kept without working out which
 -- channel that is first. The channel it belongs to is the one carrying its
--- stream, which `served_services` works out when it is read.
+-- stream, which is for the server to work out out of the channels.
 CREATE TABLE services (
     -- The TLV stream id on ISDB-S3, the transport stream id on ISDB-T and
     -- ISDB-S.
@@ -28,20 +28,3 @@ WHERE COALESCE(channels.transport_stream_id, channels.stream_id) IS NOT NULL;
 
 DROP TABLE channel_services;
 
--- The services of the channels being served, each under the channel carrying
--- its stream.
---
--- The stream a channel carries is the one a scan recorded, or failing that the
--- one its tuning parameters pick out of a transponder. Two channels carrying
--- the same stream — a relay station on another frequency — share its services,
--- which go with the first of them.
-CREATE VIEW served_services AS
-SELECT
-    services.stream_id,
-    services.service_id,
-    services.name,
-    services.provider_name,
-    MIN(channels.id) AS channel_id
-FROM services
-JOIN channels ON COALESCE(channels.transport_stream_id, channels.stream_id) = services.stream_id
-GROUP BY services.stream_id, services.service_id;

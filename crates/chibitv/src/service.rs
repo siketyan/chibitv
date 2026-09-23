@@ -18,21 +18,19 @@ pub struct ServiceKey {
     pub service_id: u16,
 }
 
-/// A service of a channel being served.
+/// A service on air, under the stream carrying it.
+///
+/// The channel it belongs to is the one carrying that stream, which
+/// [`crate::workspace::Workspace`] works out out of the channels being served.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Service {
     pub key: ServiceKey,
     pub name: String,
     pub provider_name: String,
-    /// The channel carrying the stream of the service.
-    pub channel_id: usize,
 }
 
-/// One service of a stream, as a scan or the SDT describes it.
-///
-/// This is what is written to the store: the channel a service belongs to is
-/// the one carrying its stream, which the store works out when reading it
-/// back as a [`Service`].
+/// One service of a stream, as a scan or the SDT describes it, which the
+/// stream it is carried on is given beside.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StoredService {
     pub id: u16,
