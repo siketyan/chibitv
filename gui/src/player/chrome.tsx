@@ -14,9 +14,6 @@ import {
 /** How long the UI stays on screen after the last sign of the viewer. */
 const IDLE_DELAY_MS = 3000;
 
-/** What counts as the viewer still being there. */
-const ACTIVITY_EVENTS = ["pointermove", "pointerdown", "keydown", "wheel"];
-
 interface PlayerChromeValue {
   /** Whether the UI drawn over the picture is on screen. */
   isVisible: boolean;
@@ -27,6 +24,8 @@ interface PlayerChromeValue {
    * reasons at the same time do not release each other.
    */
   hold: (reason: string, held: boolean) => void;
+  /** Brings the UI back and restarts the countdown to hiding it, on any input over the player. */
+  wake: () => void;
 }
 
 const PlayerChromeContext = createContext<PlayerChromeValue | undefined>(undefined);
@@ -46,25 +45,7 @@ export function PlayerChromeProvider({ children }: { children: ReactNode }): JSX
     timer.current = window.setTimeout(() => setIsIdle(true), IDLE_DELAY_MS);
   }, []);
 
-  useEffect(() => {
-    // Using the UI laid out beside the picture rather than over it says nothing
-    // about wanting the controls drawn over the picture.
-    const wakeOnActivity = (event: Event) => {
-      if (event.target instanceof Element && event.target.closest("[data-outside-player]")) return;
-      wake();
-    };
-
-    for (const event of ACTIVITY_EVENTS) {
-      window.addEventListener(event, wakeOnActivity, { passive: true });
-    }
-
-    return () => {
-      for (const event of ACTIVITY_EVENTS) {
-        window.removeEventListener(event, wakeOnActivity);
-      }
-      window.clearTimeout(timer.current);
-    };
-  }, [wake]);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
 
   // Releasing the last hold starts the countdown again instead of hiding the UI
   // from under the viewer straight away. This also starts it on the first render.
@@ -88,7 +69,7 @@ export function PlayerChromeProvider({ children }: { children: ReactNode }): JSX
     });
   }, []);
 
-  const value = useMemo(() => ({ isVisible: !isIdle || holds.size > 0, hold }), [isIdle, holds, hold]);
+  const value = useMemo(() => ({ isVisible: !isIdle || holds.size > 0, hold, wake }), [isIdle, holds, hold, wake]);
 
   return <PlayerChromeContext value={value}>{children}</PlayerChromeContext>;
 }
