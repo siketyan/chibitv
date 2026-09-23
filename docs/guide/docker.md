@@ -1,9 +1,8 @@
 # Docker
 
-The image built from the `Dockerfile` bundles the GUI into the server binary,
-so a single container serves both the RPC API and the web interface.
-Development is unaffected: `cargo run -- serve` still serves the API alone
-while the rsbuild dev server hosts the GUI and proxies the RPC requests to it.
+The image built from the `Dockerfile` bundles the GUI into the server binary
+as the [prebuilt binaries](./getting-started#installation) do, so a single
+container serves both the RPC API and the web interface.
 
 Prebuilt images are published to `ghcr.io/siketyan/chibitv`: `main` follows
 the main branch, and each release is tagged with its version, such as
