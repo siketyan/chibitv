@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use bytes::Buf;
+use tracing::debug;
 
 use crate::registry::{Registry, ServiceKey};
 
@@ -15,7 +16,7 @@ type DownloadDataId = u16;
 type DownloadId = u32;
 type ModuleId = u16;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Reference {
     network: NetworkId,
     id: LogoId,
@@ -78,7 +79,10 @@ impl Logos {
                 )
             }),
         };
-        self.references.insert(key, reference);
+        if self.references.get(&key) != Some(&reference) {
+            debug!(?key, ?reference, "Received a station logo reference");
+            self.references.insert(key, reference);
+        }
         self.publish_mh(registry);
         self.publish(registry);
     }
@@ -107,12 +111,28 @@ impl Logos {
             return;
         }
         let Some(png) = browser_png(data) else {
+            debug!(
+                network,
+                id, version, kind, "Ignoring a malformed station logo PNG"
+            );
             return;
         };
         // A tuned multiplex only needs a small logo catalogue. Bound SI input
         // even when a damaged broadcaster continually invents new identities.
         if self.images.len() >= 512 && !self.images.contains_key(&key) {
+            debug!(
+                network,
+                id, "Ignoring a station logo beyond the catalogue limit"
+            );
             return;
+        }
+        if self.images.get(&key).is_none_or(|image| {
+            (image.download, image.version, image.kind) != (download, version, kind)
+        }) {
+            debug!(
+                network,
+                id, download, version, kind, "Received a station logo image"
+            );
         }
         self.images.insert(
             key,
@@ -286,8 +306,13 @@ impl Logos {
                         continue;
                     }
                     if self.modules.len() >= 32 && !self.modules.contains_key(&key) {
+                        debug!(
+                            download,
+                            id, "Ignoring a logo module beyond the carousel limit"
+                        );
                         continue;
                     }
+                    debug!(download, id, version, size, "Downloading a logo module");
                     self.modules.insert(
                         key,
                         Module {
@@ -314,8 +339,15 @@ impl Logos {
                     return None;
                 }
                 module.data[start..end].copy_from_slice(body);
+                let completed = !module.received[block];
                 module.received[block] = true;
                 if module.received.iter().all(|received| *received) {
+                    if completed {
+                        debug!(
+                            download = transaction,
+                            id, version, "Downloaded a logo module"
+                        );
+                    }
                     let data = module.data.clone();
                     self.carousel_module(registry, &data);
                 }
@@ -338,6 +370,10 @@ impl Logos {
             let size = data.try_get_u16().ok()? as usize;
             let png = take(&mut data, size)?;
             let Some(png) = browser_png(png) else {
+                debug!(
+                    kind,
+                    "Ignoring a malformed station logo PNG in a carousel module"
+                );
                 continue;
             };
             for service in services.as_chunks::<6>().0 {
