@@ -1,6 +1,6 @@
-import { CheckIcon, ChevronDownIcon, TvIcon } from "@heroicons/react/24/outline";
+import { CheckIcon, EllipsisHorizontalIcon, TvIcon } from "@heroicons/react/24/outline";
 import { Spinner, Tabs } from "@heroui/react";
-import { type JSX, useEffect, useState } from "react";
+import { type JSX, type ReactNode, useEffect, useState } from "react";
 
 import { groupByDeliverySystem, useChannels } from "../api/channels";
 import { isSameService, type ServiceKey, serviceKeyId, useServices } from "../api/services";
@@ -60,44 +60,51 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
     return <p className="p-3 text-sm text-muted">No channels are available.</p>;
   }
 
-  const renderService = (listed: Service) => {
+  // The row is a container rather than the button itself, so that a control of
+  // its own can sit inside it; the button stretches over the row to stay the target.
+  const renderService = (listed: Service, trailing?: ReactNode) => {
     const selected = isSameService(listed.key, service);
     return (
-      <button
+      <div
         key={listed.key && serviceKeyId(listed.key)}
-        type="button"
-        aria-pressed={selected}
-        disabled={!listed.key}
-        onClick={() => listed.key && selectService(listed.key)}
-        className={`flex min-h-16 min-w-0 flex-1 items-center gap-3 rounded-xl px-3 py-2 text-start transition-colors hover:bg-default focus-visible:outline-2 focus-visible:outline-accent ${selected ? "bg-accent-soft text-accent-soft-foreground" : ""}`}
+        className={`group relative flex min-h-16 min-w-0 items-center gap-1 rounded-xl px-3 py-2 transition-colors hover:bg-default ${selected ? "bg-accent-soft text-accent-soft-foreground" : ""}`}
       >
-        <span className="relative flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded bg-white text-gray-400">
-          <TvIcon className="size-5" />
-          {listed.logoUrl && (
-            <img
-              key={listed.logoUrl}
-              src={listed.logoUrl}
-              alt=""
-              className="absolute inset-0 h-full w-full bg-white object-contain"
-              onError={(event) => {
-                event.currentTarget.hidden = true;
-              }}
-            />
-          )}
-        </span>
-        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="truncate text-sm font-semibold">{listed.name}</span>
-          {listed.currentEvent?.title && (
-            <span className="line-clamp-2 text-xs text-muted">{listed.currentEvent.title}</span>
-          )}
-        </span>
-        {selected &&
-          (isTuning ? (
-            <Spinner className="shrink-0" size="sm" />
-          ) : (
-            <CheckIcon className="size-4 shrink-0 text-accent" />
-          ))}
-      </button>
+        <button
+          type="button"
+          aria-pressed={selected}
+          disabled={!listed.key}
+          onClick={() => listed.key && selectService(listed.key)}
+          className="flex min-w-0 flex-1 items-center gap-3 text-start outline-none before:absolute before:inset-0 before:rounded-xl focus-visible:before:outline-2 focus-visible:before:outline-accent"
+        >
+          <span className="relative flex h-9 w-12 shrink-0 items-center justify-center overflow-hidden rounded bg-white text-gray-400">
+            <TvIcon className="size-5" />
+            {listed.logoUrl && (
+              <img
+                key={listed.logoUrl}
+                src={listed.logoUrl}
+                alt=""
+                className="absolute inset-0 h-full w-full bg-white object-contain"
+                onError={(event) => {
+                  event.currentTarget.hidden = true;
+                }}
+              />
+            )}
+          </span>
+          <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+            <span className="truncate text-sm font-semibold">{listed.name}</span>
+            {listed.currentEvent?.title && (
+              <span className="line-clamp-2 text-xs text-muted">{listed.currentEvent.title}</span>
+            )}
+          </span>
+          {selected &&
+            (isTuning ? (
+              <Spinner className="shrink-0" size="sm" />
+            ) : (
+              <CheckIcon className="size-4 shrink-0 text-accent" />
+            ))}
+        </button>
+        {trailing}
+      </div>
     );
   };
 
@@ -128,23 +135,24 @@ export function Channels({ onServiceChange }: ChannelsProps): JSX.Element {
           const visibleBranches = expanded ? branches : branches.filter((listed) => isSameService(listed.key, service));
           return (
             <div key={groupId}>
-              <div className="flex items-center">
-                {renderService(primary)}
-                {branches.length > 0 && (
+              {renderService(
+                primary,
+                branches.length > 0 && (
                   <button
                     type="button"
                     aria-label={`${expanded ? "Hide" : "Show"} subchannels for ${primary.name}`}
                     aria-expanded={expanded}
                     aria-controls={`subchannels-${groupId}`}
                     onClick={() => setExpandedGroupId(expanded ? undefined : groupId)}
-                    className="flex size-10 shrink-0 items-center justify-center rounded-xl text-muted hover:bg-default focus-visible:outline-2 focus-visible:outline-accent"
+                    // A mouse reveals it on the row it hovers; touch has no hover, so it stays.
+                    className="relative -me-1 flex size-8 shrink-0 items-center justify-center rounded-lg text-muted transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-accent group-hover:opacity-100 aria-expanded:opacity-100 [@media(hover:hover)_and_(pointer:fine)]:opacity-0"
                   >
-                    <ChevronDownIcon className={`size-4 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                    <EllipsisHorizontalIcon className="size-5" />
                   </button>
-                )}
-              </div>
+                ),
+              )}
               <div id={`subchannels-${groupId}`} className="ms-6 flex flex-col gap-1 border-s border-default ps-1">
-                {visibleBranches.map(renderService)}
+                {visibleBranches.map((listed) => renderService(listed))}
               </div>
             </div>
           );
