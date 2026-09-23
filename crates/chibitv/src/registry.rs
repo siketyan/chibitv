@@ -145,7 +145,7 @@ impl Registry {
                     "/api/logos/{}/{}?v={:08x}",
                     key.stream_id,
                     key.service_id,
-                    crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC).checksum(&png)
+                    crate::logo::PNG_CRC.checksum(&png)
                 )
             })
             .unwrap_or_default()

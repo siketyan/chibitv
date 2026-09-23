@@ -2,6 +2,8 @@
 //! from broadcast PNGs is supplied here so browsers can display them.
 use std::collections::HashMap;
 
+use bytes::Buf;
+
 use crate::registry::{Registry, ServiceKey};
 
 #[derive(Clone, Debug)]
@@ -36,9 +38,6 @@ impl Logos {
             return;
         };
         if !matches!(kind, 1 | 2) || bytes.len() < if kind == 1 { 7 } else { 3 } {
-            return;
-        }
-        if registry.get_service(key).is_none() {
             return;
         }
         if kind == 1 && !(bytes.len() - 7).is_multiple_of(3) {
@@ -202,49 +201,45 @@ struct Module {
 }
 
 impl Logos {
-    pub fn carousel(&mut self, registry: &Registry, section: &[u8]) {
-        let _ = self.read_carousel(registry, section);
-    }
-
-    fn read_carousel(&mut self, registry: &Registry, section: &[u8]) -> Option<()> {
+    pub fn carousel(&mut self, registry: &Registry, section: &[u8]) -> Option<()> {
         if section.len() < 11 || section[4] & 1 == 0 {
             return None;
         }
         let mut section = section;
-        let section_length = usize::from(take_u16(&mut section)? & 0xfff);
+        let section_length = usize::from(section.try_get_u16().ok()? & 0xfff);
         let section = section.get(..section_length)?;
         let mut message = section.get(5..section.len().checked_sub(4)?)?;
         if take(&mut message, 2)? != [0x11, 0x03] {
             return None;
         }
-        let kind = take_u16(&mut message)?;
-        let transaction = take_u32(&mut message)?;
+        let kind = message.try_get_u16().ok()?;
+        let transaction = message.try_get_u32().ok()?;
         take(&mut message, 1)?;
-        let adaptation = take_u8(&mut message)? as usize;
-        let length = take_u16(&mut message)? as usize;
+        let adaptation = message.try_get_u8().ok()? as usize;
+        let length = message.try_get_u16().ok()? as usize;
         let mut body = take(&mut message, length)?;
         take(&mut body, adaptation)?;
         match kind {
             0x1002 => {
-                let download = take_u32(&mut body)?;
-                let block_size = take_u16(&mut body)? as usize;
+                let download = body.try_get_u32().ok()?;
+                let block_size = body.try_get_u16().ok()? as usize;
                 if !(1..=4066).contains(&block_size) {
                     return None;
                 }
                 take(&mut body, 10)?;
-                let compatibility = take_u16(&mut body)? as usize;
+                let compatibility = body.try_get_u16().ok()? as usize;
                 take(&mut body, compatibility)?;
-                let count = take_u16(&mut body)?;
+                let count = body.try_get_u16().ok()?;
                 for _ in 0..count {
-                    let id = take_u16(&mut body)?;
-                    let size = take_u32(&mut body)? as usize;
-                    let version = take_u8(&mut body)?;
-                    let info_length = take_u8(&mut body)? as usize;
+                    let id = body.try_get_u16().ok()?;
+                    let size = body.try_get_u32().ok()? as usize;
+                    let version = body.try_get_u8().ok()?;
+                    let info_length = body.try_get_u8().ok()? as usize;
                     let mut info = take(&mut body, info_length)?;
                     let mut is_logo = false;
                     while !info.is_empty() {
-                        let tag = take_u8(&mut info)?;
-                        let length = take_u8(&mut info)? as usize;
+                        let tag = info.try_get_u8().ok()?;
+                        let length = info.try_get_u8().ok()? as usize;
                         let data = take(&mut info, length)?;
                         if tag == 2 {
                             is_logo = data.starts_with(b"LOGO-0") || data.starts_with(b"CS_LOGO-0");
@@ -284,10 +279,10 @@ impl Logos {
                 }
             }
             0x1003 => {
-                let id = take_u16(&mut body)?;
-                let version = take_u8(&mut body)?;
+                let id = body.try_get_u16().ok()?;
+                let version = body.try_get_u8().ok()?;
                 take(&mut body, 1)?;
-                let block = take_u16(&mut body)? as usize;
+                let block = body.try_get_u16().ok()? as usize;
                 let module = self.modules.get_mut(&(transaction, id))?;
                 if module.version != version || block >= module.received.len() {
                     return None;
@@ -310,16 +305,16 @@ impl Logos {
     }
 
     fn carousel_module(&mut self, registry: &Registry, mut data: &[u8]) -> Option<()> {
-        let kind = take_u8(&mut data)?;
+        let kind = data.try_get_u8().ok()?;
         if kind > 5 {
             return None;
         }
-        let count = take_u16(&mut data)?;
+        let count = data.try_get_u16().ok()?;
         for _ in 0..count {
-            let _logo_id = take_u16(&mut data)? & 0x1ff;
-            let count = take_u8(&mut data)? as usize;
+            let _logo_id = data.try_get_u16().ok()? & 0x1ff;
+            let count = data.try_get_u8().ok()? as usize;
             let services = take(&mut data, count * 6)?;
-            let size = take_u16(&mut data)? as usize;
+            let size = data.try_get_u16().ok()? as usize;
             let png = take(&mut data, size)?;
             let Some(png) = browser_png(png) else {
                 continue;
@@ -349,18 +344,9 @@ fn take<'a>(bytes: &mut &'a [u8], length: usize) -> Option<&'a [u8]> {
     *bytes = rest;
     Some(head)
 }
-fn take_u8(bytes: &mut &[u8]) -> Option<u8> {
-    Some(take(bytes, 1)?[0])
-}
-fn take_u16(bytes: &mut &[u8]) -> Option<u16> {
-    Some(u16::from_be_bytes(take(bytes, 2)?.try_into().ok()?))
-}
-fn take_u32(bytes: &mut &[u8]) -> Option<u32> {
-    Some(u32::from_be_bytes(take(bytes, 4)?.try_into().ok()?))
-}
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
-const PNG_CRC: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
+pub(crate) const PNG_CRC: crc::Crc<u32> = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
 
 /// Keeps full PNGs unchanged, and fills in the fixed ARIB STD-B24 CLUT for
 /// indexed PNGs that omit PLTE/tRNS. Checks framing and CRC before publishing.

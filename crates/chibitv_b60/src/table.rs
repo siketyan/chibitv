@@ -634,7 +634,6 @@ impl ServiceInformation {
 /// MH-SDT (Service Description Table).
 #[derive(Clone, Debug)]
 pub struct MhSdt {
-    pub table_id: u8,
     pub section_syntax_indicator: bool,
     pub section_length: u16,
     pub tlv_stream_id: u16,
@@ -648,7 +647,7 @@ pub struct MhSdt {
 }
 
 impl MhSdt {
-    pub fn read(table_id: u8, bytes: &mut Bytes) -> Result<Self> {
+    pub fn read(bytes: &mut Bytes) -> Result<Self> {
         let head = bytes.get_u16();
         let section_syntax_indicator = ((head & 0x8000) >> 15) == 1;
         let section_length = head & 0x0FFF;
@@ -673,7 +672,6 @@ impl MhSdt {
         let crc_32 = bytes.get_u32();
 
         Ok(Self {
-            table_id,
             section_syntax_indicator,
             section_length,
             tlv_stream_id,
@@ -871,7 +869,7 @@ impl Table {
                 Self::MhEit(MhEit::read(table_id, bytes)?)
             }
             MH_BIT_ID => Self::MhBit(MhBit::read(bytes)?),
-            MH_SDT_ID | MH_SDT_OTHER_ID => Self::MhSdt(MhSdt::read(table_id, bytes)?),
+            MH_SDT_ID | MH_SDT_OTHER_ID => Self::MhSdt(MhSdt::read(bytes)?),
             MH_SIT_ID => Self::MhSit(MhSit::read(bytes)?),
             _ => Self::Unknown(table_id, bytes.to_vec()),
         })
