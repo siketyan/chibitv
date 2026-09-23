@@ -6,7 +6,7 @@ use clap::Parser;
 use mpeg2ts::ts::TsPacketWriter;
 use tracing::info;
 
-use crate::cas::PcscCasModule;
+use crate::cas::SharedCasModule;
 use crate::channel::{self, ChannelInner};
 use crate::config::Config;
 use crate::demux::Demux;
@@ -42,7 +42,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
     let output = stdout();
     let writer = TsPacketWriter::new(BufWriter::new(output));
     let mux = M2tsMuxer::new(writer);
-    let cas = PcscCasModule::open_shared()?;
+    let cas = SharedCasModule::open()?;
 
     let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel::<Signal>(1);
 
@@ -63,7 +63,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
     let service_information = ServiceInformationProcessor::new(None, Some(signal_tx));
     match channel.inner {
         ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
-            let descrambler = Descrambler::init(cas, config.cas.master_key.into(), false)?;
+            let descrambler = Descrambler::init(cas, config.cas.master_key.into(), true)?;
             let demux = MmtDemuxer::new(BufReader::new(input), descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }
@@ -71,7 +71,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
         | ChannelInner::IsdbS { .. }
         | ChannelInner::BonIsdbT { .. }
         | ChannelInner::BonIsdbS { .. } => {
-            let descrambler = B25Descrambler::init(cas)?;
+            let descrambler = B25Descrambler::init(cas, true)?;
             let demux = M2tsDemuxer::new(input, descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }

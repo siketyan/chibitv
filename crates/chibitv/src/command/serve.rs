@@ -1,13 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::Context;
-use chibitv_b61::Descrambler;
 use chrono::{Local, Offset};
 use clap::Parser;
 use tracing::warn;
 
-use crate::cas::PcscCasModule;
-use crate::channel::{Channel, ChannelInner};
+use crate::cas::SharedCasModule;
+use crate::channel::Channel;
 use crate::channel_scanner::ChannelScanner;
 use crate::config::Config;
 use crate::event_crawler::EventCrawler;
@@ -60,21 +59,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         .map(Channel::from)
         .collect::<Vec<_>>();
 
-    let cas = PcscCasModule::open_shared()?;
-    let b61_descrambler = if channels.iter().any(|channel| {
-        matches!(
-            channel.inner,
-            ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. }
-        )
-    }) {
-        Some(Descrambler::init(
-            cas.clone(),
-            config.cas.master_key.into(),
-            true,
-        )?)
-    } else {
-        None
-    };
+    let cas = SharedCasModule::open()?;
 
     let tuners = Arc::new({
         let mut tuners = Tuners::default();
@@ -92,7 +77,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         writer.clone(),
         Arc::clone(&tuners),
         cas.clone(),
-        b61_descrambler,
+        config.cas.master_key.into(),
     );
 
     let address = config.server.address;

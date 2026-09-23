@@ -3,13 +3,14 @@
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, ErrorKind, Read, Result};
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
 
+use anyhow::anyhow;
 use apdu_core::{Command, Response};
 use byteorder::{BE, ReadBytesExt};
 use strum::FromRepr;
 
-use crate::CasModule;
+use crate::{CasModule, PendingResponses};
 
 trait ReadExt: Read {
     fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N]> {
@@ -25,10 +26,8 @@ impl<T: Read> ReadExt for T {}
 pub(crate) struct InitialSettingConditionCommand;
 
 impl InitialSettingConditionCommand {
-    pub(crate) fn write(&self, buf: &mut [u8]) -> usize {
-        let cmd = Command::new_with_le(0x90, 0x30, 0x00, 0x01, 0x00);
-        cmd.write(buf);
-        cmd.len()
+    pub(crate) fn to_bytes(&self) -> Vec<u8> {
+        Command::new_with_le(0x90, 0x30, 0x00, 0x01, 0x00).into()
     }
 }
 
@@ -96,10 +95,8 @@ pub(crate) struct EcmReceptionCommand {
 }
 
 impl EcmReceptionCommand {
-    fn write(&self, buf: &mut [u8]) -> usize {
-        let cmd = Command::new_with_payload_le(0x90, 0x34, 0x00, 0x01, 0x00, &self.ecm);
-        cmd.write(buf);
-        cmd.len()
+    fn to_bytes(&self) -> Vec<u8> {
+        Command::new_with_payload_le(0x90, 0x34, 0x00, 0x01, 0x00, &self.ecm).into()
     }
 }
 
@@ -150,10 +147,8 @@ pub(crate) struct ScramblingKeyProtectionSettingCommand {
 }
 
 impl ScramblingKeyProtectionSettingCommand {
-    fn write(&self, buf: &mut [u8]) -> usize {
-        let cmd = Command::new_with_payload_le(0x90, 0xA0, 0x00, 0x01, 0x00, &self.setting_data);
-        cmd.write(buf);
-        cmd.len()
+    fn to_bytes(&self) -> Vec<u8> {
+        Command::new_with_payload_le(0x90, 0xA0, 0x00, 0x01, 0x00, &self.setting_data).into()
     }
 }
 
@@ -195,8 +190,6 @@ impl ScramblingKeyProtectionSettingResponse {
 /// ARIB STD-B61 commands executed on a physical CAS module.
 pub(crate) struct CasClient {
     module: Arc<dyn CasModule>,
-    tx_buf: Vec<u8>,
-    rx_buf: Vec<u8>,
 }
 
 impl Debug for CasClient {
@@ -207,102 +200,105 @@ impl Debug for CasClient {
 
 impl CasClient {
     pub fn new(module: Arc<dyn CasModule>) -> Self {
-        Self {
-            module,
-            tx_buf: vec![0u8; 2048],
-            rx_buf: vec![0u8; 4096],
-        }
+        Self { module }
     }
 
-    pub fn initial_setting_condition(&mut self) -> anyhow::Result<InitialSettingConditionResponse> {
-        let len = InitialSettingConditionCommand.write(&mut self.tx_buf);
-        let response_len = self
+    pub fn initial_setting_condition(&self) -> anyhow::Result<InitialSettingConditionResponse> {
+        let pending = self
             .module
-            .transmit(&self.tx_buf[..len], &mut self.rx_buf)?;
-        let response = InitialSettingConditionResponse::read(&self.rx_buf[..response_len])?;
+            .transmit(vec![InitialSettingConditionCommand.to_bytes()]);
+        let responses = receive(&pending, true).expect("waited for the responses")?;
 
-        Ok(response)
+        Ok(InitialSettingConditionResponse::read(&responses[0])?)
     }
 
+    /// Sends the two commands to the module back to back, so that nothing comes between the
+    /// setting and the ECM it protects the key of; their answers are read with
+    /// [`read_scrambling_key_protection_setting_and_ecm_reception`].
     pub fn scrambling_key_protection_setting_and_ecm_reception(
-        &mut self,
+        &self,
         setting_data: &[u8],
         ecm: &[u8],
-    ) -> anyhow::Result<(ScramblingKeyProtectionSettingResponse, EcmReceptionResponse)> {
+    ) -> PendingResponses {
         let setting_command = ScramblingKeyProtectionSettingCommand {
             setting_data: setting_data.to_vec(),
         };
-        let setting_len = setting_command.write(&mut self.tx_buf);
-        let mut module = self.module.lock()?;
-        let setting_response_len =
-            module.transmit(&self.tx_buf[..setting_len], &mut self.rx_buf)?;
-        let setting_response =
-            ScramblingKeyProtectionSettingResponse::read(&self.rx_buf[..setting_response_len])?;
-
         let ecm_command = EcmReceptionCommand { ecm: ecm.to_vec() };
-        let ecm_len = ecm_command.write(&mut self.tx_buf);
-        let ecm_response_len = module.transmit(&self.tx_buf[..ecm_len], &mut self.rx_buf)?;
-        let ecm_response = EcmReceptionResponse::read(&self.rx_buf[..ecm_response_len])?;
 
-        Ok((setting_response, ecm_response))
+        self.module
+            .transmit(vec![setting_command.to_bytes(), ecm_command.to_bytes()])
+    }
+}
+
+pub(crate) fn read_scrambling_key_protection_setting_and_ecm_reception(
+    responses: &[Vec<u8>],
+) -> anyhow::Result<(ScramblingKeyProtectionSettingResponse, EcmReceptionResponse)> {
+    Ok((
+        ScramblingKeyProtectionSettingResponse::read(&responses[0])?,
+        EcmReceptionResponse::read(&responses[1])?,
+    ))
+}
+
+/// Takes the responses if they have arrived, waiting for them if `wait` is set, or `None` if they
+/// are still on their way.
+pub(crate) fn receive(
+    pending: &PendingResponses,
+    wait: bool,
+) -> Option<anyhow::Result<Vec<Vec<u8>>>> {
+    let result = match wait {
+        true => pending.recv().map_err(|_| mpsc::TryRecvError::Disconnected),
+        false => pending.try_recv(),
+    };
+
+    match result {
+        Ok(responses) => Some(responses),
+        Err(mpsc::TryRecvError::Empty) => None,
+        Err(mpsc::TryRecvError::Disconnected) => Some(Err(anyhow!("CAS module is not running"))),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
 
     use super::*;
-    use crate::CasModuleGuard;
 
     #[derive(Default)]
     struct FakeCasModule {
-        lock_count: AtomicUsize,
-        guarded_transmit_count: AtomicUsize,
-    }
-
-    struct FakeCasModuleGuard<'a> {
-        module: &'a FakeCasModule,
+        transmitted: Mutex<Vec<Vec<Vec<u8>>>>,
     }
 
     impl CasModule for FakeCasModule {
-        fn transmit(&self, _command: &[u8], _response: &mut [u8]) -> anyhow::Result<usize> {
-            anyhow::bail!("unexpected single command")
-        }
+        fn transmit(&self, commands: Vec<Vec<u8>>) -> PendingResponses {
+            let responses = commands
+                .iter()
+                .map(|command| match command[1] {
+                    0xA0 => [&[0x00; 6][..], &[0x01, 0x02], &[0x90, 0x00]].concat(),
+                    0x34 => [&[0x00; 6][..], &[0x03; 32], &[0x00, 0x90, 0x00]].concat(),
+                    instruction => panic!("unexpected instruction: {instruction:#04x}"),
+                })
+                .collect();
+            self.transmitted.lock().unwrap().push(commands);
 
-        fn lock(&self) -> anyhow::Result<Box<dyn CasModuleGuard + '_>> {
-            self.lock_count.fetch_add(1, Ordering::Relaxed);
-            Ok(Box::new(FakeCasModuleGuard { module: self }))
-        }
-    }
-
-    impl CasModuleGuard for FakeCasModuleGuard<'_> {
-        fn transmit(&mut self, command: &[u8], response: &mut [u8]) -> anyhow::Result<usize> {
-            self.module
-                .guarded_transmit_count
-                .fetch_add(1, Ordering::Relaxed);
-
-            let card_response = match command[1] {
-                0xA0 => [&[0x00; 6][..], &[0x01, 0x02], &[0x90, 0x00]].concat(),
-                0x34 => [&[0x00; 6][..], &[0x03; 32], &[0x00, 0x90, 0x00]].concat(),
-                instruction => anyhow::bail!("unexpected instruction: {instruction:#04x}"),
-            };
-            response[..card_response.len()].copy_from_slice(&card_response);
-            Ok(card_response.len())
+            let (tx, rx) = mpsc::sync_channel(1);
+            tx.send(Ok(responses)).unwrap();
+            rx
         }
     }
 
     #[test]
-    fn holds_one_lock_across_the_setting_and_ecm_commands() {
+    fn sends_the_setting_and_ecm_commands_as_one_run() {
         let module = Arc::new(FakeCasModule::default());
-        let mut client = CasClient::new(module.clone());
+        let client = CasClient::new(module.clone());
 
-        let (setting, ecm) = client
-            .scrambling_key_protection_setting_and_ecm_reception(&[0x01], &[0x02])
-            .unwrap();
+        let pending = client.scrambling_key_protection_setting_and_ecm_reception(&[0x01], &[0x02]);
+        let responses = receive(&pending, true).unwrap().unwrap();
+        let (setting, ecm) =
+            read_scrambling_key_protection_setting_and_ecm_reception(&responses).unwrap();
 
-        assert_eq!(module.lock_count.load(Ordering::Relaxed), 1);
-        assert_eq!(module.guarded_transmit_count.load(Ordering::Relaxed), 2);
+        let transmitted = module.transmitted.lock().unwrap();
+        assert_eq!(transmitted.len(), 1);
+        assert_eq!(transmitted[0].len(), 2);
         assert_eq!(setting.setting_response_data, [0x01, 0x02]);
         assert_eq!(ecm.ks, [0x03; 32]);
     }

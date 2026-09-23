@@ -6,7 +6,7 @@ use chibitv_b61::Descrambler;
 use clap::{Parser, ValueEnum};
 use mpeg2ts::ts::TsPacketWriter;
 
-use crate::cas::PcscCasModule;
+use crate::cas::SharedCasModule;
 use crate::config::Config;
 use crate::demux::Demux;
 use crate::m2ts::{M2tsDemuxer, M2tsMuxer};
@@ -81,7 +81,7 @@ fn remux_mmts(
     config: &Config,
 ) -> anyhow::Result<()> {
     let descrambler = Descrambler::init(
-        PcscCasModule::open_shared()?,
+        SharedCasModule::open()?,
         config.cas.master_key.into(),
         false,
     )?;
@@ -112,7 +112,7 @@ fn remux_mmts(
 }
 
 fn remux_m2ts(input: Box<dyn Read + Send + Sync>, options: &Options) -> anyhow::Result<()> {
-    let descrambler = B25Descrambler::init(PcscCasModule::open_shared()?)?;
+    let descrambler = B25Descrambler::init(SharedCasModule::open()?, false)?;
     let demux = M2tsDemuxer::new(input, descrambler);
 
     match options.format.unwrap_or_default() {

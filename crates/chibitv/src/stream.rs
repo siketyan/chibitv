@@ -10,7 +10,7 @@ use tracing::info;
 use chibitv_b25::B25Descrambler;
 use chibitv_b61::Descrambler;
 
-use crate::cas::PcscCasModule;
+use crate::cas::SharedCasModule;
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::demux::{Demux, DescramblingRefusal, descrambling_refusal};
 use crate::m2ts::M2tsDemuxer;
@@ -221,8 +221,8 @@ impl Drop for Stream {
 pub struct Streams {
     writer: ServiceInformationWriter,
     tuners: Arc<Tuners>,
-    cas: Arc<PcscCasModule>,
-    b61_descrambler: Option<Descrambler>,
+    cas: Arc<SharedCasModule>,
+    cas_master_key: [u8; 32],
     streams: tokio::sync::Mutex<HashMap<ServiceKey, Weak<Stream>>>,
 }
 
@@ -230,14 +230,14 @@ impl Streams {
     pub fn new(
         writer: ServiceInformationWriter,
         tuners: Arc<Tuners>,
-        cas: Arc<PcscCasModule>,
-        b61_descrambler: Option<Descrambler>,
+        cas: Arc<SharedCasModule>,
+        cas_master_key: [u8; 32],
     ) -> Self {
         Self {
             writer,
             tuners,
             cas,
-            b61_descrambler,
+            cas_master_key,
             streams: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
@@ -289,7 +289,7 @@ impl Streams {
         let writer = self.writer.clone();
         let tuners = Arc::clone(&self.tuners);
         let cas = Arc::clone(&self.cas);
-        let b61_descrambler = self.b61_descrambler.clone();
+        let cas_master_key = self.cas_master_key;
         let channel = channel.clone();
 
         move || {
@@ -306,7 +306,7 @@ impl Streams {
                 "Acquired tuner"
             );
 
-            start_stream(writer, cas, b61_descrambler, tuner, key, &channel)
+            start_stream(writer, cas, cas_master_key, tuner, key, &channel)
                 .map_err(SubscribeError::Internal)
         }
     }
@@ -314,8 +314,8 @@ impl Streams {
 
 fn start_stream(
     writer: ServiceInformationWriter,
-    cas: Arc<PcscCasModule>,
-    b61_descrambler: Option<Descrambler>,
+    cas: Arc<SharedCasModule>,
+    cas_master_key: [u8; 32],
     tuner: TunerLease,
     key: ServiceKey,
     channel: &Channel,
@@ -327,8 +327,7 @@ fn start_stream(
 
     let kill_tx = match &channel.inner {
         ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
-            let descrambler = b61_descrambler
-                .ok_or_else(|| anyhow::anyhow!("B61 descrambler is not configured"))?;
+            let descrambler = Descrambler::init(cas, cas_master_key, true)?;
             let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
             spawn_remuxer(
                 MmtDemuxer::new(reader, descrambler),
@@ -344,7 +343,7 @@ fn start_stream(
         | ChannelInner::IsdbS { .. }
         | ChannelInner::BonIsdbT { .. }
         | ChannelInner::BonIsdbS { .. } => {
-            let descrambler = B25Descrambler::init(cas)?;
+            let descrambler = B25Descrambler::init(cas, true)?;
             // A service of zero streams the whole transport stream instead of
             // picking one service out of it.
             let target_service_id = (key.service_id != 0).then_some(key.service_id);
