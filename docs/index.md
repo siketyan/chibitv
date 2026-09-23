@@ -5,7 +5,8 @@ hero:
   name: chibitv
   tagline: The most lightweight way to watch Japanese TV streams in your home.
   image:
-    src: /favicon.svg
+    light: /icon.svg
+    dark: /icon-dark.svg
     alt: chibitv
   actions:
     - theme: brand

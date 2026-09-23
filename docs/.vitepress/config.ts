@@ -11,7 +11,7 @@ export default defineConfig({
   ignoreDeadLinks: false,
 
   themeConfig: {
-    logo: "/favicon.svg",
+    logo: { light: "/icon.svg", dark: "/icon-dark.svg", alt: "chibitv" },
 
     // Two sections, each with its own sidebar: the guide walks through
     // running chibitv, the reference documents every key and option of it.
