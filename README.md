@@ -5,7 +5,8 @@
   </picture>
 </h1>
 
-<p align="center">Yet another implementation for ARIB standards</p>
+<h3 align="center">The most lightweight way to watch Japanese TV streams in your home.</h3>
+<br />
 
 > [!WARNING]
 > This software is intended for experimental purposes to understand the standards and is not recommended for any other use.
