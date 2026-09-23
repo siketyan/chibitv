@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use chrono::{NaiveDateTime, TimeDelta};
 use papaya::HashMap;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 use chibitv_b10::descriptor::Descriptor as B10Descriptor;
 use chibitv_b10::table::{
@@ -163,8 +163,10 @@ impl Registry {
                 png: png.to_vec(),
             })
         {
+            warn!(?key, "Deferring a station logo while the store is busy");
             return; // The repeated SI will retry once the queue has room.
         }
+        info!(?key, size = png.len(), "Updated a station logo");
         self.logos.pin().insert(key, Arc::new(png.to_vec()));
     }
 
