@@ -75,7 +75,8 @@ Every key of the file is described in the
 
 ## Running a subcommand
 
-Run a subcommand with `cargo run -- <COMMAND>`. The channel arguments used by
+Run a subcommand with `cargo run -- <COMMAND>`, or `chibitv <COMMAND>` with a
+[prebuilt binary](./installation) installed. The channel arguments used by
 `live`, `record`, and `status` are the identifiers the database gave the
 channels, which [`channels`](../reference/cli#channels) lists. Tuner commands
 take the first free entry in `[[tuners]]` receiving the channel's broadcast.
@@ -149,6 +150,9 @@ pnpm --filter chibitv dev
 ```
 
 Open `http://localhost:3000/` in your browser and enjoy!
+
+A [prebuilt binary](./installation) embeds the GUI, so `chibitv serve` alone
+hosts it on the address of the server, `http://localhost:3001/` by default.
 
 The GUI is a Progressive Web App, so a browser loading a built GUI
 (`pnpm build`, or the Docker image) offers to install it as a standalone app.
