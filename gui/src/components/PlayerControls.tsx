@@ -108,71 +108,73 @@ export function PlayerControls({ video }: PlayerControlsProps): JSX.Element {
   };
 
   return (
-    <div
-      className={clsx(
-        "player-chrome pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 to-transparent pt-10 pad-safe",
-        chromeTransition(isVisible),
-      )}
-    >
-      <div className="flex items-center justify-between gap-2 px-3 pb-3 text-white sm:px-5 sm:pb-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button
-            aria-label={isPaused ? "Play" : "Pause"}
-            className={BUTTON_CLASS}
-            isIconOnly
-            variant="ghost"
-            onPress={changePlaying}
-          >
-            {isPaused ? <PlayIcon /> : <PauseIcon />}
-          </Button>
-          <Button
-            aria-label={isMuted ? "Unmute" : "Mute"}
-            aria-pressed={isMuted}
-            className={BUTTON_CLASS}
-            isIconOnly
-            variant="ghost"
-            onPress={changeMuted}
-          >
-            {isMuted ? <SpeakerXMarkIcon /> : <SpeakerWaveIcon />}
-          </Button>
-          {canSetVolume && (
-            <input
-              aria-label="Volume"
-              className="pointer-events-auto w-20 accent-white sm:w-28"
-              max={1}
-              min={0}
-              step={0.01}
-              type="range"
-              value={isMuted ? 0 : volume}
-              onChange={(event) => changeVolume(event.target.valueAsNumber)}
-            />
-          )}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          {supportsPictureInPicture(video) && (
+    <div className="player-chrome-region pointer-events-none absolute inset-x-0 bottom-0 z-20 h-32">
+      <div
+        className={clsx(
+          "player-chrome pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/80 to-transparent pt-10 pad-safe",
+          chromeTransition(isVisible),
+        )}
+      >
+        <div className="flex items-center justify-between gap-2 px-3 pb-3 text-white sm:px-5 sm:pb-4">
+          <div className="flex min-w-0 items-center gap-2">
             <Button
-              aria-label={isPictureInPicture ? "Leave Picture-in-Picture" : "Watch in Picture-in-Picture"}
-              aria-pressed={isPictureInPicture}
+              aria-label={isPaused ? "Play" : "Pause"}
               className={BUTTON_CLASS}
               isIconOnly
               variant="ghost"
-              onPress={() => void togglePictureInPicture(video).catch(() => {})}
+              onPress={changePlaying}
             >
-              <PictureInPictureIcon />
+              {isPaused ? <PlayIcon /> : <PauseIcon />}
             </Button>
-          )}
-          {supportsFullscreen(video) && (
             <Button
-              aria-label={isFullscreenActive ? "Leave fullscreen" : "Watch fullscreen"}
-              aria-pressed={isFullscreenActive}
+              aria-label={isMuted ? "Unmute" : "Mute"}
+              aria-pressed={isMuted}
               className={BUTTON_CLASS}
               isIconOnly
               variant="ghost"
-              onPress={() => void toggleFullscreen(video).catch(() => {})}
+              onPress={changeMuted}
             >
-              {isFullscreenActive ? <ArrowsPointingInIcon /> : <ArrowsPointingOutIcon />}
+              {isMuted ? <SpeakerXMarkIcon /> : <SpeakerWaveIcon />}
             </Button>
-          )}
+            {canSetVolume && (
+              <input
+                aria-label="Volume"
+                className="pointer-events-auto w-20 accent-white sm:w-28"
+                max={1}
+                min={0}
+                step={0.01}
+                type="range"
+                value={isMuted ? 0 : volume}
+                onChange={(event) => changeVolume(event.target.valueAsNumber)}
+              />
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {supportsPictureInPicture(video) && (
+              <Button
+                aria-label={isPictureInPicture ? "Leave Picture-in-Picture" : "Watch in Picture-in-Picture"}
+                aria-pressed={isPictureInPicture}
+                className={BUTTON_CLASS}
+                isIconOnly
+                variant="ghost"
+                onPress={() => void togglePictureInPicture(video).catch(() => {})}
+              >
+                <PictureInPictureIcon />
+              </Button>
+            )}
+            {supportsFullscreen(video) && (
+              <Button
+                aria-label={isFullscreenActive ? "Leave fullscreen" : "Watch fullscreen"}
+                aria-pressed={isFullscreenActive}
+                className={BUTTON_CLASS}
+                isIconOnly
+                variant="ghost"
+                onPress={() => void toggleFullscreen(video).catch(() => {})}
+              >
+                {isFullscreenActive ? <ArrowsPointingInIcon /> : <ArrowsPointingOutIcon />}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
     </div>

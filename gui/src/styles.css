@@ -76,6 +76,22 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
+  .player-chrome-region {
+    pointer-events: auto;
+  }
+
+  /* Desktop bars respond to their own edge, independently of the idle timer
+     and open panes. Keep their controls reachable by keyboard while faded. */
+  .player-chrome-region > .player-chrome {
+    opacity: 0;
+    visibility: visible;
+  }
+
+  .player-chrome-region:hover > .player-chrome,
+  .player-chrome-region:focus-within > .player-chrome {
+    opacity: 1;
+  }
+
   .viewer[data-channels-pinned="true"] {
     /* Keep room for the picture even with both panes pinned in a small window. */
     --channels-pane-width: min(19rem, 30vw);

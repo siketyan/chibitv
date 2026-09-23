@@ -35,55 +35,57 @@ export function OverlayNavbar({
   const title = event?.title || state?.service?.name;
 
   return (
-    <nav
-      className={clsx(
-        "player-chrome pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent px-3 pb-10 pt-3 text-white sm:px-5 sm:pt-4",
-        chromeTransition(isVisible),
-      )}
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <Button
-          aria-label={isChannelsOpen ? "Close channels" : "Open channels"}
-          aria-expanded={isChannelsOpen}
-          aria-controls="channels-pane"
-          className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
-          isIconOnly
-          variant="ghost"
-          onPress={() => onChangeChannelsOpen(!isChannelsOpen)}
-        >
-          {isChannelsOpen ? <XMarkIcon /> : <QueueListIcon />}
-        </Button>
-        {title && <h1 className="truncate text-sm font-medium sm:text-base">{title}</h1>}
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {/* The server starts no task of its own accord, so the button appears
-            once there is something to look at — a task, or a task that could
-            not be started — and stays for as long as it is kept, or for as
-            long as the panel is open to close it again with. */}
-        {(areTasksOpen || tasks.length > 0 || startTaskError !== undefined) && (
+    <div className="player-chrome-region pointer-events-none absolute inset-x-0 top-0 z-30 h-32">
+      <nav
+        className={clsx(
+          "player-chrome pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent px-3 pb-10 pt-3 text-white sm:px-5 sm:pt-4",
+          chromeTransition(isVisible),
+        )}
+      >
+        <div className="flex min-w-0 items-center gap-2">
           <Button
-            aria-label={areTasksOpen ? "Close background tasks" : "Open background tasks"}
-            aria-pressed={areTasksOpen}
+            aria-label={isChannelsOpen ? "Close channels" : "Open channels"}
+            aria-expanded={isChannelsOpen}
+            aria-controls="channels-pane"
             className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
             isIconOnly
             variant="ghost"
-            onPress={() => onChangeTasksOpen(!areTasksOpen)}
+            onPress={() => onChangeChannelsOpen(!isChannelsOpen)}
           >
-            {runningTasks.length > 0 ? <Spinner size="sm" /> : <ArrowPathIcon />}
+            {isChannelsOpen ? <XMarkIcon /> : <QueueListIcon />}
           </Button>
-        )}
-        <Button
-          aria-label={isProgramOpen ? "Close program pane" : "Open program pane"}
-          aria-expanded={isProgramOpen}
-          aria-controls="program-pane"
-          className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
-          isIconOnly
-          variant="ghost"
-          onPress={() => onChangeProgramOpen(!isProgramOpen)}
-        >
-          {isProgramOpen ? <XMarkIcon /> : <InformationCircleIcon />}
-        </Button>
-      </div>
-    </nav>
+          {title && <h1 className="truncate text-sm font-medium sm:text-base">{title}</h1>}
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          {/* The server starts no task of its own accord, so the button appears
+            once there is something to look at — a task, or a task that could
+            not be started — and stays for as long as it is kept, or for as
+            long as the panel is open to close it again with. */}
+          {(areTasksOpen || tasks.length > 0 || startTaskError !== undefined) && (
+            <Button
+              aria-label={areTasksOpen ? "Close background tasks" : "Open background tasks"}
+              aria-pressed={areTasksOpen}
+              className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
+              isIconOnly
+              variant="ghost"
+              onPress={() => onChangeTasksOpen(!areTasksOpen)}
+            >
+              {runningTasks.length > 0 ? <Spinner size="sm" /> : <ArrowPathIcon />}
+            </Button>
+          )}
+          <Button
+            aria-label={isProgramOpen ? "Close program pane" : "Open program pane"}
+            aria-expanded={isProgramOpen}
+            aria-controls="program-pane"
+            className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
+            isIconOnly
+            variant="ghost"
+            onPress={() => onChangeProgramOpen(!isProgramOpen)}
+          >
+            {isProgramOpen ? <XMarkIcon /> : <InformationCircleIcon />}
+          </Button>
+        </div>
+      </nav>
+    </div>
   );
 }
