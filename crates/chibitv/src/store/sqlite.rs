@@ -450,7 +450,7 @@ fn read_event(row: &sqlx::sqlite::SqliteRow) -> anyhow::Result<StoredEvent> {
 #[async_trait]
 impl super::LogoStore for SqliteStore {
     async fn load_logos(&self) -> anyhow::Result<Vec<super::StoredLogo>> {
-        sqlx::query("SELECT stream_id, service_id, png FROM logos")
+        sqlx::query("SELECT stream_id, service_id, png FROM service_logos")
             .fetch_all(&self.pool)
             .await?
             .into_iter()
@@ -467,7 +467,7 @@ impl super::LogoStore for SqliteStore {
     }
 
     async fn save_logo(&self, logo: &super::StoredLogo) -> anyhow::Result<()> {
-        sqlx::query("INSERT INTO logos (stream_id, service_id, png) VALUES (?, ?, ?) ON CONFLICT (stream_id, service_id) DO UPDATE SET png = excluded.png")
+        sqlx::query("INSERT INTO service_logos (stream_id, service_id, png) VALUES (?, ?, ?) ON CONFLICT (stream_id, service_id) DO UPDATE SET png = excluded.png")
             .bind(logo.key.stream_id).bind(logo.key.service_id).bind(&logo.png).execute(&self.pool).await?;
         Ok(())
     }

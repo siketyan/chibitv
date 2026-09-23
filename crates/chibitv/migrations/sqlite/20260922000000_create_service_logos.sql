@@ -1,4 +1,4 @@
-CREATE TABLE logos (
+CREATE TABLE service_logos (
     stream_id INTEGER NOT NULL,
     service_id INTEGER NOT NULL,
     png BLOB NOT NULL,
