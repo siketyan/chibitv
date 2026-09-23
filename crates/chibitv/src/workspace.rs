@@ -9,8 +9,8 @@ use crate::channel::{Channel, DeliverySystem};
 use crate::channel_scanner::{ChannelScanner, ScanRequest};
 use crate::event_crawler::EventCrawler;
 use crate::recorder::{Recorder, Recording};
-use crate::registry::{Registry, Service, ServiceKey};
 use crate::scheduler::Scheduler;
+use crate::service::{Service, ServiceKey};
 use crate::service_information::Signal;
 use crate::store::{NewChannel, Store};
 use crate::stream::{Stream, Streams, SubscribeError};
@@ -35,8 +35,6 @@ pub enum WorkspaceError {
     EventCrawlerUnavailable,
     /// No channel scanner is configured, so nothing can be scanned for.
     ChannelScannerUnavailable,
-    /// No database is configured, so the channels cannot be written.
-    ChannelStoreUnavailable,
     /// The scan was asked for something it cannot walk.
     ScanNotPossible(anyhow::Error),
     /// No storage is configured, so nothing can be recorded.
@@ -63,10 +61,9 @@ pub struct StreamSubscription {
 }
 
 pub struct Workspace {
-    registry: Arc<Registry>,
+    store: Arc<dyn Store>,
     /// The channels being served, which a saved scan replaces.
     channels: RwLock<Vec<Channel>>,
-    store: Option<Arc<dyn Store>>,
     streams: Option<Streams>,
     event_crawler: Option<Arc<EventCrawler>>,
     channel_scanner: Option<Arc<ChannelScanner>>,
@@ -78,13 +75,12 @@ pub struct Workspace {
 }
 
 impl Workspace {
-    pub fn new(registry: Arc<Registry>, channels: Vec<Channel>, streams: Option<Streams>) -> Self {
+    pub fn new(store: Arc<dyn Store>, channels: Vec<Channel>, streams: Option<Streams>) -> Self {
         let tasks = Arc::<Tasks>::default();
 
         Self {
-            registry,
+            store,
             channels: RwLock::new(channels),
-            store: None,
             streams,
             event_crawler: None,
             channel_scanner: None,
@@ -93,13 +89,6 @@ impl Workspace {
             scheduler: Scheduler::spawn(Arc::clone(&tasks)),
             tasks,
         }
-    }
-
-    /// Keeps the channels in the database, which is what a saved scan writes
-    /// them to.
-    pub fn with_channel_store(mut self, store: Arc<dyn Store>) -> Self {
-        self.store = Some(store);
-        self
     }
 
     pub fn with_event_crawler(mut self, crawler: EventCrawler) -> Self {
@@ -122,8 +111,10 @@ impl Workspace {
         self.channels.read().unwrap().clone()
     }
 
-    pub fn registry(&self) -> &Registry {
-        &self.registry
+    /// The database the channels, their services and the schedule are kept
+    /// in.
+    pub fn store(&self) -> &dyn Store {
+        self.store.as_ref()
     }
 
     pub fn tasks(&self) -> &Arc<Tasks> {
@@ -138,13 +129,12 @@ impl Workspace {
             .clone()
             .ok_or(WorkspaceError::EventCrawlerUnavailable)?;
         let channels = self.channels();
-        let registry = Arc::clone(&self.registry);
 
         self.tasks
             .spawn_blocking(
                 TaskKind::RefreshEvents,
                 "Refreshing the programme guide",
-                move |task| crawler.crawl(&channels, registry, dwell_time, task),
+                move |task| crawler.crawl(&channels, dwell_time, task),
             )
             .map_err(|error| match error {
                 SpawnError::AlreadyRunning => WorkspaceError::TaskAlreadyRunning,
@@ -192,28 +182,23 @@ impl Workspace {
     ///
     /// This is what a scan comes to: whoever asked for one hands back the
     /// channels of it worth keeping, edited or picked over first if they like.
-    /// Nothing has to be restarted, as the registry is seeded with the service
-    /// catalogs that come along and the channels served are swapped for the
-    /// ones now stored.
+    /// Nothing has to be restarted, as the service catalogs that come along
+    /// are stored with them and the channels served are swapped for the ones
+    /// now stored.
     pub async fn create_channels(
         &self,
         channels: &[NewChannel],
     ) -> Result<Vec<Channel>, WorkspaceError> {
-        let store = self
-            .store
-            .clone()
-            .ok_or(WorkspaceError::ChannelStoreUnavailable)?;
-
-        store
+        self.store
             .create_channels(channels)
             .await
             .map_err(WorkspaceError::Internal)?;
 
-        let stored = store
+        let stored = self
+            .store
             .load_channels()
             .await
             .map_err(WorkspaceError::Internal)?;
-        self.registry.put_channels(&stored);
 
         let channels = stored.iter().map(Channel::from).collect::<Vec<_>>();
         *self.channels.write().unwrap() = channels.clone();
@@ -223,7 +208,7 @@ impl Workspace {
 
     /// Books a recording of the event, which starts shortly before the
     /// programme does and stops once it is over.
-    pub fn schedule_recording(
+    pub async fn schedule_recording(
         &self,
         key: ServiceKey,
         event_id: u16,
@@ -233,15 +218,19 @@ impl Workspace {
             .clone()
             .ok_or(WorkspaceError::RecordingUnavailable)?;
         let service = self
-            .registry
-            .get_service(key)
+            .store
+            .find_service(key)
+            .await
+            .map_err(WorkspaceError::Internal)?
             .ok_or(WorkspaceError::ServiceNotFound)?;
         let channel = self
             .channel_of(&service)
             .ok_or(WorkspaceError::ChannelNotFound)?;
         let event = self
-            .registry
-            .get_event(key, event_id)
+            .store
+            .find_event(key, event_id)
+            .await
+            .map_err(WorkspaceError::Internal)?
             .ok_or(WorkspaceError::EventNotFound)?;
 
         let (Some(start_time), Some(duration)) = (event.start_time, event.duration) else {
@@ -291,16 +280,22 @@ impl Workspace {
         })
     }
 
-    /// The physical channel the service of the key is carried on, when the
-    /// registry has come across that service.
-    pub fn channel_of_key(&self, key: ServiceKey) -> Option<Channel> {
-        self.channel_of(&self.registry.get_service(key)?)
+    /// The physical channel the service of the key is carried on, when one
+    /// being served carries it.
+    pub async fn channel_of_key(&self, key: ServiceKey) -> Result<Option<Channel>, WorkspaceError> {
+        let service = self
+            .store
+            .find_service(key)
+            .await
+            .map_err(WorkspaceError::Internal)?;
+
+        Ok(service.and_then(|service| self.channel_of(&service)))
     }
 
     /// The physical channel the service is carried on.
     ///
-    /// The registry only keeps a service under the channel carrying its
-    /// stream, so the identifier it holds is the one to look for.
+    /// The store reads a service back under the channel carrying its stream,
+    /// so the identifier it holds is the one to look for.
     fn channel_of(&self, service: &Service) -> Option<Channel> {
         self.channels
             .read()
@@ -317,8 +312,10 @@ impl Workspace {
         key: ServiceKey,
     ) -> Result<StreamSubscription, WorkspaceError> {
         let service = self
-            .registry
-            .get_service(key)
+            .store
+            .find_service(key)
+            .await
+            .map_err(WorkspaceError::Internal)?
             .ok_or(WorkspaceError::ServiceNotFound)?;
 
         let channel = self
@@ -369,6 +366,10 @@ mod tests {
         service_id: 0x5678,
     };
 
+    async fn store() -> Arc<dyn Store> {
+        crate::store::open("sqlite::memory:").await.unwrap()
+    }
+
     fn channel() -> Channel {
         Channel {
             id: 0,
@@ -382,7 +383,7 @@ mod tests {
 
     #[tokio::test]
     async fn subscribing_an_unknown_service_fails() {
-        let workspace = Workspace::new(Arc::new(Registry::default()), vec![channel()], None);
+        let workspace = Workspace::new(store().await, vec![channel()], None);
 
         let result = workspace.subscribe_stream(SERVICE).await;
 
@@ -391,7 +392,7 @@ mod tests {
 
     #[tokio::test]
     async fn refreshing_events_without_a_crawler_fails() {
-        let workspace = Workspace::new(Arc::new(Registry::default()), vec![channel()], None);
+        let workspace = Workspace::new(store().await, vec![channel()], None);
 
         let result = workspace.refresh_events(Duration::from_secs(1));
 
@@ -403,31 +404,17 @@ mod tests {
 
     #[tokio::test]
     async fn recording_without_a_configured_storage_fails() {
-        let workspace = Workspace::new(Arc::new(Registry::default()), vec![channel()], None);
+        let workspace = Workspace::new(store().await, vec![channel()], None);
 
-        let result = workspace.schedule_recording(SERVICE, 1);
+        let result = workspace.schedule_recording(SERVICE, 1).await;
 
         assert!(matches!(result, Err(WorkspaceError::RecordingUnavailable)));
     }
 
     #[tokio::test]
-    async fn keeping_channels_without_a_database_fails() {
-        let workspace = Workspace::new(Arc::new(Registry::default()), vec![channel()], None);
-
-        let result = workspace.create_channels(&[]).await;
-
-        assert!(matches!(
-            result,
-            Err(WorkspaceError::ChannelStoreUnavailable)
-        ));
-    }
-
-    #[tokio::test]
     async fn serves_the_channels_it_is_told_to_keep() {
-        let store = crate::store::open("sqlite::memory:").await.unwrap();
-        let registry = Arc::new(Registry::default());
-        let workspace = Workspace::new(Arc::clone(&registry), vec![], None)
-            .with_channel_store(Arc::clone(&store));
+        let store = store().await;
+        let workspace = Workspace::new(Arc::clone(&store), vec![], None);
 
         let Ok(channels) = workspace
             .create_channels(&[NewChannel {
@@ -454,15 +441,28 @@ mod tests {
 
         // The services that came along are there to be watched without the
         // server having been restarted.
-        let service = registry.get_service(SERVICE).unwrap();
+        let service = store.find_service(SERVICE).await.unwrap().unwrap();
         assert_eq!(service.channel_id, channels[0].id);
     }
 
     #[tokio::test]
     async fn subscribing_without_configured_streams_fails() {
-        let registry = Arc::new(Registry::default());
-        registry.put_cached_service(0, SERVICE, "Channel".to_string(), String::new());
-        let workspace = Workspace::new(registry, vec![channel()], None);
+        let workspace = Workspace::new(store().await, vec![], None);
+        let Ok(_) = workspace
+            .create_channels(&[NewChannel {
+                name: "UHF 20".to_string(),
+                inner: channel().inner,
+                transport_stream_id: Some(SERVICE.stream_id),
+                services: vec![crate::store::StoredService {
+                    id: SERVICE.service_id,
+                    name: "Channel".to_string(),
+                    provider_name: String::new(),
+                }],
+            }])
+            .await
+        else {
+            panic!("the channels could not be kept");
+        };
 
         let result = workspace.subscribe_stream(SERVICE).await;
 

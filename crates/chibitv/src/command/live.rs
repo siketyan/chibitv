@@ -60,7 +60,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
         }
     });
 
-    let service_information = ServiceInformationProcessor::new(channel.id, None, Some(signal_tx));
+    let service_information = ServiceInformationProcessor::new(None, Some(signal_tx));
     match channel.inner {
         ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
             let descrambler = Descrambler::init(cas, config.cas.master_key.into(), false)?;

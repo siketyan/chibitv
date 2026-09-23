@@ -95,19 +95,50 @@ mod gui {
 mod tests {
     use axum::body::{Body, to_bytes};
     use axum::http::{Request, StatusCode, header};
-    use chibitv_b10::table::EventInformation;
     use tower::ServiceExt;
 
     use super::*;
-    use crate::registry::{Registry, ServiceKey};
+    use crate::channel::ChannelInner;
+    use crate::event::Event;
+    use crate::service::ServiceKey;
+    use crate::store::{NewChannel, SectionId, StoredService};
 
-    fn empty_workspace() -> Arc<Workspace> {
-        Arc::new(Workspace::new(Arc::new(Registry::default()), vec![], None))
+    async fn empty_workspace() -> Arc<Workspace> {
+        let store = crate::store::open("sqlite::memory:").await.unwrap();
+
+        Arc::new(Workspace::new(store, vec![], None))
+    }
+
+    /// A workspace serving one terrestrial channel per stream given, each
+    /// carrying the one service named after it.
+    async fn workspace_serving(streams: &[(u16, u16)]) -> Arc<Workspace> {
+        let workspace = empty_workspace().await;
+        let channels = streams
+            .iter()
+            .map(|&(stream_id, service_id)| NewChannel {
+                name: format!("Channel {stream_id}"),
+                inner: ChannelInner::IsdbT {
+                    frequency: 470_000_000 + u32::from(stream_id) * 6_000_000,
+                    bandwidth_hz: 6_000_000,
+                },
+                transport_stream_id: Some(stream_id),
+                services: vec![StoredService {
+                    id: service_id,
+                    name: format!("Service {service_id}"),
+                    provider_name: String::new(),
+                }],
+            })
+            .collect::<Vec<_>>();
+        let Ok(_) = workspace.create_channels(&channels).await else {
+            panic!("the channels could not be kept");
+        };
+
+        workspace
     }
 
     #[tokio::test]
     async fn serves_connect_json_requests() {
-        let response = app(empty_workspace())
+        let response = app(empty_workspace().await)
             .oneshot(
                 Request::post("/api/chibitv.v1.ChibitvService/ListChannels")
                     .header(header::CONTENT_TYPE, "application/json")
@@ -125,26 +156,9 @@ mod tests {
 
     #[tokio::test]
     async fn lists_cached_services_from_untuned_channels_by_service_id() {
-        let registry = Arc::new(Registry::default());
-        registry.put_cached_service(
-            1,
-            ServiceKey {
-                stream_id: 200,
-                service_id: 201,
-            },
-            "Service B".to_string(),
-            "Provider B".to_string(),
-        );
-        registry.put_cached_service(
-            0,
-            ServiceKey {
-                stream_id: 100,
-                service_id: 101,
-            },
-            "Service A".to_string(),
-            "Provider A".to_string(),
-        );
-        let workspace = Arc::new(Workspace::new(registry, vec![], None));
+        // Kept in the reverse order of their keys, which the list is in.
+        let workspace = workspace_serving(&[(200, 201), (100, 101)]).await;
+        let channel_id = workspace.channels()[0].id;
 
         let response = app(workspace)
             .oneshot(
@@ -160,40 +174,35 @@ mod tests {
         assert_eq!(response.status(), StatusCode::OK);
         let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
         let body = std::str::from_utf8(&body).unwrap();
-        let service_a = body.find("Service A").unwrap();
-        let service_b = body.find("Service B").unwrap();
+        let service_a = body.find("Service 101").unwrap();
+        let service_b = body.find("Service 201").unwrap();
         assert!(service_a < service_b);
-        assert!(body.contains(r#""channelId":1"#));
+        assert!(body.contains(&format!(r#""channelId":{channel_id}"#)));
     }
 
     #[tokio::test]
     async fn lists_events_from_all_services_when_service_id_is_omitted() {
-        let registry = Arc::new(Registry::default());
-        for (channel_id, service_id, event_id) in [(0, 101, 1001), (1, 201, 2001)] {
+        let workspace = workspace_serving(&[(1, 101), (2, 201)]).await;
+        for (stream_id, service_id, event_id) in [(1, 101, 1001), (2, 201, 2001)] {
             let key = ServiceKey {
-                stream_id: channel_id as u16,
+                stream_id,
                 service_id,
             };
-            registry.put_cached_service(
-                channel_id,
-                key,
-                format!("Service {service_id}"),
-                String::new(),
-            );
-            registry.put_b10_events(
-                key,
-                None,
-                &[EventInformation {
-                    event_id,
-                    start_time: None,
-                    duration: None,
-                    running_status: 0,
-                    free_ca_mode: false,
-                    descriptors: vec![],
-                }],
-            );
+            workspace
+                .store()
+                .replace_section(
+                    SectionId {
+                        original_network_id: 1,
+                        stream_id,
+                        service_id,
+                        table_id: 0x50,
+                        section_number: 0,
+                    },
+                    &[Event::new(key, event_id)],
+                )
+                .await
+                .unwrap();
         }
-        let workspace = Arc::new(Workspace::new(registry, vec![], None));
 
         let response = app(workspace)
             .oneshot(
@@ -215,7 +224,7 @@ mod tests {
 
     #[tokio::test]
     async fn lists_the_background_tasks() {
-        let response = app(empty_workspace())
+        let response = app(empty_workspace().await)
             .oneshot(
                 Request::post("/api/chibitv.v1.ChibitvService/ListTasks")
                     .header(header::CONTENT_TYPE, "application/json")
@@ -233,7 +242,7 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_to_refresh_events_without_a_crawler() {
-        let response = app(empty_workspace())
+        let response = app(empty_workspace().await)
             .oneshot(
                 Request::post("/api/chibitv.v1.ChibitvService/RefreshEvents")
                     .header(header::CONTENT_TYPE, "application/json")
@@ -252,7 +261,7 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_to_delete_a_task_it_does_not_know() {
-        let response = app(empty_workspace())
+        let response = app(empty_workspace().await)
             .oneshot(
                 Request::post("/api/chibitv.v1.ChibitvService/DeleteTask")
                     .header(header::CONTENT_TYPE, "application/json")
@@ -271,7 +280,7 @@ mod tests {
 
     #[tokio::test]
     async fn refuses_to_record_without_a_configured_storage() {
-        let response = app(empty_workspace())
+        let response = app(empty_workspace().await)
             .oneshot(
                 Request::post("/api/chibitv.v1.ChibitvService/ScheduleRecording")
                     .header(header::CONTENT_TYPE, "application/json")
@@ -293,7 +302,7 @@ mod tests {
     #[cfg(feature = "gui")]
     #[tokio::test]
     async fn serves_the_embedded_gui() {
-        let router = app(empty_workspace());
+        let router = app(empty_workspace().await);
 
         let response = router
             .clone()
@@ -320,7 +329,7 @@ mod tests {
     #[cfg(not(feature = "gui"))]
     #[tokio::test]
     async fn does_not_serve_legacy_http_api() {
-        let response = app(empty_workspace())
+        let response = app(empty_workspace().await)
             .oneshot(Request::get("/api/channels").body(Body::empty()).unwrap())
             .await
             .unwrap();

@@ -116,7 +116,7 @@ impl ChannelInner {
 #[derive(Clone, Debug)]
 pub struct Channel {
     /// The identifier the database gave the channel, which the API, the
-    /// registry and the `--channel` option of the commands name it by.
+    /// services and the `--channel` option of the commands name it by.
     pub id: usize,
     pub name: String,
     pub inner: ChannelInner,

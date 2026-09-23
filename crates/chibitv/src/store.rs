@@ -1,8 +1,9 @@
 //! Where chibitv keeps what has to survive a restart.
 //!
-//! A [`Store`] is one database, and the traits it is made of are one per kind
-//! of thing kept in it — [`ChannelStore`] for the channels being served,
-//! [`EventStore`] for the broadcast schedule so far.
+//! A [`Store`] is one database, and the repositories it is made of are one per
+//! kind of thing kept in it — [`ChannelRepository`] for the channels being
+//! served, [`ServiceRepository`] for the services they carry,
+//! [`EventRepository`] for the broadcast schedule so far.
 //! Everything the rest of the program asks a database for is declared here, so
 //! another database is a second implementation of those traits and one more
 //! URL scheme in [`open`] rather than a rewrite, and whatever is worth keeping
@@ -10,21 +11,24 @@
 
 mod channel;
 mod event;
+mod service;
 mod sqlite;
 
 use std::sync::Arc;
 
 use anyhow::bail;
 
-pub use channel::{ChannelStore, NewChannel, StoredChannel, StoredService};
-pub use event::{EventStore, EventWriter, SectionId, SectionUpdate, StoredEvent};
+pub use crate::service::StoredService;
+pub use channel::{ChannelRepository, NewChannel, StoredChannel};
+pub use event::{EventRepository, SectionId};
+pub use service::ServiceRepository;
 pub use sqlite::SqliteStore;
 
 /// A database chibitv keeps its state in.
 ///
-/// A backend implements every trait this is made of, so that one connection
-/// serves all of them.
-pub trait Store: ChannelStore + EventStore + Send + Sync {}
+/// A backend implements every repository this is made of, so that one
+/// connection serves all of them.
+pub trait Store: ChannelRepository + ServiceRepository + EventRepository + Send + Sync {}
 
 /// Opens the store the URL points at.
 ///

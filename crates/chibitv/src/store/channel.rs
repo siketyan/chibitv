@@ -9,6 +9,7 @@
 use async_trait::async_trait;
 
 use crate::channel::{ChannelInner, DeliverySystem};
+use crate::service::StoredService;
 
 /// One channel on its way into the store, which is what a scan finds.
 ///
@@ -25,20 +26,9 @@ pub struct NewChannel {
     pub services: Vec<StoredService>,
 }
 
-/// One channel as the store keeps it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoredChannel {
-    /// The identifier the database gave the channel, which the API, the
-    /// registry and the `--channel` option of the commands name it by.
-    pub id: usize,
-    pub name: String,
-    pub inner: ChannelInner,
-    pub transport_stream_id: Option<u16>,
-    pub services: Vec<StoredService>,
-}
-
-impl StoredChannel {
-    /// The stream the channel carries, when it is known.
+impl NewChannel {
+    /// The stream the channel carries, when it is known, which is what its
+    /// services are kept under.
     ///
     /// A satellite channel is picked out of its transponder by its stream, so
     /// the tuning parameters name it; a terrestrial one carries whichever
@@ -57,20 +47,21 @@ impl StoredChannel {
     }
 }
 
-/// One service of a channel, as a scan described it.
-///
-/// This is the catalog the registry is seeded with while starting up, so that
-/// the services of a channel are known before it has been tuned.
+/// One channel as the store keeps it.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct StoredService {
-    pub id: u16,
+pub struct StoredChannel {
+    /// The identifier the database gave the channel, which the API, the
+    /// services and the `--channel` option of the commands name it by.
+    pub id: usize,
     pub name: String,
-    pub provider_name: String,
+    pub inner: ChannelInner,
+    pub transport_stream_id: Option<u16>,
+    pub services: Vec<StoredService>,
 }
 
 /// The part of a [`super::Store`] the channels are kept in.
 #[async_trait]
-pub trait ChannelStore: Send + Sync {
+pub trait ChannelRepository: Send + Sync {
     /// Every channel kept, in the order they are served in.
     async fn load_channels(&self) -> anyhow::Result<Vec<StoredChannel>>;
 
@@ -89,7 +80,7 @@ pub trait ChannelStore: Send + Sync {
     /// write does not list goes: a channel that has left the air stops being
     /// served rather than lingering forever. The identifiers are the
     /// database's to give, so the result is read back with
-    /// [`ChannelStore::load_channels`] rather than returned here.
+    /// [`ChannelRepository::load_channels`] rather than returned here.
     async fn replace_channels(
         &self,
         delivery_system: DeliverySystem,

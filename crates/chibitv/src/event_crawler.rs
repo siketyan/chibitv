@@ -11,9 +11,9 @@ use chibitv_b61::Descrambler;
 use crate::cas::PcscCasModule;
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::demux::{Demux, Packet, is_descrambling_refused};
+use crate::guide::GuideWriter;
 use crate::m2ts::M2tsDemuxer;
 use crate::mmt::MmtDemuxer;
-use crate::registry::Registry;
 use crate::service_information::ServiceInformationProcessor;
 use crate::task::TaskHandle;
 use crate::tuner::{AcquireError, Tuners};
@@ -24,19 +24,26 @@ pub struct EventCrawler {
     tuners: Arc<Tuners>,
     cas: Arc<PcscCasModule>,
     cas_master_key: [u8; 32],
+    writer: GuideWriter,
 }
 
 impl EventCrawler {
-    pub fn new(tuners: Arc<Tuners>, cas: Arc<PcscCasModule>, cas_master_key: [u8; 32]) -> Self {
+    pub fn new(
+        tuners: Arc<Tuners>,
+        cas: Arc<PcscCasModule>,
+        cas_master_key: [u8; 32],
+        writer: GuideWriter,
+    ) -> Self {
         Self {
             tuners,
             cas,
             cas_master_key,
+            writer,
         }
     }
 
-    /// Tunes every channel in turn and collects the events it announces into
-    /// the registry, which stores them.
+    /// Tunes every channel in turn and stores the services and the events it
+    /// announces.
     ///
     /// The channels are walked a broadcast at a time, on a tuner receiving
     /// it, which is held for the whole of them; a broadcast no tuner receives
@@ -46,7 +53,6 @@ impl EventCrawler {
     pub fn crawl(
         &self,
         channels: &[Channel],
-        registry: Arc<Registry>,
         dwell_time: Duration,
         task: &TaskHandle,
     ) -> anyhow::Result<()> {
@@ -107,7 +113,7 @@ impl EventCrawler {
                     | ChannelInner::BonIsdbS { .. } => {
                         let descrambler = B25Descrambler::init(self.cas.clone())?;
                         let mut demux = M2tsDemuxer::new(reader, descrambler);
-                        crawl_channel(&mut demux, channel, &registry, deadline, task)?;
+                        crawl_channel(&mut demux, channel, &self.writer, deadline, task)?;
                     }
                     ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
                         let descrambler =
@@ -116,7 +122,7 @@ impl EventCrawler {
                             BufReader::with_capacity(READ_BUFFER_SIZE, reader),
                             descrambler,
                         );
-                        crawl_channel(&mut demux, channel, &registry, deadline, task)?;
+                        crawl_channel(&mut demux, channel, &self.writer, deadline, task)?;
                     }
                 }
             }
@@ -129,12 +135,11 @@ impl EventCrawler {
 fn crawl_channel<D: Demux>(
     demux: &mut D,
     channel: &Channel,
-    registry: &Arc<Registry>,
+    writer: &GuideWriter,
     deadline: Instant,
     task: &TaskHandle,
 ) -> anyhow::Result<()> {
-    let mut processor =
-        ServiceInformationProcessor::new(channel.id, Some(Arc::clone(registry)), None);
+    let mut processor = ServiceInformationProcessor::new(Some(writer.clone()), None);
     let mut refused = false;
 
     while Instant::now() < deadline {

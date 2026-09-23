@@ -12,8 +12,9 @@ use tracing::warn;
 
 use crate::channel::ChannelInner;
 use crate::channel_scanner::{ScanDeliverySystem, ScanRequest};
+use crate::event;
 use crate::proto::chibitv::v1::*;
-use crate::registry;
+use crate::service;
 use crate::service_information::Signal;
 use crate::store;
 use crate::task;
@@ -34,10 +35,16 @@ impl ChibitvServiceImpl {
 
     /// The broadcast wave the service of the key is carried on, when it is one
     /// of the configured channels that carries it.
-    fn wave_of(&self, key: registry::ServiceKey) -> Option<DeliverySystem> {
-        self.workspace
+    async fn wave_of(
+        &self,
+        key: service::ServiceKey,
+    ) -> Result<Option<DeliverySystem>, ConnectError> {
+        Ok(self
+            .workspace
             .channel_of_key(key)
-            .map(|channel| delivery_system(&channel.inner))
+            .await
+            .map_err(workspace_error)?
+            .map(|channel| delivery_system(&channel.inner)))
     }
 }
 
@@ -59,9 +66,15 @@ impl ChibitvService for ChibitvServiceImpl {
         _ctx: RequestContext,
         _request: ServiceRequest<'_, ListServicesRequest>,
     ) -> ServiceResult<ListServicesResponse> {
-        let mut services = self.workspace.registry().get_all_services();
-        services.sort_by_key(|service| service.key);
-        let services = services.iter().map(Service::from).collect();
+        let services = self
+            .workspace
+            .store()
+            .find_services()
+            .await
+            .map_err(store_error)?
+            .iter()
+            .map(Service::from)
+            .collect();
 
         Response::ok(ListServicesResponse {
             services,
@@ -86,36 +99,32 @@ impl ChibitvService for ChibitvServiceImpl {
             }
         };
 
+        let store = self.workspace.store();
         let keys = if let Some(key) = request.service.as_option() {
             vec![service_key(key)?]
         } else {
-            self.workspace
-                .registry()
-                .get_all_services()
+            store
+                .find_services()
+                .await
+                .map_err(store_error)?
                 .into_iter()
                 .map(|service| service.key)
                 .collect()
         };
-        let mut events = keys
-            .into_iter()
-            // A service the registry has yet to see sits on no known channel,
-            // so a request for one wave leaves it out rather than guessing.
-            .filter(|key| {
-                wave.is_none_or(|wave| self.wave_of(*key).is_some_and(|known| known == wave))
-            })
-            .flat_map(|key| {
-                self.workspace
-                    .registry()
-                    .get_events(key)
-                    .into_iter()
-                    .map(move |event| (key, event))
-            })
-            .collect::<Vec<_>>();
-        events.sort_by_key(|(key, event)| (*key, event.start_time, event.id));
-        let events = events
-            .iter()
-            .map(|(key, event)| event_message(*key, event))
-            .collect();
+
+        let mut events = vec![];
+        for key in keys {
+            // A service no channel being served carries sits on no known
+            // wave, so a request for one leaves it out rather than guessing.
+            if let Some(wave) = wave
+                && self.wave_of(key).await? != Some(wave)
+            {
+                continue;
+            }
+
+            events.extend(store.find_events(key).await.map_err(store_error)?);
+        }
+        let events = events.iter().map(event_message).collect();
 
         Response::ok(ListEventsResponse {
             events,
@@ -316,6 +325,7 @@ impl ChibitvService for ChibitvServiceImpl {
         let task = self
             .workspace
             .schedule_recording(key, event_id)
+            .await
             .map_err(workspace_error)?;
 
         Response::ok(ScheduleRecordingResponse {
@@ -347,7 +357,8 @@ impl ChibitvService for ChibitvServiceImpl {
             .await
             .map_err(workspace_error)?;
 
-        let initial_state = tokio_stream::iter([stream_state(&self.workspace, &stream, None)]);
+        let initial_state =
+            tokio_stream::iter([stream_state(&self.workspace, &stream, None).await]);
         let init_segment = tokio_stream::iter(init_segment.into_iter().map(fmp4_response));
         // A client that falls behind loses whole fragments, which leaves a hole
         // in the byte stream its decoder is reading; it recovers by starting the
@@ -365,11 +376,20 @@ impl ChibitvService for ChibitvServiceImpl {
         let states = {
             let workspace = Arc::clone(&self.workspace);
             let stream = Arc::clone(&stream);
-            signals.filter_map(move |signal| match signal.ok()? {
-                Signal::EventChanged { event_id } => {
-                    Some(stream_state(&workspace, &stream, Some(event_id)))
-                }
-            })
+            signals
+                .then(move |signal| {
+                    let workspace = Arc::clone(&workspace);
+                    let stream = Arc::clone(&stream);
+
+                    async move {
+                        match signal.ok()? {
+                            Signal::EventChanged { event_id } => {
+                                Some(stream_state(&workspace, &stream, Some(event_id)).await)
+                            }
+                        }
+                    }
+                })
+                .filter_map(|state| state)
         };
 
         // The stream keeps the tuner occupied, so it is moved into the
@@ -434,25 +454,35 @@ fn task_state(value: task::TaskState) -> TaskState {
     }
 }
 
-fn stream_state(
+async fn stream_state(
     workspace: &Workspace,
     stream: &crate::stream::Stream,
     event_id: Option<u16>,
 ) -> StreamResponse {
     let key = stream.key();
-    let service = workspace.registry().get_service(key);
-    let event = event_id
-        .or_else(|| stream.event_id())
-        .and_then(|event_id| workspace.registry().get_event(key, event_id));
+    let store = workspace.store();
+    // What cannot be read is left out of the state rather than ending the
+    // stream, which is still worth watching without it.
+    let service = store
+        .find_service(key)
+        .await
+        .inspect_err(|error| warn!(%error, "Could not read the service being streamed"))
+        .ok()
+        .flatten();
+    let event = match event_id.or_else(|| stream.event_id()) {
+        Some(event_id) if service.is_some() => store
+            .find_event(key, event_id)
+            .await
+            .inspect_err(|error| warn!(%error, "Could not read the event on air"))
+            .ok()
+            .flatten(),
+        _ => None,
+    };
 
     StreamResponse {
         payload: Some(stream_response::Payload::State(Box::new(StreamState {
             service: service.as_ref().map(Service::from).into(),
-            event: service
-                .as_ref()
-                .zip(event.as_ref())
-                .map(|(service, event)| event_message(service.key, event))
-                .into(),
+            event: event.as_ref().map(event_message).into(),
             ..Default::default()
         }))),
         ..Default::default()
@@ -665,9 +695,6 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
         WorkspaceError::ChannelScannerUnavailable => {
             ConnectError::failed_precondition("scanning is unavailable")
         }
-        WorkspaceError::ChannelStoreUnavailable => {
-            ConnectError::failed_precondition("no database is configured to keep the channels in")
-        }
         WorkspaceError::ScanNotPossible(error) => {
             ConnectError::invalid_argument(format!("{error:#}"))
         }
@@ -700,8 +727,13 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
 
 /// Reads a service the caller named, which has to fit what the SI numbers a
 /// service with.
-fn service_key(value: &ServiceKeyView<'_>) -> Result<registry::ServiceKey, ConnectError> {
-    Ok(registry::ServiceKey {
+fn store_error(error: anyhow::Error) -> ConnectError {
+    tracing::error!(?error, "Could not read the database");
+    ConnectError::internal("could not read the database")
+}
+
+fn service_key(value: &ServiceKeyView<'_>) -> Result<service::ServiceKey, ConnectError> {
+    Ok(service::ServiceKey {
         stream_id: u16::try_from(value.stream_id)
             .map_err(|_| ConnectError::invalid_argument("stream_id is out of range"))?,
         service_id: u16::try_from(value.service_id)
@@ -709,7 +741,7 @@ fn service_key(value: &ServiceKeyView<'_>) -> Result<registry::ServiceKey, Conne
     })
 }
 
-fn service_key_message(value: registry::ServiceKey) -> ServiceKey {
+fn service_key_message(value: service::ServiceKey) -> ServiceKey {
     ServiceKey {
         stream_id: value.stream_id.into(),
         service_id: value.service_id.into(),
@@ -717,8 +749,8 @@ fn service_key_message(value: registry::ServiceKey) -> ServiceKey {
     }
 }
 
-impl From<&registry::Service> for Service {
-    fn from(value: &registry::Service) -> Self {
+impl From<&service::Service> for Service {
+    fn from(value: &service::Service) -> Self {
         Self {
             key: Some(service_key_message(value.key)).into(),
             name: value.name.clone(),
@@ -729,7 +761,7 @@ impl From<&registry::Service> for Service {
     }
 }
 
-fn event_message(key: registry::ServiceKey, value: &registry::Event) -> Event {
+fn event_message(value: &event::Event) -> Event {
     Event {
         id: value.id.into(),
         title: value.name.clone().unwrap_or_default(),
@@ -752,7 +784,7 @@ fn event_message(key: registry::ServiceKey, value: &registry::Event) -> Event {
             .zip(value.duration)
             .map(|(start_time, duration)| DateTime::from(start_time + duration))
             .into(),
-        service: Some(service_key_message(key)).into(),
+        service: Some(service_key_message(value.key)).into(),
         ..Default::default()
     }
 }
@@ -792,40 +824,51 @@ fn timestamp_in<Tz: TimeZone>(value: NaiveDateTime, timezone: &Tz) -> DateTime {
 mod tests {
     use chrono::{FixedOffset, NaiveDate};
 
-    use crate::channel::Channel;
-    use crate::registry::Registry;
+    use crate::store::{NewChannel, StoredService};
 
     use super::*;
 
     // The workspace starts a scheduler of its own, so it wants a runtime.
     #[tokio::test]
     async fn reports_the_wave_a_service_is_carried_on() {
-        const CARRIED: registry::ServiceKey = registry::ServiceKey {
+        const CARRIED: service::ServiceKey = service::ServiceKey {
             stream_id: 0x1234,
             service_id: 0x5678,
         };
-        const UNKNOWN: registry::ServiceKey = registry::ServiceKey {
+        const UNKNOWN: service::ServiceKey = service::ServiceKey {
             stream_id: 0x4321,
             service_id: 0x8765,
         };
 
-        let registry = Arc::new(Registry::default());
-        registry.put_cached_service(0, CARRIED, "Service".to_string(), String::new());
-        let channel = Channel {
-            id: 0,
-            name: "UHF 20".to_string(),
-            inner: ChannelInner::IsdbT {
-                frequency: 515_142_857,
-                bandwidth_hz: 6_000_000,
-            },
+        let store = crate::store::open("sqlite::memory:").await.unwrap();
+        let workspace = Workspace::new(store, vec![], None);
+        let Ok(_) = workspace
+            .create_channels(&[NewChannel {
+                name: "UHF 20".to_string(),
+                inner: ChannelInner::IsdbT {
+                    frequency: 515_142_857,
+                    bandwidth_hz: 6_000_000,
+                },
+                transport_stream_id: Some(CARRIED.stream_id),
+                services: vec![StoredService {
+                    id: CARRIED.service_id,
+                    name: "Service".to_string(),
+                    provider_name: String::new(),
+                }],
+            }])
+            .await
+        else {
+            panic!("the channels could not be kept");
         };
-        let service =
-            ChibitvServiceImpl::new(Arc::new(Workspace::new(registry, vec![channel], None)));
+        let service = ChibitvServiceImpl::new(Arc::new(workspace));
 
-        assert_eq!(service.wave_of(CARRIED), Some(DeliverySystem::IsdbT));
+        assert_eq!(
+            service.wave_of(CARRIED).await.unwrap(),
+            Some(DeliverySystem::IsdbT)
+        );
         // A service no channel carries belongs to no wave, rather than to the
         // first one that happens to be configured.
-        assert_eq!(service.wave_of(UNKNOWN), None);
+        assert_eq!(service.wave_of(UNKNOWN).await.unwrap(), None);
     }
 
     #[test]
