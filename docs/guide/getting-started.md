@@ -99,7 +99,7 @@ from your distribution, together with the PC/SC daemon, then extract the
 binary:
 
 ```shell
-tar --extract --gzip --file chibitv-v<VERSION>-x86_64-unknown-linux-gnu.tar.gz
+tar --extract --gzip --file chibitv-<VERSION>-x86_64-unknown-linux-gnu.tar.gz
 ```
 
 ### Windows
