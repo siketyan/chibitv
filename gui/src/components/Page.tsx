@@ -101,7 +101,7 @@ export function Page(): JSX.Element {
           aria-label="Channels"
           data-open={isChannelsOpen}
           className={clsx(
-            "side-pane pointer-events-auto absolute inset-y-0 left-0 z-40 w-(--channels-pane-width) min-h-0 flex-col overflow-hidden border-r border-white/10 bg-surface/95 p-3 backdrop-blur-xl",
+            "side-pane pointer-events-auto absolute inset-y-0 left-0 z-40 w-(--channels-pane-width) min-h-0 flex-col overflow-hidden border-r border-white/10 bg-surface/95 p-3",
             isChannelsOpen ? "flex" : "hidden",
           )}
         >
@@ -143,7 +143,7 @@ export function Page(): JSX.Element {
           aria-label="Program"
           data-open={isProgramOpen}
           className={clsx(
-            "side-pane pointer-events-auto absolute inset-y-0 right-0 z-40 w-(--program-pane-width) min-h-0 flex-col overflow-hidden border-l border-white/10 bg-surface/95 backdrop-blur-xl",
+            "side-pane pointer-events-auto absolute inset-y-0 right-0 z-40 w-(--program-pane-width) min-h-0 flex-col overflow-hidden border-l border-white/10 bg-surface/95",
             isProgramOpen ? "flex" : "hidden",
           )}
         >
@@ -155,7 +155,7 @@ export function Page(): JSX.Element {
           />
         </aside>
         {areTasksOpen && (
-          <aside className="pointer-events-auto absolute right-3 top-18 z-50 flex max-h-[min(24rem,calc(100%-6rem))] w-[min(22rem,calc(100%-1.5rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-surface/95 p-3 shadow-2xl backdrop-blur-xl sm:right-4 sm:top-20">
+          <aside className="pointer-events-auto absolute right-3 top-18 z-50 flex max-h-[min(24rem,calc(100%-6rem))] w-[min(22rem,calc(100%-1.5rem))] min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-surface/95 p-3 shadow-2xl sm:right-4 sm:top-20">
             <div className="flex items-center justify-between px-2 pb-3 pt-1">
               <h2 className="font-semibold">Background tasks</h2>
             </div>

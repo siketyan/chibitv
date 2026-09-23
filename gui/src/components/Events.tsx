@@ -183,7 +183,7 @@ export function Events({ service, compact = false }: { service?: ServiceKey; com
 
     return (
       <div ref={scrollToNow} className={compact ? "min-w-0" : "min-w-max"}>
-        <div className="sticky top-0 z-30 flex h-18 border-b border-white/10 bg-surface/90 backdrop-blur-xl">
+        <div className="sticky top-0 z-30 flex h-18 border-b border-white/10 bg-surface/90">
           <div className="sticky left-0 z-40 w-16 shrink-0 border-r border-white/10 bg-surface/95" />
           {laneGroups.map(({ channel, services: channelServices, canExpand, isExpanded }) => {
             const laneCount = Math.max(channelServices.length, 1);
