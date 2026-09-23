@@ -6,6 +6,7 @@ import { type JSX, useState } from "react";
 import logo from "../logo.svg";
 import { useChromeHold, usePlayerChrome } from "../player/chrome";
 import { useServiceKey } from "../router";
+import { useIsPortrait } from "../viewport";
 import { Channels } from "./Channels";
 import { Events } from "./Events";
 import { OverlayNavbar } from "./OverlayNavbar";
@@ -22,8 +23,10 @@ type PaneState = "closed" | "peek" | "open";
 export function Page(): JSX.Element {
   const [channelsPane, setChannelsPane] = useState<PaneState>("closed");
   const [programPane, setProgramPane] = useState<PaneState>("closed");
-  const isChannelsOpen = channelsPane !== "closed";
-  const isProgramOpen = programPane !== "closed";
+  // A portrait display stacks the panes under the picture instead.
+  const isPortrait = useIsPortrait();
+  const isChannelsOpen = !isPortrait && channelsPane !== "closed";
+  const isProgramOpen = !isPortrait && programPane !== "closed";
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
   const [areTasksOpen, setAreTasksOpen] = useState(false);
   const { isVisible } = usePlayerChrome();
@@ -49,12 +52,19 @@ export function Page(): JSX.Element {
     <main
       className={clsx(
         "viewer relative h-viewport overflow-hidden bg-black text-foreground",
+        isPortrait && "flex flex-col pt-[env(safe-area-inset-top)]",
         !isVisible && "cursor-none",
       )}
-      data-channels-pinned={channelsPane === "open"}
-      data-program-pinned={programPane === "open"}
+      data-channels-pinned={isChannelsOpen && channelsPane === "open"}
+      data-program-pinned={isProgramOpen && programPane === "open"}
       onPointerMove={(event) => {
-        if (event.pointerType !== "mouse" || isScheduleOpen || !window.matchMedia("(any-hover: hover)").matches) return;
+        if (
+          event.pointerType !== "mouse" ||
+          isPortrait ||
+          isScheduleOpen ||
+          !window.matchMedia("(any-hover: hover)").matches
+        )
+          return;
         const target = event.target as Element;
         if (target.closest('[role="dialog"]')) return;
         const bounds = event.currentTarget.getBoundingClientRect();
@@ -85,7 +95,9 @@ export function Page(): JSX.Element {
       }}
     >
       {/* Keep this subtree mounted when pinning so playback is uninterrupted. */}
-      <div className="player-area absolute inset-y-0 min-w-0">
+      <div
+        className={clsx("player-area min-w-0", isPortrait ? "relative aspect-video shrink-0" : "absolute inset-y-0")}
+      >
         <Player />
         <div className="pointer-events-none absolute inset-safe">
           <OverlayNavbar
@@ -171,6 +183,11 @@ export function Page(): JSX.Element {
           </aside>
         )}
       </div>
+      {isPortrait && (
+        <section aria-label="Program" className="flex min-h-0 flex-1 flex-col bg-surface pad-safe">
+          <ProgramPane channels={<Channels />} onExpand={() => setIsScheduleOpen(true)} />
+        </section>
+      )}
       <Modal isOpen={isScheduleOpen} onOpenChange={setIsScheduleOpen}>
         <Modal.Backdrop>
           <Modal.Container size="full">

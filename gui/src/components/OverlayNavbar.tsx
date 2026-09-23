@@ -47,7 +47,7 @@ export function OverlayNavbar({
             aria-label={isChannelsOpen ? "Close channels" : "Open channels"}
             aria-expanded={isChannelsOpen}
             aria-controls="channels-pane"
-            className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
+            className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15 portrait:hidden"
             isIconOnly
             variant="ghost"
             onPress={() => onChangeChannelsOpen(!isChannelsOpen)}
@@ -77,7 +77,7 @@ export function OverlayNavbar({
             aria-label={isProgramOpen ? "Close program pane" : "Open program pane"}
             aria-expanded={isProgramOpen}
             aria-controls="program-pane"
-            className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15"
+            className="pointer-events-auto shrink-0 text-white data-[hover=true]:bg-white/15 portrait:hidden"
             isIconOnly
             variant="ghost"
             onPress={() => onChangeProgramOpen(!isProgramOpen)}
