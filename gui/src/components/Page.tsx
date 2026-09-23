@@ -1,4 +1,4 @@
-import { MapPinIcon, XMarkIcon } from "@heroicons/react/24/outline";
+import { XMarkIcon } from "@heroicons/react/24/outline";
 import { Button, Modal } from "@heroui/react";
 import clsx from "clsx";
 import { type JSX, useState } from "react";
@@ -8,11 +8,13 @@ import { useServiceKey } from "../router";
 import { Channels } from "./Channels";
 import { Events } from "./Events";
 import { OverlayNavbar } from "./OverlayNavbar";
+import { PinIcon } from "./PinIcon";
 import { Player } from "./Player";
 import { ProgramPane } from "./ProgramPane";
 import { ScanChannels } from "./ScanChannels";
 import { Tasks } from "./Tasks";
 
+const EDGE_PEEK_WIDTH = 64;
 const isNarrowScreen = () => window.matchMedia("(max-width: 1023px)").matches;
 type PaneState = "closed" | "peek" | "open";
 
@@ -44,25 +46,30 @@ export function Page(): JSX.Element {
 
   return (
     <main
-      className={clsx("relative h-viewport overflow-hidden bg-black text-foreground", !isVisible && "cursor-none")}
+      className={clsx(
+        "viewer relative h-viewport overflow-hidden bg-black text-foreground",
+        !isVisible && "cursor-none",
+      )}
+      data-channels-pinned={channelsPane === "open"}
+      data-program-pinned={programPane === "open"}
       onPointerMove={(event) => {
         if (event.pointerType !== "mouse" || isScheduleOpen || !window.matchMedia("(any-hover: hover)").matches) return;
         const target = event.target as Element;
         if (target.closest('[role="dialog"]')) return;
         const bounds = event.currentTarget.getBoundingClientRect();
         const pane = target.closest("aside")?.id;
-        if (event.clientX <= bounds.left + 8) {
+        if (event.clientX <= bounds.left + EDGE_PEEK_WIDTH) {
           if (!isChannelsOpen) {
             setChannelsPane("peek");
-            if (isNarrowScreen()) setProgramPane("closed");
+            if (isNarrowScreen() && programPane !== "open") setProgramPane("closed");
           }
         } else if (channelsPane === "peek" && pane !== "channels-pane") {
           setChannelsPane("closed");
         }
-        if (event.clientX >= bounds.right - 8) {
+        if (event.clientX >= bounds.right - EDGE_PEEK_WIDTH) {
           if (!isProgramOpen) {
             setProgramPane("peek");
-            if (isNarrowScreen()) setChannelsPane("closed");
+            if (isNarrowScreen() && channelsPane !== "open") setChannelsPane("closed");
           }
         } else if (programPane === "peek" && pane !== "program-pane") {
           setProgramPane("closed");
@@ -73,23 +80,28 @@ export function Page(): JSX.Element {
         setProgramPane((current) => (current === "peek" ? "closed" : current));
       }}
     >
-      <Player />
-      {/* The picture fills the display; controls stay inside the safe area. */}
+      {/* Keep this subtree mounted when pinning so playback is uninterrupted. */}
+      <div className="player-area absolute inset-y-0 min-w-0">
+        <Player />
+        <div className="pointer-events-none absolute inset-safe">
+          <OverlayNavbar
+            areTasksOpen={areTasksOpen}
+            isChannelsOpen={isChannelsOpen}
+            isProgramOpen={isProgramOpen}
+            onChangeChannelsOpen={changeChannelsOpen}
+            onChangeProgramOpen={changeProgramOpen}
+            onChangeTasksOpen={setAreTasksOpen}
+          />
+        </div>
+      </div>
       <div className="pointer-events-none absolute inset-safe">
-        <OverlayNavbar
-          areTasksOpen={areTasksOpen}
-          isChannelsOpen={isChannelsOpen}
-          isProgramOpen={isProgramOpen}
-          onChangeChannelsOpen={changeChannelsOpen}
-          onChangeProgramOpen={changeProgramOpen}
-          onChangeTasksOpen={setAreTasksOpen}
-        />
         {/* Keep pane contents mounted so a details/scan dialog survives the pointer leaving its pane. */}
         <aside
           id="channels-pane"
           aria-label="Channels"
+          data-open={isChannelsOpen}
           className={clsx(
-            "pointer-events-auto absolute inset-y-0 left-0 z-40 w-[min(19rem,100%)] min-h-0 flex-col overflow-hidden border-r border-white/10 bg-surface/95 p-3 shadow-2xl backdrop-blur-xl",
+            "side-pane pointer-events-auto absolute inset-y-0 left-0 z-40 w-(--channels-pane-width) min-h-0 flex-col overflow-hidden border-r border-white/10 bg-surface/95 p-3 shadow-2xl backdrop-blur-xl",
             isChannelsOpen ? "flex" : "hidden",
           )}
         >
@@ -105,7 +117,7 @@ export function Page(): JSX.Element {
               variant={channelsPane === "open" ? "secondary" : "ghost"}
               onPress={() => setChannelsPane(channelsPane === "open" ? "peek" : "open")}
             >
-              <MapPinIcon />
+              <PinIcon />
             </Button>
             <Button
               aria-label="Close channels"
@@ -129,8 +141,9 @@ export function Page(): JSX.Element {
         <aside
           id="program-pane"
           aria-label="Program"
+          data-open={isProgramOpen}
           className={clsx(
-            "pointer-events-auto absolute inset-y-0 right-0 z-40 w-[min(24rem,100%)] min-h-0 flex-col overflow-hidden border-l border-white/10 bg-surface/95 shadow-2xl backdrop-blur-xl",
+            "side-pane pointer-events-auto absolute inset-y-0 right-0 z-40 w-(--program-pane-width) min-h-0 flex-col overflow-hidden border-l border-white/10 bg-surface/95 shadow-2xl backdrop-blur-xl",
             isProgramOpen ? "flex" : "hidden",
           )}
         >
@@ -138,10 +151,7 @@ export function Page(): JSX.Element {
             isPinned={programPane === "open"}
             onChangePinned={() => setProgramPane(programPane === "open" ? "peek" : "open")}
             onClose={() => changeProgramOpen(false)}
-            onExpand={() => {
-              setIsScheduleOpen(true);
-              if (programPane === "peek") setProgramPane("open");
-            }}
+            onExpand={() => setIsScheduleOpen(true)}
           />
         </aside>
         {areTasksOpen && (

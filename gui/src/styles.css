@@ -37,6 +37,60 @@
   width: min(100cqw, calc(100cqh * 16 / 9));
 }
 
+/* Peeked panes overlay the picture. Pinned panes reserve space on devices
+   with a mouse; touch layouts keep their full-size player and close buttons. */
+.viewer {
+  --channels-pane-width: min(19rem, 100%);
+  --program-pane-width: min(24rem, 100%);
+  --player-left: 0px;
+  --player-right: 0px;
+}
+
+.player-area {
+  left: var(--player-left);
+  right: var(--player-right);
+}
+
+#channels-pane {
+  --pane-offset: -100%;
+}
+
+#program-pane {
+  --pane-offset: 100%;
+}
+
+.side-pane[data-open="true"] {
+  animation: slide-pane-in 180ms ease-out;
+}
+
+@keyframes slide-pane-in {
+  from {
+    transform: translateX(var(--pane-offset));
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .side-pane[data-open="true"] {
+    animation: none;
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .viewer[data-channels-pinned="true"] {
+    /* Keep room for the picture even with both panes pinned in a small window. */
+    --channels-pane-width: min(19rem, 30vw);
+    --player-left: calc(var(--channels-pane-width) + env(safe-area-inset-left));
+  }
+
+  .viewer[data-program-pinned="true"] {
+    --program-pane-width: min(24rem, 40vw);
+    --player-right: calc(var(--program-pane-width) + env(safe-area-inset-right));
+  }
+}
+
 :root {
   font-family: "Noto Sans Symbols", ui-sans-serif, system-ui, sans-serif;
   color-scheme: dark;
