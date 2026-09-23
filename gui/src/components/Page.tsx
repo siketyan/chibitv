@@ -59,7 +59,10 @@ export function Page(): JSX.Element {
         if (target.closest('[role="dialog"]')) return;
         const bounds = event.currentTarget.getBoundingClientRect();
         const pane = target.closest("aside")?.id;
-        if (event.clientX <= bounds.left + EDGE_PEEK_WIDTH) {
+        // The bars along the top and bottom edges win over the panes, whose
+        // peek would otherwise cover the controls in their corners.
+        const isOverBar = target.closest(".player-chrome-region") !== null;
+        if (!isOverBar && event.clientX <= bounds.left + EDGE_PEEK_WIDTH) {
           if (!isChannelsOpen) {
             setChannelsPane("peek");
             if (isNarrowScreen() && programPane !== "open") setProgramPane("closed");
@@ -67,7 +70,7 @@ export function Page(): JSX.Element {
         } else if (channelsPane === "peek" && pane !== "channels-pane") {
           setChannelsPane("closed");
         }
-        if (event.clientX >= bounds.right - EDGE_PEEK_WIDTH) {
+        if (!isOverBar && event.clientX >= bounds.right - EDGE_PEEK_WIDTH) {
           if (!isProgramOpen) {
             setProgramPane("peek");
             if (isNarrowScreen() && channelsPane !== "open") setChannelsPane("closed");
