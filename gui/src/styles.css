@@ -51,6 +51,11 @@
   right: var(--player-right);
 }
 
+/* Pane interaction keeps the controls visible without shading the picture. */
+.viewer:has(.side-pane[data-open="true"]) .player-chrome {
+  background-image: none;
+}
+
 #channels-pane {
   --pane-offset: -100%;
 }

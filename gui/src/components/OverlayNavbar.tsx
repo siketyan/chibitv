@@ -37,7 +37,7 @@ export function OverlayNavbar({
   return (
     <nav
       className={clsx(
-        "pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent px-3 pb-10 pt-3 text-white sm:px-5 sm:pt-4",
+        "player-chrome pointer-events-none absolute inset-x-0 top-0 z-30 flex items-start justify-between gap-3 bg-gradient-to-b from-black/80 to-transparent px-3 pb-10 pt-3 text-white sm:px-5 sm:pt-4",
         chromeTransition(isVisible),
       )}
     >
@@ -53,9 +53,6 @@ export function OverlayNavbar({
         >
           {isChannelsOpen ? <XMarkIcon /> : <QueueListIcon />}
         </Button>
-        {/* No shadow under the title: the gradient behind this bar is what
-            keeps it legible over the picture, and a shadow on top of that only
-            showed up as a smudge on an installed app for iOS. */}
         {title && <h1 className="truncate text-sm font-medium sm:text-base">{title}</h1>}
       </div>
       <div className="flex shrink-0 items-center gap-2">
