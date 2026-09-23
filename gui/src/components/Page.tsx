@@ -182,7 +182,7 @@ export function Page(): JSX.Element {
         )}
       </div>
       {isPortrait && (
-        <section aria-label="Program" className="flex min-h-0 flex-1 flex-col bg-surface pad-safe">
+        <section aria-label="Program" data-outside-player className="flex min-h-0 flex-1 flex-col bg-surface pad-safe">
           <ProgramPane channels={<Channels />} onExpand={() => setIsScheduleOpen(true)} />
         </section>
       )}

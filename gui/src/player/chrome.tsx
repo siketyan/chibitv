@@ -47,13 +47,20 @@ export function PlayerChromeProvider({ children }: { children: ReactNode }): JSX
   }, []);
 
   useEffect(() => {
+    // Using the UI laid out beside the picture rather than over it says nothing
+    // about wanting the controls drawn over the picture.
+    const wakeOnActivity = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest("[data-outside-player]")) return;
+      wake();
+    };
+
     for (const event of ACTIVITY_EVENTS) {
-      window.addEventListener(event, wake, { passive: true });
+      window.addEventListener(event, wakeOnActivity, { passive: true });
     }
 
     return () => {
       for (const event of ACTIVITY_EVENTS) {
-        window.removeEventListener(event, wake);
+        window.removeEventListener(event, wakeOnActivity);
       }
       window.clearTimeout(timer.current);
     };
