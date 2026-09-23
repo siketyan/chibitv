@@ -111,15 +111,32 @@ impl ChannelInner {
             Self::IsdbS3 { .. } | Self::BonIsdbS3 { .. } => DeliverySystem::IsdbS3,
         }
     }
+
+    /// The stream the tuning picks out of a transponder, which only a
+    /// satellite channel tuned by its parameters names.
+    pub fn stream_id(&self) -> Option<u16> {
+        match *self {
+            Self::IsdbS { stream_id, .. } | Self::IsdbS3 { stream_id, .. } => {
+                u16::try_from(stream_id).ok()
+            }
+            Self::IsdbT { .. }
+            | Self::BonIsdbT { .. }
+            | Self::BonIsdbS { .. }
+            | Self::BonIsdbS3 { .. } => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct Channel {
     /// The identifier the database gave the channel, which the API, the
-    /// registry and the `--channel` option of the commands name it by.
+    /// services and the `--channel` option of the commands name it by.
     pub id: usize,
     pub name: String,
     pub inner: ChannelInner,
+    /// The stream the channel carries, when it is known, which is what says
+    /// the services of that stream are this channel's.
+    pub stream_id: Option<u16>,
 }
 
 impl From<&StoredChannel> for Channel {
@@ -128,6 +145,7 @@ impl From<&StoredChannel> for Channel {
             id: value.id,
             name: value.name.clone(),
             inner: value.inner.clone(),
+            stream_id: value.stream_id(),
         }
     }
 }

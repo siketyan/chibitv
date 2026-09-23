@@ -5,9 +5,9 @@ mod channel_scanner;
 mod command;
 mod config;
 mod demux;
+mod event;
 mod event_crawler;
 mod hevc;
-mod logo;
 mod m2ts;
 mod mmt;
 mod mp2;
@@ -16,11 +16,11 @@ mod proto {
     connectrpc::include_generated!();
 }
 mod recorder;
-mod registry;
 mod remux;
 mod rpc;
 mod scheduler;
 mod server;
+mod service;
 mod service_information;
 mod storage;
 mod store;

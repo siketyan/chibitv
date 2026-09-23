@@ -1,17 +1,22 @@
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use tokio::sync::broadcast::Sender;
 
 use chibitv_b10::table::{Eit, Sdt, Table as B10Table};
 use chibitv_b60::message::{M2SectionMessage, Message};
-use chibitv_b60::table::{MhBit, MhEit, MhSdt, Table};
+use chibitv_b60::table::{MhEit, MhSdt, Table};
 
 use crate::demux::SignalingEvent;
-use crate::registry::{Registry, ServiceKey};
+use crate::service::{ServiceKey, StoredService};
 use crate::store::SectionId;
 
+pub mod logo;
+mod writer;
+
+pub use writer::{EventEntries, ServiceInformationUpdate, ServiceInformationWriter};
+
 const SDT_ACTUAL_TABLE_ID: u8 = 0x42;
+const MH_SDT_ACTUAL_TABLE_ID: u8 = 0x9F;
 const EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID: u8 = 0x4E;
 const EIT_ACTUAL_SCHEDULE_TABLE_IDS: std::ops::RangeInclusive<u8> = 0x50..=0x5F;
 const MH_EIT_ACTUAL_SCHEDULE_TABLE_IDS: std::ops::RangeInclusive<u8> = 0x8C..=0x9B;
@@ -21,10 +26,11 @@ pub enum Signal {
     EventChanged { event_id: u16 },
 }
 
-/// Identifies one EIT section among the ones a stream carries.
+/// Identifies one SI section among the ones a stream carries.
 ///
 /// The table id is part of it because the present/following and the schedule
-/// tables number their sections independently.
+/// tables number their sections independently. A section of the SDT describes
+/// every service of its stream, so it names none.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 struct SectionKey {
     table_id: u8,
@@ -46,16 +52,6 @@ struct SectionVersion {
     crc_32: u32,
 }
 
-impl SectionKey {
-    /// The service the section carries the schedule of.
-    fn service(&self) -> ServiceKey {
-        ServiceKey {
-            stream_id: self.stream_id,
-            service_id: self.service_id,
-        }
-    }
-}
-
 impl From<SectionKey> for SectionId {
     fn from(value: SectionKey) -> Self {
         Self {
@@ -68,45 +64,29 @@ impl From<SectionKey> for SectionId {
     }
 }
 
-/// Names a section so that the registry keeps it between runs, unless it
-/// belongs to a table that is not worth keeping.
-///
-/// Only the schedule tables are: the present and following events they
-/// announce are described by the schedule as well, and a section of their own
-/// would only replace what the schedule stored.
-fn schedule_section(
-    key: SectionKey,
-    schedule_table_ids: std::ops::RangeInclusive<u8>,
-) -> Option<SectionId> {
-    schedule_table_ids
-        .contains(&key.table_id)
-        .then(|| key.into())
-}
-
 pub struct ServiceInformationProcessor {
-    channel_id: usize,
     watched_service_id: Option<u16>,
-    registry: Option<Arc<Registry>>,
+    writer: Option<ServiceInformationWriter>,
     signal_tx: Option<Sender<Signal>>,
     current_event_id: Option<u16>,
     stored_sections: HashMap<SectionKey, SectionVersion>,
-    logos: crate::logo::Logos,
+    logos: logo::Logos,
 }
 
 impl ServiceInformationProcessor {
+    /// Processes the SI of a stream, keeping what it says of the services and
+    /// their schedule with `writer`.
     pub fn new(
-        channel_id: usize,
-        registry: Option<Arc<Registry>>,
+        writer: Option<ServiceInformationWriter>,
         signal_tx: Option<Sender<Signal>>,
     ) -> Self {
         Self {
-            channel_id,
             watched_service_id: None,
-            registry,
+            writer,
             signal_tx,
             current_event_id: None,
             stored_sections: HashMap::new(),
-            logos: crate::logo::Logos::default(),
+            logos: logo::Logos::default(),
         }
     }
 
@@ -115,8 +95,8 @@ impl ServiceInformationProcessor {
     /// The SI of a transport stream describes every service it carries, so
     /// without this the programme on air is whichever service the EIT happens
     /// to mention first — on a terrestrial channel that is rarely the one
-    /// being watched. The tables of the other services still reach the
-    /// registry, which collects the schedule of the whole stream.
+    /// being watched. The tables of the other services are still stored, which
+    /// collects the schedule of the whole stream.
     ///
     /// `None` keeps tracking every service, as a capture of a whole transport
     /// stream has no single one.
@@ -152,15 +132,15 @@ impl ServiceInformationProcessor {
                 self.process_b10_eit(table_id, table)
             }
             B10Table::Dsmcc(data) => {
-                if let Some(registry) = &self.registry {
-                    let _ = self.logos.carousel(registry, &data);
+                if let Some(writer) = &self.writer {
+                    let _ = self.logos.carousel(writer, &data);
                 }
                 Ok(())
             }
             B10Table::Cdt(table) if table.current_next_indicator && table.data_type == 1 => {
-                if let Some(registry) = &self.registry {
+                if let Some(writer) = &self.writer {
                     self.logos.data(
-                        registry,
+                        writer,
                         table.original_network_id,
                         table.download_data_id,
                         &table.data,
@@ -180,15 +160,38 @@ impl ServiceInformationProcessor {
         if !table.current_next_indicator {
             return;
         }
-        if let Some(registry) = &self.registry {
+
+        let stream_id = table.transport_stream_id;
+        self.store_section(
+            SectionKey {
+                table_id: SDT_ACTUAL_TABLE_ID,
+                original_network_id: table.original_network_id,
+                stream_id,
+                service_id: 0,
+                section_number: table.section_number,
+            },
+            SectionVersion {
+                version_number: table.version_number,
+                crc_32: table.crc_32,
+            },
+            || ServiceInformationUpdate::Services {
+                stream_id,
+                services: table
+                    .services
+                    .iter()
+                    .filter_map(StoredService::from_b10)
+                    .collect(),
+            },
+        );
+
+        if let Some(writer) = &self.writer {
             for service in &table.services {
-                registry.put_b10_service(self.channel_id, table.transport_stream_id, service);
                 for descriptor in &service.descriptors {
                     if let chibitv_b10::descriptor::Descriptor::Unknown(0xcf, data) = descriptor {
                         self.logos.reference(
-                            registry,
+                            writer,
                             ServiceKey {
-                                stream_id: table.transport_stream_id,
+                                stream_id,
                                 service_id: service.service_id,
                             },
                             table.original_network_id,
@@ -208,7 +211,6 @@ impl ServiceInformationProcessor {
             service_id: table.service_id,
             section_number: table.section_number,
         };
-        let section = schedule_section(key, EIT_ACTUAL_SCHEDULE_TABLE_IDS);
 
         self.store_section(
             key,
@@ -216,7 +218,11 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
-            |registry| registry.put_b10_events(key.service(), section, &table.events),
+            || ServiceInformationUpdate::Events {
+                section: key.into(),
+                replaces: EIT_ACTUAL_SCHEDULE_TABLE_IDS.contains(&table_id),
+                entries: EventEntries::B10(table.events.clone()),
+            },
         );
 
         if !self.is_watched_service(table.service_id) {
@@ -224,12 +230,7 @@ impl ServiceInformationProcessor {
         }
 
         for event in &table.events {
-            self.process_event(
-                key.service(),
-                event.event_id,
-                event.start_time,
-                event.duration,
-            )?;
+            self.process_event(event.event_id, event.start_time, event.duration);
         }
 
         Ok(())
@@ -238,16 +239,12 @@ impl ServiceInformationProcessor {
     fn process_m2_section_message(&mut self, message: M2SectionMessage) -> anyhow::Result<()> {
         match message.table {
             Table::MhCdt(table) if table.current_next_indicator && table.data_type == 1 => {
-                if let Some(registry) = &self.registry {
-                    self.logos.mh_data(registry, table);
+                if let Some(writer) = &self.writer {
+                    self.logos.mh_data(writer, table);
                 }
                 Ok(())
             }
             Table::MhEit(table) => self.process_mh_eit(table),
-            Table::MhBit(table) => {
-                self.process_mh_bit(table);
-                Ok(())
-            }
             Table::MhSdt(table) => {
                 self.process_mh_sdt(table);
                 Ok(())
@@ -264,7 +261,6 @@ impl ServiceInformationProcessor {
             service_id: table.service_id,
             section_number: table.section_number,
         };
-        let section = schedule_section(key, MH_EIT_ACTUAL_SCHEDULE_TABLE_IDS);
 
         self.store_section(
             key,
@@ -272,7 +268,11 @@ impl ServiceInformationProcessor {
                 version_number: table.version_number,
                 crc_32: table.crc_32,
             },
-            |registry| registry.put_events(key.service(), section, &table.events),
+            || ServiceInformationUpdate::Events {
+                section: key.into(),
+                replaces: MH_EIT_ACTUAL_SCHEDULE_TABLE_IDS.contains(&table.table_id),
+                entries: EventEntries::B60(table.events.clone()),
+            },
         );
 
         if !self.is_watched_service(table.service_id) {
@@ -280,38 +280,48 @@ impl ServiceInformationProcessor {
         }
 
         for event in &table.events {
-            self.process_event(
-                key.service(),
-                event.event_id,
-                event.start_time,
-                event.duration,
-            )?;
+            self.process_event(event.event_id, event.start_time, event.duration);
         }
 
         Ok(())
-    }
-
-    fn process_mh_bit(&self, table: MhBit) {
-        if let Some(registry) = &self.registry {
-            for broadcaster in &table.broadcasters {
-                registry.put_broadcaster(broadcaster);
-            }
-        }
     }
 
     fn process_mh_sdt(&mut self, table: MhSdt) {
         if !table.current_next_indicator {
             return;
         }
-        if let Some(registry) = &self.registry {
+
+        let stream_id = table.tlv_stream_id;
+        self.store_section(
+            SectionKey {
+                table_id: MH_SDT_ACTUAL_TABLE_ID,
+                original_network_id: table.original_network_id,
+                stream_id,
+                service_id: 0,
+                section_number: table.section_number,
+            },
+            SectionVersion {
+                version_number: table.version_number,
+                crc_32: table.crc_32,
+            },
+            || ServiceInformationUpdate::Services {
+                stream_id,
+                services: table
+                    .services
+                    .iter()
+                    .filter_map(StoredService::from_b60)
+                    .collect(),
+            },
+        );
+
+        if let Some(writer) = &self.writer {
             for service in &table.services {
-                registry.put_service(self.channel_id, table.tlv_stream_id, service);
                 for descriptor in &service.descriptors {
                     if let chibitv_b60::descriptor::Descriptor::Unknown(0x8025, data) = descriptor {
                         self.logos.reference(
-                            registry,
+                            writer,
                             ServiceKey {
-                                stream_id: table.tlv_stream_id,
+                                stream_id,
                                 service_id: service.service_id,
                             },
                             table.original_network_id,
@@ -323,72 +333,67 @@ impl ServiceInformationProcessor {
         }
     }
 
-    /// Hands the events of an EIT section to the registry, unless it already
-    /// holds them.
+    /// Queues what a section says for the store, unless it already has it.
     ///
     /// A stream repeats every section every few seconds and only bumps its
     /// version when the content changes, so remembering the version keeps the
-    /// registry from rebuilding a schedule that did not move.
+    /// store from rewriting what did not move.
     ///
-    /// A section is only remembered once the registry took every event of it:
-    /// one describing a service the registry does not know yet is dropped, and
-    /// the next repetition has to retry it.
+    /// A section is only remembered once the store took it: one refused by a
+    /// queue that is full has to be retried by the next repetition.
     fn store_section(
         &mut self,
         key: SectionKey,
         version: SectionVersion,
-        store: impl FnOnce(&Registry) -> bool,
+        update: impl FnOnce() -> ServiceInformationUpdate,
     ) {
-        let Some(registry) = self.registry.clone() else {
+        let Some(writer) = &self.writer else {
             return;
         };
         if self.stored_sections.get(&key) == Some(&version) {
             return;
         }
 
-        if store(&registry) {
+        if writer.enqueue(update()) {
             self.stored_sections.insert(key, version);
         }
     }
 
     fn process_event(
         &mut self,
-        key: ServiceKey,
         event_id: u16,
         start_time: Option<chrono::NaiveDateTime>,
         duration: Option<chrono::TimeDelta>,
-    ) -> anyhow::Result<()> {
+    ) {
         let Some((start_time, duration)) = start_time.zip(duration) else {
-            return Ok(());
+            return;
         };
 
         // The SI carries JST wall-clock time and the server runs on that zone,
         // so the local clock is the one the broadcast schedules against.
         let now = chrono::Local::now().naive_local();
         if now < start_time || start_time + duration <= now {
-            return Ok(());
+            return;
         }
         if self.current_event_id == Some(event_id) {
-            return Ok(());
-        }
-
-        // The registry keeps events under a service it already knows, so an
-        // EIT that arrives before the SDT is dropped. Waiting for the next
-        // section keeps the announced event resolvable by whoever receives
-        // the signal, instead of latching onto one nobody can look up.
-        if let Some(registry) = &self.registry
-            && registry.get_event(key, event_id).is_none()
-        {
-            return Ok(());
-        }
-
-        if let Some(signal_tx) = &self.signal_tx {
-            // Nobody may be listening right now; that is fine.
-            let _ = signal_tx.send(Signal::EventChanged { event_id });
+            return;
         }
         self.current_event_id = Some(event_id);
 
-        Ok(())
+        let Some(signal_tx) = self.signal_tx.clone() else {
+            return;
+        };
+        // Nobody may be listening right now; that is fine.
+        let signal = move || {
+            let _ = signal_tx.send(Signal::EventChanged { event_id });
+        };
+
+        // Whoever receives the signal looks the event up, so it is sent once
+        // the section describing the event is in the store.
+        match &self.writer {
+            Some(writer) => writer.notify(signal),
+            None => signal(),
+        }
     }
 
     pub fn current_event_id(&self) -> Option<u16> {
@@ -407,7 +412,6 @@ mod tests {
     use chibitv_b10::table::{Eit, EventInformation, ServiceInformation as B10ServiceInformation};
 
     use super::*;
-    use crate::store::EventWriter;
 
     const SERVICE_ID: u16 = 0x0400;
     const OTHER_SERVICE_ID: u16 = 0x0401;
@@ -455,24 +459,27 @@ mod tests {
         eit
     }
 
-    /// A registry serving the one channel the tables below belong to, which a
-    /// service has to belong to before it is kept.
-    fn registry_serving_the_stream() -> Registry {
-        let registry = Registry::default();
-        registry.put_channel(0, Some(STREAM_ID));
+    /// The name of the events an update carries, for the service it is for.
+    fn event_names(update: ServiceInformationUpdate) -> (u16, Vec<Option<String>>) {
+        let ServiceInformationUpdate::Events {
+            section,
+            entries: EventEntries::B10(entries),
+            ..
+        } = update
+        else {
+            panic!("expected the events of a section");
+        };
 
-        registry
-    }
+        let names = entries
+            .iter()
+            .map(|entry| {
+                let mut event = crate::event::Event::new(section.service(), entry.event_id);
+                event.apply_b10(entry);
+                event.name
+            })
+            .collect();
 
-    fn service_key(service_id: u16) -> ServiceKey {
-        ServiceKey {
-            stream_id: STREAM_ID,
-            service_id,
-        }
-    }
-
-    fn event_name_of(registry: &Registry, event_id: u16) -> Option<String> {
-        registry.get_event(service_key(SERVICE_ID), event_id)?.name
+        (section.service_id, names)
     }
 
     fn sdt_of(service_id: u16) -> Sdt {
@@ -519,7 +526,7 @@ mod tests {
     #[test]
     fn emits_the_current_event_only_once() {
         let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel(2);
-        let mut processor = ServiceInformationProcessor::new(0, None, Some(signal_tx));
+        let mut processor = ServiceInformationProcessor::new(None, Some(signal_tx));
         let eit = eit_on_air(SERVICE_ID, 0x1234);
 
         processor
@@ -537,29 +544,16 @@ mod tests {
     #[test]
     fn tracks_the_watched_service_only() {
         let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel(2);
-        let registry = Arc::new(registry_serving_the_stream());
-        let mut processor =
-            ServiceInformationProcessor::new(0, Some(Arc::clone(&registry)), Some(signal_tx))
-                .watching_service(Some(SERVICE_ID));
-
-        processor
-            .process(SignalingEvent::B10Table {
-                table_id: SDT_ACTUAL_TABLE_ID,
-                table: B10Table::Sdt(sdt_of(SERVICE_ID)),
-            })
-            .unwrap();
-        processor
-            .process(SignalingEvent::B10Table {
-                table_id: SDT_ACTUAL_TABLE_ID,
-                table: B10Table::Sdt(sdt_of(OTHER_SERVICE_ID)),
-            })
-            .unwrap();
+        let (writer, mut updates) = ServiceInformationWriter::for_test();
+        let mut processor = ServiceInformationProcessor::new(Some(writer), Some(signal_tx))
+            .watching_service(Some(SERVICE_ID));
 
         // The transport stream carries the EIT of every service it multiplexes.
         processor
-            .process(signaling(B10Table::Eit(eit_on_air(
+            .process(signaling(B10Table::Eit(eit_named(
                 OTHER_SERVICE_ID,
                 0x0002,
+                "Elsewhere",
             ))))
             .unwrap();
         processor
@@ -567,31 +561,38 @@ mod tests {
             .unwrap();
 
         assert_eq!(processor.current_event_id(), Some(0x0001));
+
+        // The schedule of the other service is still collected.
+        assert_eq!(
+            event_names(updates.try_recv().unwrap()),
+            (OTHER_SERVICE_ID, vec![Some("Elsewhere".to_string())])
+        );
+        assert_eq!(
+            event_names(updates.try_recv().unwrap()),
+            (SERVICE_ID, vec![None])
+        );
+
+        // The event on air is announced once the section describing it is
+        // stored, and not before.
+        assert!(matches!(signal_rx.try_recv(), Err(TryRecvError::Empty)));
+        let Ok(ServiceInformationUpdate::Notify(notify)) = updates.try_recv() else {
+            panic!("expected the signal to wait for the store");
+        };
+        notify();
+
         assert!(matches!(
             signal_rx.try_recv(),
             Ok(Signal::EventChanged { event_id: 0x0001 })
         ));
         assert!(matches!(signal_rx.try_recv(), Err(TryRecvError::Empty)));
-
-        // The schedule of the other service is still collected.
-        assert!(
-            registry
-                .get_event(service_key(OTHER_SERVICE_ID), 0x0002)
-                .is_some()
-        );
+        assert!(updates.try_recv().is_err());
     }
 
     #[test]
     fn stores_a_section_once_per_version() {
-        let registry = Arc::new(registry_serving_the_stream());
-        let mut processor = ServiceInformationProcessor::new(0, Some(Arc::clone(&registry)), None);
+        let (writer, mut updates) = ServiceInformationWriter::for_test();
+        let mut processor = ServiceInformationProcessor::new(Some(writer), None);
 
-        processor
-            .process(SignalingEvent::B10Table {
-                table_id: SDT_ACTUAL_TABLE_ID,
-                table: B10Table::Sdt(sdt_of(SERVICE_ID)),
-            })
-            .unwrap();
         processor
             .process(signaling(B10Table::Eit(eit_named(
                 SERVICE_ID,
@@ -599,9 +600,13 @@ mod tests {
                 "Programme",
             ))))
             .unwrap();
+        assert_eq!(
+            event_names(updates.try_recv().unwrap()),
+            (SERVICE_ID, vec![Some("Programme".to_string())])
+        );
 
         // A section of a version already stored is dropped without reaching
-        // the registry, which the rewritten name it carries here shows.
+        // the store, whatever it carries.
         processor
             .process(signaling(B10Table::Eit(eit_named(
                 SERVICE_ID,
@@ -609,11 +614,7 @@ mod tests {
                 "Rewritten",
             ))))
             .unwrap();
-
-        assert_eq!(
-            event_name_of(&registry, 0x0001).as_deref(),
-            Some("Programme")
-        );
+        assert!(updates.try_recv().is_err());
 
         // A new version of it is stored again.
         let mut updated = eit_named(SERVICE_ID, 0x0001, "Updated");
@@ -622,32 +623,24 @@ mod tests {
             .process(signaling(B10Table::Eit(updated)))
             .unwrap();
 
-        assert_eq!(event_name_of(&registry, 0x0001).as_deref(), Some("Updated"));
+        assert_eq!(
+            event_names(updates.try_recv().unwrap()),
+            (SERVICE_ID, vec![Some("Updated".to_string())])
+        );
     }
 
     #[test]
-    fn stores_the_schedule_but_not_what_is_on_air() {
-        let (writer, mut sections) = EventWriter::for_test();
-        let registry = Arc::new(registry_serving_the_stream().storing_events(writer));
-        let mut processor = ServiceInformationProcessor::new(0, Some(registry), None);
+    fn replaces_the_schedule_but_only_adds_what_is_on_air() {
+        let (writer, mut updates) = ServiceInformationWriter::for_test();
+        let mut processor = ServiceInformationProcessor::new(Some(writer), None);
 
-        processor
-            .process(SignalingEvent::B10Table {
-                table_id: SDT_ACTUAL_TABLE_ID,
-                table: B10Table::Sdt(sdt_of(SERVICE_ID)),
-            })
-            .unwrap();
-
-        // What is on air is described by the schedule as well, so the
-        // present/following table is not worth a section of its own.
+        // The present/following table moves on to the next programme as soon
+        // as one ends, which is no reason to forget the one that did.
         processor
             .process(signaling(B10Table::Eit(eit_named(
                 SERVICE_ID, 0x0001, "On air",
             ))))
             .unwrap();
-
-        assert!(sections.try_recv().is_err());
-
         processor
             .process(schedule_signaling(B10Table::Eit(eit_named(
                 SERVICE_ID,
@@ -656,64 +649,49 @@ mod tests {
             ))))
             .unwrap();
 
-        let update = sections.try_recv().unwrap();
-
-        assert_eq!(update.section.service_id, SERVICE_ID);
+        let replaces = |update| match update {
+            ServiceInformationUpdate::Events {
+                section, replaces, ..
+            } => (section.table_id, replaces),
+            _ => panic!("expected the events of a section"),
+        };
         assert_eq!(
-            update.section.table_id,
-            *EIT_ACTUAL_SCHEDULE_TABLE_IDS.start()
+            replaces(updates.try_recv().unwrap()),
+            (EIT_ACTUAL_PRESENT_FOLLOWING_TABLE_ID, false)
         );
         assert_eq!(
-            update
-                .events
-                .iter()
-                .map(|event| event.name.as_deref())
-                .collect::<Vec<_>>(),
-            [Some("Scheduled")]
+            replaces(updates.try_recv().unwrap()),
+            (*EIT_ACTUAL_SCHEDULE_TABLE_IDS.start(), true)
         );
-
-        // A repeat of a section already stored does not reach the store again.
-        processor
-            .process(schedule_signaling(B10Table::Eit(eit_named(
-                SERVICE_ID,
-                0x0002,
-                "Scheduled",
-            ))))
-            .unwrap();
-
-        assert!(sections.try_recv().is_err());
     }
 
     #[test]
-    fn waits_for_the_service_the_event_belongs_to() {
-        let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel(2);
-        let registry = Arc::new(registry_serving_the_stream());
-        let mut processor = ServiceInformationProcessor::new(0, Some(registry), Some(signal_tx))
-            .watching_service(Some(SERVICE_ID));
+    fn stores_the_television_services_of_the_stream_once_per_version() {
+        let (writer, mut updates) = ServiceInformationWriter::for_test();
+        let mut processor = ServiceInformationProcessor::new(Some(writer), None);
+        let sdt = || SignalingEvent::B10Table {
+            table_id: SDT_ACTUAL_TABLE_ID,
+            table: B10Table::Sdt(sdt_of(SERVICE_ID)),
+        };
 
-        // An EIT ahead of the SDT describes a service the registry does not
-        // know yet, so its event cannot be looked up.
-        processor
-            .process(signaling(B10Table::Eit(eit_on_air(SERVICE_ID, 0x0001))))
-            .unwrap();
+        processor.process(sdt()).unwrap();
+        processor.process(sdt()).unwrap();
 
-        assert_eq!(processor.current_event_id(), None);
-        assert!(matches!(signal_rx.try_recv(), Err(TryRecvError::Empty)));
-
-        processor
-            .process(SignalingEvent::B10Table {
-                table_id: SDT_ACTUAL_TABLE_ID,
-                table: B10Table::Sdt(sdt_of(SERVICE_ID)),
-            })
-            .unwrap();
-        processor
-            .process(signaling(B10Table::Eit(eit_on_air(SERVICE_ID, 0x0001))))
-            .unwrap();
-
-        assert_eq!(processor.current_event_id(), Some(0x0001));
-        assert!(matches!(
-            signal_rx.try_recv(),
-            Ok(Signal::EventChanged { event_id: 0x0001 })
-        ));
+        let Ok(ServiceInformationUpdate::Services {
+            stream_id,
+            services,
+        }) = updates.try_recv()
+        else {
+            panic!("expected the services of the stream");
+        };
+        assert_eq!(stream_id, STREAM_ID);
+        assert_eq!(
+            services
+                .iter()
+                .map(|service| (service.id, service.name.as_str()))
+                .collect::<Vec<_>>(),
+            [(SERVICE_ID, "Channel")]
+        );
+        assert!(updates.try_recv().is_err());
     }
 }

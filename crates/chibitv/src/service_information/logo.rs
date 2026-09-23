@@ -3,9 +3,11 @@
 use std::collections::HashMap;
 
 use bytes::Buf;
-use tracing::debug;
+use tracing::{debug, warn};
 
-use crate::registry::{Registry, ServiceKey};
+use crate::service::ServiceKey;
+use crate::service_information::{ServiceInformationUpdate, ServiceInformationWriter};
+use crate::store::StoredLogo;
 
 type NetworkId = u16;
 type LogoId = u16;
@@ -38,6 +40,9 @@ pub struct Logos {
     modules: HashMap<(DownloadId, ModuleId), Module>,
     carousel_kinds: HashMap<ServiceKey, LogoType>,
     mh_sections: HashMap<(NetworkId, DownloadDataId), Fragments>,
+    /// The logo last queued for the store for each service, which a logo that
+    /// did not change is not queued again over.
+    stored: HashMap<ServiceKey, Vec<u8>>,
 }
 
 impl Logos {
@@ -45,7 +50,7 @@ impl Logos {
     /// section ranges follow it and do not change the logo's identity.
     pub fn reference(
         &mut self,
-        registry: &Registry,
+        writer: &ServiceInformationWriter,
         key: ServiceKey,
         network: NetworkId,
         bytes: &[u8],
@@ -83,13 +88,13 @@ impl Logos {
             debug!(?key, ?reference, "Received a station logo reference");
             self.references.insert(key, reference);
         }
-        self.publish_mh(registry);
-        self.publish(registry);
+        self.publish_mh(writer);
+        self.publish(writer);
     }
 
     pub fn data(
         &mut self,
-        registry: &Registry,
+        writer: &ServiceInformationWriter,
         network: NetworkId,
         download: DownloadDataId,
         data: &[u8],
@@ -143,19 +148,40 @@ impl Logos {
                 png,
             },
         );
-        self.publish(registry);
+        self.publish(writer);
     }
 
-    fn publish(&self, registry: &Registry) {
-        for (key, reference) in &self.references {
-            if let Some(image) = self.images.get(&(reference.network, reference.id))
-                && reference
+    fn publish(&mut self, writer: &ServiceInformationWriter) {
+        let logos = self
+            .references
+            .iter()
+            .filter_map(|(key, reference)| {
+                let image = self.images.get(&(reference.network, reference.id))?;
+                reference
                     .download
                     .is_none_or(|download| download == (image.download, image.version))
-            {
-                registry.put_logo(*key, &image.png);
-            }
+                    .then(|| (*key, image.png.clone()))
+            })
+            .collect::<Vec<_>>();
+        for (key, png) in logos {
+            self.store(writer, key, &png);
         }
+    }
+
+    /// Queues the logo of a service for the store, unless it is the one
+    /// queued last.
+    fn store(&mut self, writer: &ServiceInformationWriter, key: ServiceKey, png: &[u8]) {
+        if self.stored.get(&key).is_some_and(|stored| stored == png) {
+            return;
+        }
+        if !writer.enqueue(ServiceInformationUpdate::Logo(StoredLogo {
+            key,
+            png: png.to_vec(),
+        })) {
+            warn!(?key, "Deferring a station logo while the store is busy");
+            return; // The repeated SI will retry once the queue has room.
+        }
+        self.stored.insert(key, png.to_vec());
     }
 }
 
@@ -165,7 +191,7 @@ struct Fragments {
 }
 
 impl Logos {
-    pub fn mh_data(&mut self, registry: &Registry, table: chibitv_b60::table::MhCdt) {
+    pub fn mh_data(&mut self, writer: &ServiceInformationWriter, table: chibitv_b60::table::MhCdt) {
         let key = (table.original_network_id, table.download_data_id);
         if self.mh_sections.len() >= 32 && !self.mh_sections.contains_key(&key) {
             return;
@@ -187,10 +213,10 @@ impl Logos {
         {
             *section = Some(table.data);
         }
-        self.publish_mh(registry);
+        self.publish_mh(writer);
     }
 
-    fn publish_mh(&mut self, registry: &Registry) {
+    fn publish_mh(&mut self, writer: &ServiceInformationWriter) {
         let mut modules = Vec::new();
         for reference in self.references.values() {
             let Some((download, version)) = reference.download else {
@@ -227,7 +253,7 @@ impl Logos {
             }
         }
         for (network, download, data) in modules {
-            self.data(registry, network, download, &data);
+            self.data(writer, network, download, &data);
         }
     }
 }
@@ -242,7 +268,7 @@ struct Module {
 }
 
 impl Logos {
-    pub fn carousel(&mut self, registry: &Registry, section: &[u8]) -> Option<()> {
+    pub fn carousel(&mut self, writer: &ServiceInformationWriter, section: &[u8]) -> Option<()> {
         if section.len() < 11 || section[4] & 1 == 0 {
             return None;
         }
@@ -301,7 +327,7 @@ impl Logos {
                     {
                         if module.received.iter().all(|received| *received) {
                             let data = module.data.clone();
-                            self.carousel_module(registry, &data);
+                            self.carousel_module(writer, &data);
                         }
                         continue;
                     }
@@ -349,7 +375,7 @@ impl Logos {
                         );
                     }
                     let data = module.data.clone();
-                    self.carousel_module(registry, &data);
+                    self.carousel_module(writer, &data);
                 }
             }
             _ => {}
@@ -357,7 +383,11 @@ impl Logos {
         Some(())
     }
 
-    fn carousel_module(&mut self, registry: &Registry, mut data: &[u8]) -> Option<()> {
+    fn carousel_module(
+        &mut self,
+        writer: &ServiceInformationWriter,
+        mut data: &[u8],
+    ) -> Option<()> {
         let kind = data.try_get_u8().ok()?;
         if kind > 5 {
             return None;
@@ -381,13 +411,14 @@ impl Logos {
                     stream_id: u16::from_be_bytes([service[2], service[3]]),
                     service_id: u16::from_be_bytes([service[4], service[5]]),
                 };
-                if registry.get_service(key).is_some()
-                    && self
-                        .carousel_kinds
-                        .get(&key)
-                        .is_none_or(|previous| kind >= *previous)
+                // A module names the services of the whole network, whose
+                // logos are kept whether or not a channel carries them yet.
+                if self
+                    .carousel_kinds
+                    .get(&key)
+                    .is_none_or(|previous| kind >= *previous)
                 {
-                    registry.put_logo(key, &png);
+                    self.store(writer, key, &png);
                     self.carousel_kinds.insert(key, kind);
                 }
             }
@@ -546,14 +577,28 @@ mod tests {
         png
     }
 
-    fn registry() -> (Registry, ServiceKey) {
-        let registry = Registry::default();
+    type Updates = tokio::sync::mpsc::Receiver<ServiceInformationUpdate>;
+
+    fn writer() -> (ServiceInformationWriter, Updates, ServiceKey) {
+        let (writer, updates) = ServiceInformationWriter::for_test();
         let key = ServiceKey {
             stream_id: 1,
             service_id: 101,
         };
-        registry.put_cached_service(0, key, "Station".into(), String::new());
-        (registry, key)
+        (writer, updates, key)
+    }
+
+    /// The logo of the service queued last since the previous call, if any.
+    fn stored_logo(updates: &mut Updates, key: ServiceKey) -> Option<Vec<u8>> {
+        let mut logo = None;
+        while let Ok(update) = updates.try_recv() {
+            if let ServiceInformationUpdate::Logo(stored) = update
+                && stored.key == key
+            {
+                logo = Some(stored.png);
+            }
+        }
+        logo
     }
 
     fn module(kind: u8, version: u8) -> Vec<u8> {
@@ -566,16 +611,19 @@ mod tests {
 
     #[test]
     fn resolves_both_arrival_orders_and_reassembles_mh_sections() {
-        let (registry, key) = registry();
+        let (writer, mut updates, key) = self::writer();
         let mut logos = Logos::default();
-        logos.data(&registry, 4, 9, &module(5, 2));
-        assert!(registry.get_logo(key).is_none());
-        logos.reference(&registry, key, 4, &[1, 0xfe, 1, 0xf0, 3, 0, 9]);
-        assert!(registry.get_logo(key).is_none(), "wrong logo version");
-        logos.reference(&registry, key, 4, &[1, 0xfe, 1, 0xf0, 2, 0, 9]);
-        assert!(registry.get_logo(key).is_some());
+        logos.data(&writer, 4, 9, &module(5, 2));
+        assert!(stored_logo(&mut updates, key).is_none());
+        logos.reference(&writer, key, 4, &[1, 0xfe, 1, 0xf0, 3, 0, 9]);
+        assert!(
+            stored_logo(&mut updates, key).is_none(),
+            "wrong logo version"
+        );
+        logos.reference(&writer, key, 4, &[1, 0xfe, 1, 0xf0, 2, 0, 9]);
+        assert!(stored_logo(&mut updates, key).is_some());
 
-        let (registry, key) = self::registry();
+        let (writer, mut updates, key) = self::writer();
         let mut logos = Logos::default();
         let module = module(7, 2);
         let fragment = |number, data| chibitv_b60::table::MhCdt {
@@ -589,14 +637,18 @@ mod tests {
             data,
         };
         // The first MH-CDT can precede the SDT, and fragments arrive out of order.
-        logos.mh_data(&registry, fragment(2, module[20..].to_vec()));
-        logos.reference(&registry, key, 4, &[1, 0xfe, 1, 0xf0, 2, 0, 9, 7, 1, 2]);
-        assert!(registry.get_logo(key).is_none());
-        logos.mh_data(&registry, fragment(1, module[..20].to_vec()));
+        logos.mh_data(&writer, fragment(2, module[20..].to_vec()));
+        logos.reference(&writer, key, 4, &[1, 0xfe, 1, 0xf0, 2, 0, 9, 7, 1, 2]);
+        assert!(stored_logo(&mut updates, key).is_none());
+        logos.mh_data(&writer, fragment(1, module[..20].to_vec()));
         assert_eq!(
-            registry.get_logo(key).unwrap().as_slice(),
-            browser_png(&png()).unwrap()
+            stored_logo(&mut updates, key),
+            Some(browser_png(&png()).unwrap())
         );
+
+        // The logo repeated as it was is not stored again.
+        logos.mh_data(&writer, fragment(1, module[..20].to_vec()));
+        assert!(stored_logo(&mut updates, key).is_none());
     }
 
     fn carousel_section(kind: u16, transaction: u32, body: &[u8]) -> Vec<u8> {
@@ -615,7 +667,7 @@ mod tests {
 
     #[test]
     fn assembles_named_carousel_modules_and_rejects_truncated_sections() {
-        let (registry, key) = registry();
+        let (writer, mut updates, key) = writer();
         let mut logos = Logos::default();
         let png = png();
         let mut module = vec![5, 0, 1, 0xfe, 1, 1, 0, 4, 0, 1, 0, 101];
@@ -629,19 +681,19 @@ mod tests {
         dii.extend(b"LOGO-05");
         let dii = carousel_section(0x1002, 1, &dii);
         for length in 0..dii.len() {
-            logos.carousel(&registry, &dii[..length]);
+            logos.carousel(&writer, &dii[..length]);
         }
         assert!(logos.modules.is_empty());
-        logos.carousel(&registry, &dii);
+        logos.carousel(&writer, &dii);
         for (index, chunk) in module.chunks(64).enumerate().rev() {
             let mut block = vec![0, 7, 1, 0xff];
             block.extend((index as u16).to_be_bytes());
             block.extend(chunk);
-            logos.carousel(&registry, &carousel_section(0x1003, 9, &block));
+            logos.carousel(&writer, &carousel_section(0x1003, 9, &block));
         }
         assert_eq!(
-            registry.get_logo(key).unwrap().as_slice(),
-            browser_png(&self::png()).unwrap()
+            stored_logo(&mut updates, key),
+            Some(browser_png(&self::png()).unwrap())
         );
     }
 

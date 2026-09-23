@@ -12,9 +12,9 @@ use crate::channel_scanner::ChannelScanner;
 use crate::config::Config;
 use crate::event_crawler::EventCrawler;
 use crate::recorder::Recorder;
-use crate::registry::Registry;
+use crate::service_information::ServiceInformationWriter;
 use crate::storage;
-use crate::store::{self, EventWriter};
+use crate::store;
 use crate::stream::Streams;
 use crate::tuner::Tuners;
 use crate::workspace::Workspace;
@@ -44,11 +44,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         .await
         .with_context(|| format!("Could not open the database at `{}`", config.database.url))?;
 
-    let registry = Arc::new(
-        Registry::default()
-            .storing_events(EventWriter::spawn(Arc::clone(&store)))
-            .storing_logos(crate::store::LogoWriter::spawn(Arc::clone(&store))),
-    );
+    let writer = ServiceInformationWriter::spawn(Arc::clone(&store));
 
     // The channels are the database's, which a scan writes: nothing is served
     // until one has found something.
@@ -58,13 +54,6 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
             "No channel is stored yet, so there is nothing to watch; scan for the channels on air with `chibitv scan` or from the app"
         );
     }
-
-    registry.put_channels(&stored_channels);
-
-    // The schedule of the previous run is restored before anything is tuned,
-    // so the programme guide is there without crawling first.
-    registry.restore_events(&store).await?;
-    registry.restore_logos(&store).await?;
 
     let channels = stored_channels
         .iter()
@@ -100,7 +89,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     // No channel is tuned yet: a tuner is occupied only while at least one
     // client keeps a stream open.
     let streams = Streams::new(
-        registry.clone(),
+        writer.clone(),
         Arc::clone(&tuners),
         cas.clone(),
         b61_descrambler,
@@ -111,6 +100,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         Arc::clone(&tuners),
         cas.clone(),
         config.cas.master_key.into(),
+        writer,
     );
     let channel_scanner = ChannelScanner::new(
         Arc::clone(&tuners),
@@ -124,8 +114,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         storage::open(&config.storage)?.into(),
     );
     let state = Arc::new(
-        Workspace::new(registry, channels, Some(streams))
-            .with_channel_store(Arc::clone(&store))
+        Workspace::new(store, channels, Some(streams))
             .with_event_crawler(event_crawler)
             .with_channel_scanner(channel_scanner)
             .with_recorder(recorder),

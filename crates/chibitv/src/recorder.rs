@@ -264,6 +264,7 @@ mod tests {
                     frequency: 515_142_857,
                     bandwidth_hz: 6_000_000,
                 },
+                stream_id: Some(0x7FE0),
             },
             service_id: 101,
             title: title.to_string(),
