@@ -14,7 +14,7 @@ import { ProgramPane } from "./ProgramPane";
 import { ScanChannels } from "./ScanChannels";
 import { Tasks } from "./Tasks";
 
-const EDGE_PEEK_WIDTH = 64;
+const EDGE_PEEK_WIDTH = 128;
 const isNarrowScreen = () => window.matchMedia("(max-width: 1023px)").matches;
 type PaneState = "closed" | "peek" | "open";
 

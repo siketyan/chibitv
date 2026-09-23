@@ -56,24 +56,16 @@
   background-image: none;
 }
 
-#channels-pane {
-  --pane-offset: -100%;
-}
-
-#program-pane {
-  --pane-offset: 100%;
-}
-
 .side-pane[data-open="true"] {
-  animation: slide-pane-in 180ms ease-out;
+  animation: fade-pane-in 180ms ease-out;
 }
 
-@keyframes slide-pane-in {
+@keyframes fade-pane-in {
   from {
-    transform: translateX(var(--pane-offset));
+    opacity: 0;
   }
   to {
-    transform: translateX(0);
+    opacity: 1;
   }
 }
 
