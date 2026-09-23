@@ -29,7 +29,7 @@ export function Page(): JSX.Element {
   const isProgramOpen = !isPortrait && programPane !== "closed";
   const [isScheduleOpen, setIsScheduleOpen] = useState(false);
   const [areTasksOpen, setAreTasksOpen] = useState(false);
-  const { isVisible } = usePlayerChrome();
+  const { isVisible, wake } = usePlayerChrome();
   const service = useServiceKey();
 
   useChromeHold("panes", isChannelsOpen || isProgramOpen || isScheduleOpen || areTasksOpen);
@@ -95,8 +95,15 @@ export function Page(): JSX.Element {
       }}
     >
       {/* Keep this subtree mounted when pinning so playback is uninterrupted. */}
-      <div
+      <section
+        aria-label="Player"
         className={clsx("player-area min-w-0", isPortrait ? "relative aspect-video shrink-0" : "absolute inset-y-0")}
+        // Only input over the player counts as wanting its controls: what is laid
+        // out beside it, or overlaid on it and open, holds them on its own.
+        onKeyDown={wake}
+        onPointerDown={wake}
+        onPointerMove={wake}
+        onWheel={wake}
       >
         <Player />
         <div className="pointer-events-none absolute inset-safe">
@@ -109,7 +116,7 @@ export function Page(): JSX.Element {
             onChangeTasksOpen={setAreTasksOpen}
           />
         </div>
-      </div>
+      </section>
       <div className="pointer-events-none absolute inset-safe">
         {/* Keep pane contents mounted so a details/scan dialog survives the pointer leaving its pane. */}
         <aside
