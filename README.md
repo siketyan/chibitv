@@ -7,6 +7,9 @@
 
 <h3 align="center">The most easy and lightweight way to watch Japanese TV streams in your home.</h3>
 <br />
+<img width="4494" height="2362" alt="Screenshot of chibitv" src="https://github.com/user-attachments/assets/da0d5f6c-ca74-4005-a095-27b0b1988ded" />
+<br />
+<br />
 
 > [!WARNING]
 > This software is intended for experimental purposes to understand the standards and is not recommended for any other use.
