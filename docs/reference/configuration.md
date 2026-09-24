@@ -89,14 +89,16 @@ delivery_systems = ["ISDB-T"]
 ### `type = "px4"`
 
 A tuner driven by [px4_drv](https://github.com/tsukumijima/px4_drv), the
-Linux driver of the PLEX and Digibest tuners (PX-W3U4, PX-MLT5PE, PX-M1UR,
-DTV02A-1T1S-U and the like). Available on Linux with the default `px4` Cargo
-feature.
+driver of the PLEX and Digibest tuners (PX-W3U4, PX-MLT5PE, PX-M1UR,
+DTV02A-1T1S-U and the like). Available on Linux and Windows with the default
+`px4` Cargo feature.
 
-| Key           | Type    | Default    | Description                                                                          |
-| ------------- | ------- | ---------- | ------------------------------------------------------------------------------------ |
-| `path`        | string  | _required_ | Path to the device file the driver makes, such as `/dev/pxmlt5video0`.               |
-| `lnb_voltage` | integer | `0`        | Voltage fed to the dish's converter while a satellite channel is tuned: 0, 11 or 15. |
+| Key           | Type    | Default              | Description                                                                                     |
+| ------------- | ------- | -------------------- | ----------------------------------------------------------------------------------------------- |
+| `path`        | string  | _required_           | Linux only. Path to the device file the driver makes, such as `/dev/pxmlt5video0`.              |
+| `receiver`    | string  | _none_               | Windows only. Name of the receiver in `DriverHost_PX4.ini` to open; any free one when left out. |
+| `driver_host` | string  | `DriverHost_PX4.exe` | Windows only. Path to `DriverHost_PX4.exe`, relative to the working directory.                  |
+| `lnb_voltage` | integer | `0`                  | Voltage fed to the dish's converter while a satellite channel is tuned: 0, 11 or 15.            |
 
 The driver takes the channel numbers of the PT1/PT3 drivers rather than a
 frequency, and chibitv works them out from the channel it is given, so the
@@ -118,6 +120,28 @@ type = "px4"
 path = "/dev/pxmlt5video0"
 lnb_voltage = 15
 delivery_systems = ["ISDB-T", "ISDB-S"]
+```
+
+On Windows, chibitv talks to `DriverHost_PX4`, the user-mode driver of the
+WinUSB build of px4_drv, directly rather than through its BonDriver, so the
+channels are tuned by the frequency a scan found as on Linux. The driver is not
+a service: chibitv starts `driver_host` whenever it opens a receiver and the
+driver is not running, as the BonDriver does, so keep `DriverHost_PX4.ini` and
+the firmware beside it. Without `receiver`, a free receiver taking every
+broadcast in `delivery_systems` is opened each time the tuner is used, so list
+one broadcast per tuner for a device with separate receivers for each, such as
+a PX-W3U4.
+
+```toml
+[[tuners]]
+type = "px4"
+delivery_systems = ["ISDB-T"]
+
+[[tuners]]
+type = "px4"
+receiver = "PLEX PX-W3U4 ISDB-S Receiver #0"
+lnb_voltage = 15
+delivery_systems = ["ISDB-S"]
 ```
 
 ### `type = "bon"`

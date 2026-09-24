@@ -2,7 +2,7 @@
 mod bon;
 #[cfg(all(feature = "dvb", target_os = "linux"))]
 mod dvb;
-#[cfg(all(feature = "px4", target_os = "linux"))]
+#[cfg(all(feature = "px4", any(target_os = "linux", windows)))]
 mod px4;
 mod stdin;
 
@@ -192,7 +192,23 @@ impl Tuners {
 
             #[cfg(all(feature = "px4", target_os = "linux"))]
             TunerKind::Px4 { path, lnb_voltage } => {
-                self.add_tuner(id, px4::Px4Tuner::new(path, *lnb_voltage)?, systems);
+                let target = px4::Target(path.clone());
+                let tuner = px4::Px4Tuner::new(target, *lnb_voltage, &systems)?;
+                self.add_tuner(id, tuner, systems);
+            }
+
+            #[cfg(all(feature = "px4", windows))]
+            TunerKind::Px4 {
+                receiver,
+                driver_host,
+                lnb_voltage,
+            } => {
+                let target = px4::Target {
+                    receiver: receiver.clone(),
+                    driver_host: driver_host.clone(),
+                };
+                let tuner = px4::Px4Tuner::new(target, *lnb_voltage, &systems)?;
+                self.add_tuner(id, tuner, systems);
             }
         }
 
