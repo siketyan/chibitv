@@ -125,6 +125,27 @@ pub enum TunerKind {
         #[serde(default)]
         lnb_voltage: u8,
     },
+
+    /// A receiver of `DriverHost_PX4`, the Windows driver of px4_drv: the one
+    /// named, or any free one receiving the tuner's broadcasts.
+    #[cfg(all(feature = "px4", windows))]
+    Px4 {
+        #[serde(default)]
+        receiver: Option<String>,
+        /// The driver to start when it is not running, relative to the
+        /// working directory.
+        #[serde(default = "default_driver_host")]
+        driver_host: std::path::PathBuf,
+        /// The voltage the tuner feeds the dish's converter with while a
+        /// satellite channel is tuned: 0 for none, 11 or 15.
+        #[serde(default)]
+        lnb_voltage: u8,
+    },
+}
+
+#[cfg(all(feature = "px4", windows))]
+fn default_driver_host() -> std::path::PathBuf {
+    "DriverHost_PX4.exe".into()
 }
 
 #[derive(Clone, Debug, Deserialize)]
