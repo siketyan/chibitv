@@ -84,7 +84,7 @@ Configuration is loaded from `./config.toml` in the working directory (`config.r
 Cargo features on `chibitv`:
 
 - `dvb` (default, Linux DVB tuner support)
-- `px4` (default, px4_drv tuner support on Linux: the PLEX/Digibest character devices, driven with the PT1/PT3 ioctls)
+- `px4` (default, px4_drv tuner support: on Linux the PLEX/Digibest character devices, driven with the PT1/PT3 ioctls (`tuner/px4/linux.rs`); on Windows the named pipes of `DriverHost_PX4`, its WinUSB user-mode driver (`tuner/px4/windows.rs`); `tuner/px4.rs` drives either the same way)
 - `bon` (default, BonDriver tuner support on Windows)
 - `gui` (embeds the built `gui/dist` into the binary via rust-embed — used only by the Docker image; development keeps GUI and server separate).
 
