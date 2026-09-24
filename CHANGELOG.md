@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.1](https://github.com/siketyan/chibitv/compare/v0.2.0...v0.2.1) (2026-09-24)
+
+
+### Features
+
+* **tuner:** support px4_drv tuners on Windows ([#126](https://github.com/siketyan/chibitv/issues/126)) ([97652c7](https://github.com/siketyan/chibitv/commit/97652c795b98bc79ba8fcb9fba57de5a0d0f3e14))
+
+
+### Bug Fixes
+
+* **gui:** tidy the player controls in the portrait layout ([#123](https://github.com/siketyan/chibitv/issues/123)) ([a703393](https://github.com/siketyan/chibitv/commit/a70339383fb892c53b6c0aaf287942cb070a7e28))
+
 ## [0.2.0](https://github.com/siketyan/chibitv/compare/v0.1.1...v0.2.0) (2026-09-23)
 
 
