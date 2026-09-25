@@ -5,12 +5,12 @@ This file provides guidance to coding agents (Claude Code and others) when worki
 chibitv is an experimental implementation of the ARIB broadcasting standards: it tunes Japanese ISDB-T/S/S3
 broadcasts, descrambles them, and remuxes them to MPEG-2 TS / MP4 / fragmented MP4, with an HTTP streaming server and
 a React GUI on top. See `docs/` for the CLI subcommands (`channels`, `live`, `record`, `remux`, `scan`, `status`, `serve`) and
-runtime setup (tuner devices, PC/SC, `config.toml`), and for running the Docker image; README.md only links to it.
+runtime setup (tunelithd, PC/SC, `config.toml`), and for running the Docker image; README.md only links to it.
 
 ## Setup
 
-- `[patch.crates-io]` in the workspace `Cargo.toml` replaces some crates.io dependencies (`dvbv5-sys`, `mpeg2ts`, `shiguredo_mp4`) with forks pinned to a Git revision. To try a local change to one of them, add a `[patch]` override to `.cargo/config.toml` instead of editing the manifest.
-- System libraries for the default `dvb` feature and PC/SC: `libdvbv5-dev` and `libpcsclite-dev`.
+- `[patch.crates-io]` in the workspace `Cargo.toml` replaces some crates.io dependencies (`mpeg2ts`, `shiguredo_mp4`, `tunelith`) with forks pinned to a Git revision. To try a local change to one of them, add a `[patch]` override to `.cargo/config.toml` instead of editing the manifest.
+- System library for PC/SC: `libpcsclite-dev`.
 - The Rust toolchain is pinned in `rust-toolchain.toml`, so rustup picks it up on its own. Bumping it means editing that file and the builder image the `Dockerfile` starts its Rust stage from, which never sees it.
 - JS tooling: Node 24 with pnpm (via corepack); run `pnpm install` at the repo root.
 
@@ -49,7 +49,6 @@ The library crates map directly to ARIB standard documents and hold the parsing/
 - `chibitv_b25` — ISDB-T/ISDB-S conditional access: MULTI2 descrambling and the classic CAS card protocol (STD-B25).
 - `chibitv_b60` — MMT/TLV container parsing for ISDB-S3 (BS/CS 4K): TLV packets, TLV-SI, compressed IP, MMTP, messages/tables/descriptors, MFU (STD-B60).
 - `chibitv_b61` — ISDB-S3 conditional access: AES-CTR descrambling and the ACAS card protocol; needs the externally provided _Kd_ master key (STD-B61).
-- `chibitv_bon` — BonDriver, the de-facto tuner interface on Windows; a hand-written binding to its `IBonDriver2` vtable. Empty on other platforms.
 
 ### The `chibitv` binary
 
@@ -57,14 +56,14 @@ The library crates map directly to ARIB standard documents and hold the parsing/
 
 The shared data flow is a pipeline:
 
-1. A tuner source (`tuner/dvb.rs` behind the default `dvb` feature, `tuner/px4.rs` behind `px4`, `tuner/bon.rs` behind `bon`, or `tuner/stdin.rs` / file input) produces a raw stream
+1. A tuner (`tuner.rs`, which asks tunelithd — the separate daemon of [Tunelith](https://github.com/siketyan/tunelith) holding the devices — for any free tuner receiving the channel's broadcast) or a file input produces a raw stream
 2. Demux (`demux.rs`, `mmt.rs` for MMT/TLV, `m2ts.rs` for MPEG-2 TS)
 3. CAS descrambling (`cas.rs`, backed by the b25/b61 crates over PC/SC)
 4. Remux (`remux.rs`, `mp4.rs`, codec helpers `aac.rs`/`hevc.rs`/`mp2.rs`)
 5. Output
 
 `serve` (`server.rs`, `rpc.rs`) runs an axum server exposing the ConnectRPC `ChibitvService` plus the live stream;
-`stream.rs`/`event_crawler.rs` share the tuners between streams and EPG crawls. The services and the EPG are
+`stream.rs` shares one tuned stream among the viewers of a service and `event_crawler.rs` walks the channels for the EPG, both tuning through tunelithd. The services and the EPG are
 read from the store rather than held in memory: `service.rs`/`event.rs` are their domain types (built from the SI
 tables), and `service_information/writer.rs` queues what the demultiplexers find (`service_information.rs`) and writes
 it through the repositories.
@@ -81,15 +80,7 @@ The channels are kept there rather than in the configuration, and a scan is what
 `scanner.rs`).
 Configuration is loaded from `./config.toml` in the working directory (`config.rs`; template in `config.toml.example`).
 
-Cargo features on `chibitv`:
-
-- `dvb` (default, Linux DVB tuner support)
-- `px4` (default, px4_drv tuner support: on Linux the PLEX/Digibest character devices, driven with the PT1/PT3 ioctls (`tuner/px4/linux.rs`); on Windows the named pipes of `DriverHost_PX4`, its WinUSB user-mode driver (`tuner/px4/windows.rs`); `tuner/px4.rs` drives either the same way)
-- `bon` (default, BonDriver tuner support on Windows)
-- `gui` (embeds the built `gui/dist` into the binary via rust-embed — used only by the Docker image; development keeps GUI and server separate).
-
-The tuner features are all on by default and each is gated on the platform it exists
-for as well, so a plain build does the right thing on either one.
+The only Cargo feature on `chibitv` is `gui`, which embeds the built `gui/dist` into the binary via rust-embed — used only by the Docker image; development keeps GUI and server separate.
 
 ### GUI and JS packages
 

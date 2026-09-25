@@ -16,7 +16,7 @@ docker build --tag chibitv .
 
 The image sets `TZ=JST-9` so that the container reads the broadcast schedule
 on the clock the SI is expressed in. The container reads `/app/config.toml`
-and needs access to the tuner devices and the PC/SC daemon of the host.
+and needs access to the socket of tunelithd and the PC/SC daemon of the host.
 
 Its working directory is not writable, so the
 [database](../reference/configuration#database), which keeps the channels and
@@ -34,15 +34,13 @@ docker run --rm \
   --volume "$PWD/config.toml:/app/config.toml:ro" \
   --volume "$PWD/data:/app/data" \
   --volume /run/pcscd/pcscd.comm:/run/pcscd/pcscd.comm \
-  --device /dev/dvb/adapter0/frontend0 \
-  --device /dev/dvb/adapter0/demux0 \
-  --device /dev/dvb/adapter0/dvr0 \
+  --volume /run/tunelith:/run/tunelith \
   ghcr.io/siketyan/chibitv:main
 ```
 
-A tuner px4_drv drives is passed in the same way, with the device file the
-driver made for it in place of the three DVB ones, for example
-`--device /dev/pxmlt5video0`.
+The tuners stay on the host, held by tunelithd, so no device is passed in: the
+directory of its socket is mounted instead, whole so that the socket tunelithd
+makes again on a restart is seen too.
 
 Open `http://localhost:3001/` in your browser and enjoy!
 
@@ -50,11 +48,11 @@ Open `http://localhost:3001/` in your browser and enjoy!
 
 The image never runs as `root`: it defaults to the unprivileged user of the
 distroless base image, and chibitv itself needs no privileges beyond reaching
-the devices and the daemon. Both of those are still checked against the host,
+the two daemons. Both of those are still checked against the host,
 which is what the two options above are for:
 
-- DVB and px4_drv device nodes belong to the `video` group, so the container
-  process has to be a member of it.
+- tunelithd grants the `video` group access to its socket by default, so the
+  container process has to be a member of it.
 - pcsc-lite authorizes card access with polkit, which resolves the user of the
   connecting process on the host. Running the container as the host user set
   up in
