@@ -171,8 +171,6 @@ function channelKey(channel: NewChannel): string {
   switch (channel.tuning.case) {
     case "parameters":
       return `${channel.tuning.value.frequency}-${channel.tuning.value.streamId ?? 0}`;
-    case "bondriver":
-      return `${channel.tuning.value.space}-${channel.tuning.value.channel}`;
     default:
       return channel.name;
   }

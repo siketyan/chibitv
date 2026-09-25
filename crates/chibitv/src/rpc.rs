@@ -641,16 +641,6 @@ fn new_channel_message(channel: &store::NewChannel) -> NewChannel {
             stream_id: Some(stream_id),
             ..Default::default()
         })),
-        // A scan finds no BonDriver channel: the driver enumerates those.
-        ChannelInner::BonIsdbT { space, channel }
-        | ChannelInner::BonIsdbS { space, channel }
-        | ChannelInner::BonIsdbS3 { space, channel } => {
-            new_channel::Tuning::Bondriver(Box::new(BonDriverChannel {
-                space,
-                channel,
-                ..Default::default()
-            }))
-        }
     };
 
     NewChannel {
@@ -713,24 +703,6 @@ fn new_channel(channel: &NewChannelView<'_>) -> Result<store::NewChannel, Connec
             ChannelInner::IsdbS3 {
                 frequency: frequency_of(parameters)?,
                 stream_id: stream_id_of(parameters)?,
-            }
-        }
-        (DeliverySystem::IsdbT, Some(new_channel::TuningView::Bondriver(bondriver))) => {
-            ChannelInner::BonIsdbT {
-                space: bondriver.space,
-                channel: bondriver.channel,
-            }
-        }
-        (DeliverySystem::IsdbS, Some(new_channel::TuningView::Bondriver(bondriver))) => {
-            ChannelInner::BonIsdbS {
-                space: bondriver.space,
-                channel: bondriver.channel,
-            }
-        }
-        (DeliverySystem::IsdbS3, Some(new_channel::TuningView::Bondriver(bondriver))) => {
-            ChannelInner::BonIsdbS3 {
-                space: bondriver.space,
-                channel: bondriver.channel,
             }
         }
     };
@@ -990,27 +962,6 @@ mod tests {
             of(ChannelInner::IsdbS3 {
                 frequency: 1_318_000,
                 stream_id: 0x40F1,
-            }),
-            DeliverySystem::IsdbS3,
-        );
-        assert_eq!(
-            of(ChannelInner::BonIsdbT {
-                space: 0,
-                channel: 0,
-            }),
-            DeliverySystem::IsdbT,
-        );
-        assert_eq!(
-            of(ChannelInner::BonIsdbS {
-                space: 0,
-                channel: 1,
-            }),
-            DeliverySystem::IsdbS,
-        );
-        assert_eq!(
-            of(ChannelInner::BonIsdbS3 {
-                space: 0,
-                channel: 2,
             }),
             DeliverySystem::IsdbS3,
         );

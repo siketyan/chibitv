@@ -37,9 +37,8 @@ macro_rules! select_events {
 
 /// The channels in the order they are served in, which is the order they were
 /// stored in.
-const SELECT_CHANNELS: &str = "SELECT id, name, delivery_system, tuning, frequency, bandwidth_hz, \
-                               stream_id, space, channel_number, transport_stream_id FROM \
-                               channels ORDER BY id";
+const SELECT_CHANNELS: &str = "SELECT id, name, delivery_system, frequency, bandwidth_hz, \
+                               stream_id, transport_stream_id FROM channels ORDER BY id";
 
 macro_rules! select_logos {
     () => {
@@ -52,13 +51,6 @@ macro_rules! select_services {
         "SELECT stream_id, service_id, name, provider_name FROM services"
     };
 }
-
-/// A channel tuned by the parameters the row carries.
-const TUNING_PARAMETERS: &str = "parameters";
-
-/// A channel named by the numbers a BonDriver enumerates, which holds the
-/// tuning parameters itself.
-const TUNING_BONDRIVER: &str = "bondriver";
 
 /// The state chibitv keeps in a SQLite database.
 ///
@@ -382,18 +374,14 @@ async fn insert_channel(
 ) -> anyhow::Result<()> {
     let tuning = Tuning::of(&channel.inner);
     sqlx::query(
-        "INSERT INTO channels (name, delivery_system, tuning, frequency, bandwidth_hz, \
-         stream_id, space, channel_number, transport_stream_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO channels (name, delivery_system, frequency, bandwidth_hz, stream_id, \
+         transport_stream_id) VALUES (?, ?, ?, ?, ?, ?)",
     )
     .bind(channel.name.as_str())
     .bind(tuning.delivery_system.as_str())
-    .bind(tuning.tuning)
     .bind(tuning.frequency)
     .bind(tuning.bandwidth_hz)
     .bind(tuning.stream_id)
-    .bind(tuning.space)
-    .bind(tuning.channel_number)
     .bind(channel.transport_stream_id.map(i64::from))
     .execute(&mut **transaction)
     .await?;
@@ -443,31 +431,22 @@ async fn insert_services(
     Ok(())
 }
 
-/// The tuning of a channel, as the columns of its row.
-///
-/// Which columns are used is what `tuning` says: a channel a BonDriver tunes
-/// carries the numbers it enumerates instead of tuning parameters, so the
-/// columns of the other tuning are left null.
+/// The tuning of a channel, as the columns of its row, leaving null those of
+/// the other delivery systems.
 struct Tuning {
     delivery_system: DeliverySystem,
-    tuning: &'static str,
     frequency: Option<i64>,
     bandwidth_hz: Option<i64>,
     stream_id: Option<i64>,
-    space: Option<i64>,
-    channel_number: Option<i64>,
 }
 
 impl Tuning {
     fn of(inner: &ChannelInner) -> Self {
         let mut tuning = Self {
             delivery_system: inner.delivery_system(),
-            tuning: TUNING_PARAMETERS,
             frequency: None,
             bandwidth_hz: None,
             stream_id: None,
-            space: None,
-            channel_number: None,
         };
 
         match *inner {
@@ -489,13 +468,6 @@ impl Tuning {
                 tuning.frequency = Some(i64::from(frequency));
                 tuning.stream_id = Some(i64::from(stream_id));
             }
-            ChannelInner::BonIsdbT { space, channel }
-            | ChannelInner::BonIsdbS { space, channel }
-            | ChannelInner::BonIsdbS3 { space, channel } => {
-                tuning.tuning = TUNING_BONDRIVER;
-                tuning.space = Some(i64::from(space));
-                tuning.channel_number = Some(i64::from(channel));
-            }
         }
 
         tuning
@@ -504,33 +476,19 @@ impl Tuning {
 
 fn read_channel(row: &SqliteRow) -> anyhow::Result<StoredChannel> {
     let delivery_system = DeliverySystem::parse(row.try_get("delivery_system")?)?;
-    let tuning: String = row.try_get("tuning")?;
-    let inner = match (tuning.as_str(), delivery_system) {
-        (TUNING_PARAMETERS, DeliverySystem::IsdbT) => ChannelInner::IsdbT {
+    let inner = match delivery_system {
+        DeliverySystem::IsdbT => ChannelInner::IsdbT {
             frequency: tuning_column(row, "frequency")?,
             bandwidth_hz: tuning_column(row, "bandwidth_hz")?,
         },
-        (TUNING_PARAMETERS, DeliverySystem::IsdbS) => ChannelInner::IsdbS {
+        DeliverySystem::IsdbS => ChannelInner::IsdbS {
             frequency: tuning_column(row, "frequency")?,
             stream_id: tuning_column(row, "stream_id")?,
         },
-        (TUNING_PARAMETERS, DeliverySystem::IsdbS3) => ChannelInner::IsdbS3 {
+        DeliverySystem::IsdbS3 => ChannelInner::IsdbS3 {
             frequency: tuning_column(row, "frequency")?,
             stream_id: tuning_column(row, "stream_id")?,
         },
-        (TUNING_BONDRIVER, DeliverySystem::IsdbT) => ChannelInner::BonIsdbT {
-            space: tuning_column(row, "space")?,
-            channel: tuning_column(row, "channel_number")?,
-        },
-        (TUNING_BONDRIVER, DeliverySystem::IsdbS) => ChannelInner::BonIsdbS {
-            space: tuning_column(row, "space")?,
-            channel: tuning_column(row, "channel_number")?,
-        },
-        (TUNING_BONDRIVER, DeliverySystem::IsdbS3) => ChannelInner::BonIsdbS3 {
-            space: tuning_column(row, "space")?,
-            channel: tuning_column(row, "channel_number")?,
-        },
-        (tuning, _) => bail!("`{tuning}` is not a way of tuning chibitv knows"),
     };
 
     Ok(StoredChannel {
@@ -545,7 +503,8 @@ fn read_channel(row: &SqliteRow) -> anyhow::Result<StoredChannel> {
     })
 }
 
-/// One of the tuning columns, which the tuning the row names has to carry.
+/// One of the tuning columns, which the delivery system of the row has to
+/// carry.
 fn tuning_column(row: &SqliteRow, column: &str) -> anyhow::Result<u32> {
     let Some(value) = row.try_get::<Option<i64>, _>(column)? else {
         bail!("the channel is stored without its `{column}`");
@@ -780,14 +739,6 @@ mod tests {
                 },
                 Some(0x40F1),
             ),
-            new_channel(
-                "BonDriver BS",
-                ChannelInner::BonIsdbS {
-                    space: 1,
-                    channel: 2,
-                },
-                None,
-            ),
         ];
 
         for channel in &channels {
@@ -812,7 +763,7 @@ mod tests {
                 .collect::<Vec<_>>(),
         );
         assert_eq!(stored[0].transport_stream_id, Some(0x1234));
-        assert_eq!(stored[2].transport_stream_id, None);
+        assert_eq!(stored[1].transport_stream_id, Some(0x40F1));
         assert_eq!(stored[1].services, channels[1].services);
     }
 

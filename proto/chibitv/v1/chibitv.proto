@@ -178,8 +178,10 @@ message NewChannel {
   // How the channel is tuned to.
   oneof tuning {
     TuningParameters parameters = 3;
-    BonDriverChannel bondriver = 4;
   }
+  // A channel a BonDriver enumerated, before BonDriver support was dropped.
+  reserved 4;
+  reserved "bondriver";
 
   // The stream the services of the channel are named under, as a scan read it.
   optional uint32 transport_stream_id = 5;
@@ -200,13 +202,6 @@ message TuningParameters {
   // by, which is the transport stream id on ISDB-S and the TLV stream id on
   // ISDB-S3.
   optional uint32 stream_id = 3;
-}
-
-// BonDriverChannel names a channel a BonDriver enumerates, which is how one is
-// reached on Windows: the driver holds the tuning parameters itself.
-message BonDriverChannel {
-  uint32 space = 1;
-  uint32 channel = 2;
 }
 
 // NewService is one service of the catalog of a channel.
