@@ -19,23 +19,20 @@ contents:
   - src: config.toml.example
     dst: /usr/share/doc/chibitv/config.toml.example
 
-# The binary links against libdvbv5 and libpcsclite, and talks to the CAS
+# The binary links against libpcsclite, and talks to the CAS
 # module through the PC/SC daemon.
 depends:
-  - libdvbv5-0
   - libpcsclite1
 recommends:
   - pcscd
 overrides:
-  # The libraries are required by their sonames, which every RPM based
-  # distribution provides whatever the package holding them is named.
+  # The library is required by its soname, which every RPM based
+  # distribution provides whatever the package holding it is named.
   rpm:
     depends:
-      - libdvbv5.so.0()(64bit)
       - libpcsclite.so.1()(64bit)
     recommends:
       - pcsc-lite
   archlinux:
     depends:
-      - v4l-utils
       - pcsclite

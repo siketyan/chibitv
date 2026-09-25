@@ -30,7 +30,7 @@ RUN pnpm build
 FROM rust:1.98-trixie AS chef
 WORKDIR /app
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y libdvbv5-dev libpcsclite-dev libudev-dev \
+    && apt-get install --no-install-recommends -y libpcsclite-dev \
     && rm -rf /var/lib/apt/lists/*
 RUN cargo install cargo-chef --locked
 
@@ -53,13 +53,9 @@ RUN cargo build --release --locked --features gui \
     && cp target/release/chibitv /usr/local/bin/chibitv
 
 FROM gcr.io/distroless/cc-debian13:nonroot AS runtime
-# Neither libdvbv5 (tuner access) nor libpcsclite (CAS module access) is part
-# of the distroless base image. libdvbv5 pulls in libudev and libcap, and
-# libpcsclite is a stub that loads the real library at runtime.
+# libpcsclite (CAS module access) is not part of the distroless base image,
+# and is a stub that loads the real library at runtime.
 COPY --from=server-builder \
-    /usr/lib/x86_64-linux-gnu/libdvbv5.so.0* \
-    /usr/lib/x86_64-linux-gnu/libudev.so.1* \
-    /usr/lib/x86_64-linux-gnu/libcap.so.2* \
     /usr/lib/x86_64-linux-gnu/libpcsclite.so.1* \
     /usr/lib/x86_64-linux-gnu/libpcsclite_real.so.1* \
     /usr/lib/x86_64-linux-gnu/
