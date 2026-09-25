@@ -7,8 +7,11 @@ mod serve;
 mod status;
 
 use clap::Parser;
+use tracing::info;
 
+use crate::channel::Channel;
 use crate::config::Config;
+use crate::tuner::{TunerLease, Tuners};
 
 #[derive(Clone, Debug, Parser)]
 pub(super) enum Command {
@@ -46,4 +49,17 @@ impl Command {
             Self::Status(options) => status::status(options, config).await,
         }
     }
+}
+
+/// Tunes a tuner that receives the channel, for a command that has the tuners
+/// to itself.
+fn tune(config: &Config, channel: &Channel) -> anyhow::Result<TunerLease> {
+    let tuner =
+        Tuners::from_config(&config.tuners)?.try_acquire(channel.inner.delivery_system())?;
+
+    info!("Tuning to the channel: {:?}", channel);
+
+    tuner.tune(channel.clone())?;
+
+    Ok(tuner)
 }

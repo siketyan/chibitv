@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 use clap::Parser;
-use tracing::info;
 
 use chibitv_b10::descriptor::Descriptor;
 use chibitv_b10::table::{Eit, EventInformation, Nit, Sdt, ServiceInformation, Table};
@@ -14,7 +13,6 @@ use crate::channel::{self, ChannelInner};
 use crate::config::Config;
 use crate::demux::{Demux, Packet, SignalingEvent};
 use crate::m2ts::M2tsDemuxer;
-use crate::tuner::Tuners;
 
 #[derive(Clone, Debug, Parser)]
 pub struct Options {
@@ -35,14 +33,8 @@ struct StatusState {
 }
 
 pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
-    let mut tuners = Tuners::default();
-    for (id, tuner) in config.tuners.iter().enumerate() {
-        tuners.add_tuner_from_config(id as u32, tuner)?;
-    }
-
     let store = crate::store::open(&config.database.url).await?;
     let channel = channel::find_channel(&*store, options.channel).await?;
-    let tuner = tuners.try_acquire(channel.inner.delivery_system())?;
 
     if !matches!(
         channel.inner,
@@ -54,9 +46,7 @@ pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
         anyhow::bail!("Only ISDB-T and ISDB-S channels, which carry MPEG-2 TS, are supported");
     }
 
-    info!("Tuning to the channel: {:?}", channel);
-
-    tuner.tune(channel.clone())?;
+    let tuner = super::tune(config, &channel)?;
 
     let descrambler = B25Descrambler::init(SharedCasModule::open()?, false)?;
     let mut demux = M2tsDemuxer::new(tuner.open()?, descrambler);
