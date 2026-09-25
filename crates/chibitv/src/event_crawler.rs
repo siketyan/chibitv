@@ -88,7 +88,9 @@ impl EventCrawler {
                         warn!(%system, %error, "Skipping the channels of a broadcast no tuner receives");
                         break;
                     }
-                    Err(error @ AcquireError::Busy) => return Err(error.into()),
+                    Err(error @ (AcquireError::Busy | AcquireError::Unreachable(_))) => {
+                        return Err(error.into());
+                    }
                     Err(AcquireError::Failed(error)) => {
                         warn!(
                             channel_id = channel.id,

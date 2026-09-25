@@ -296,7 +296,9 @@ impl Streams {
             let reader = tuners.tune(&channel).map_err(|error| match error {
                 AcquireError::Busy => SubscribeError::TunerBusy,
                 AcquireError::Unsupported(system) => SubscribeError::NoTuner(system),
-                AcquireError::Failed(error) => SubscribeError::Internal(error),
+                AcquireError::Unreachable(error) | AcquireError::Failed(error) => {
+                    SubscribeError::Internal(error)
+                }
             })?;
             info!(
                 tuner = reader.tuner(),

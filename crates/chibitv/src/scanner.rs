@@ -310,8 +310,9 @@ impl Scan<'_> {
                 );
                 Ok(None)
             }
-            // A scan missing the channels it had no tuner for would replace
-            // the ones kept with fewer.
+            // A scan missing the channels it had no tuner for, or lost
+            // tunelithd halfway through, would replace the ones kept with
+            // fewer.
             Err(error) => Err(error.into()),
         }
     }

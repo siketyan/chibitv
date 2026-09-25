@@ -85,7 +85,11 @@ impl Recorder {
         loop {
             match self.tuners.tune(&recording.channel) {
                 Ok(tuner) => return Ok(tuner),
-                Err(error @ (AcquireError::Failed(_) | AcquireError::Unsupported(_))) => {
+                Err(
+                    error @ (AcquireError::Unreachable(_)
+                    | AcquireError::Failed(_)
+                    | AcquireError::Unsupported(_)),
+                ) => {
                     return Err(error.into());
                 }
                 Err(error @ AcquireError::Busy) => {

@@ -34,7 +34,9 @@ pub enum AcquireError {
     Unsupported(DeliverySystem),
     /// Every tuner receiving the broadcast is in use.
     Busy,
-    /// Anything else: tunelithd not running, no signal to lock on, and so on.
+    /// tunelithd could not be talked to: not running, restarted, and so on.
+    Unreachable(anyhow::Error),
+    /// The channel could not be tuned to, with no signal to lock on and so on.
     Failed(anyhow::Error),
 }
 
@@ -43,7 +45,7 @@ impl std::fmt::Display for AcquireError {
         match self {
             Self::Unsupported(system) => write!(f, "No tuner receives {system}"),
             Self::Busy => write!(f, "All tuners are in use"),
-            Self::Failed(error) => write!(f, "{error:#}"),
+            Self::Unreachable(error) | Self::Failed(error) => write!(f, "{error:#}"),
         }
     }
 }
@@ -82,7 +84,7 @@ impl Tuners {
 
         info!("Tuning to {}: {params:?}", channel.name);
         let unreachable = |error| {
-            AcquireError::Failed(anyhow::Error::new(error).context(format!(
+            AcquireError::Unreachable(anyhow::Error::new(error).context(format!(
                 "Could not reach tunelithd at {}",
                 self.socket.display(),
             )))
