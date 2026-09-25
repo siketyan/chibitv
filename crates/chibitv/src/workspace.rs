@@ -6,9 +6,9 @@ use chrono::{DateTime, Local, NaiveDateTime, TimeDelta};
 use tokio_stream::wrappers::BroadcastStream;
 
 use crate::channel::{Channel, DeliverySystem};
-use crate::channel_scanner::{ChannelScanner, ScanRequest};
 use crate::event_crawler::EventCrawler;
 use crate::recorder::{Recorder, Recording};
+use crate::scanner::{ScanRequest, Scanner};
 use crate::scheduler::Scheduler;
 use crate::service::{Service, ServiceKey};
 use crate::service_information::Signal;
@@ -33,7 +33,7 @@ pub enum WorkspaceError {
     /// No event crawler is configured, so the guide cannot be refreshed.
     EventCrawlerUnavailable,
     /// No channel scanner is configured, so nothing can be scanned for.
-    ChannelScannerUnavailable,
+    ScannerUnavailable,
     /// The scan was asked for something it cannot walk.
     ScanNotPossible(anyhow::Error),
     /// No storage is configured, so nothing can be recorded.
@@ -68,7 +68,7 @@ pub struct Workspace {
     channels: RwLock<Vec<Channel>>,
     streams: Option<Streams>,
     event_crawler: Option<Arc<EventCrawler>>,
-    channel_scanner: Option<Arc<ChannelScanner>>,
+    scanner: Option<Arc<Scanner>>,
     /// What the last scan found, kept for whoever asked for it to read back.
     scan_result: Arc<Mutex<Vec<NewChannel>>>,
     recorder: Option<Arc<Recorder>>,
@@ -85,7 +85,7 @@ impl Workspace {
             channels: RwLock::new(channels),
             streams,
             event_crawler: None,
-            channel_scanner: None,
+            scanner: None,
             scan_result: Arc::default(),
             recorder: None,
             scheduler: Scheduler::spawn(Arc::clone(&tasks)),
@@ -98,8 +98,8 @@ impl Workspace {
         self
     }
 
-    pub fn with_channel_scanner(mut self, scanner: ChannelScanner) -> Self {
-        self.channel_scanner = Some(Arc::new(scanner));
+    pub fn with_scanner(mut self, scanner: Scanner) -> Self {
+        self.scanner = Some(Arc::new(scanner));
         self
     }
 
@@ -151,9 +151,9 @@ impl Workspace {
     /// [`Workspace::create_channels`].
     pub fn scan_channels(&self, request: ScanRequest) -> Result<Task, WorkspaceError> {
         let scanner = self
-            .channel_scanner
+            .scanner
             .clone()
-            .ok_or(WorkspaceError::ChannelScannerUnavailable)?;
+            .ok_or(WorkspaceError::ScannerUnavailable)?;
         request
             .validate()
             .map_err(WorkspaceError::ScanNotPossible)?;

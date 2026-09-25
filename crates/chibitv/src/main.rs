@@ -1,7 +1,6 @@
 mod aac;
 mod cas;
 mod channel;
-mod channel_scanner;
 mod command;
 mod config;
 mod demux;
@@ -12,6 +11,7 @@ mod m2ts;
 mod mmt;
 mod mp2;
 mod mp4;
+mod scanner;
 mod proto {
     connectrpc::include_generated!();
 }

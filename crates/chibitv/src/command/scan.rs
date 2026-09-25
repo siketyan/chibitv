@@ -3,10 +3,10 @@ use std::time::Duration;
 use clap::Parser;
 
 use crate::channel::format_channel_list;
-use crate::channel_scanner::{
-    ChannelScanner, FIRST_UHF_CHANNEL, LAST_UHF_CHANNEL, ScanDeliverySystem, ScanRequest,
-};
 use crate::config::Config;
+use crate::scanner::{
+    FIRST_UHF_CHANNEL, LAST_UHF_CHANNEL, ScanDeliverySystem, ScanRequest, Scanner,
+};
 use crate::store;
 
 #[derive(Clone, Debug, Parser)]
@@ -44,7 +44,7 @@ pub async fn scan(options: &Options, config: &Config) -> anyhow::Result<()> {
     // on the command line is what the error talks about.
     request.validate()?;
 
-    let found = ChannelScanner::from_config(config)?.scan(&request, None)?;
+    let found = Scanner::from_config(config)?.scan(&request, None)?;
 
     // The channels of the broadcast that was walked are replaced by what was
     // found, so one that has left the air stops being kept, while the channels

@@ -7,10 +7,10 @@ use tracing::warn;
 
 use crate::cas::SharedCasModule;
 use crate::channel::Channel;
-use crate::channel_scanner::ChannelScanner;
 use crate::config::Config;
 use crate::event_crawler::EventCrawler;
 use crate::recorder::Recorder;
+use crate::scanner::Scanner;
 use crate::service_information::ServiceInformationWriter;
 use crate::storage;
 use crate::store;
@@ -87,7 +87,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         config.cas.master_key.into(),
         writer,
     );
-    let channel_scanner = ChannelScanner::new(
+    let scanner = Scanner::new(
         Arc::clone(&tuners),
         cas.clone(),
         config.cas.master_key.into(),
@@ -101,7 +101,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
     let state = Arc::new(
         Workspace::new(store, channels, Some(streams))
             .with_event_crawler(event_crawler)
-            .with_channel_scanner(channel_scanner)
+            .with_scanner(scanner)
             .with_recorder(recorder),
     );
 

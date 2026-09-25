@@ -78,7 +78,7 @@ that a remote store can be added beside the local directory the `[storage]` conf
 (`store/channel.rs` for the channels, `store/service.rs` for their services, `store/event.rs` for the EPG). The SQLite backend (sqlx, bundled SQLite) is in `store/sqlite.rs`, with its schema in
 `crates/chibitv/migrations/sqlite/`.
 The channels are kept there rather than in the configuration, and a scan is what writes them (`channel.rs`,
-`channel_scanner.rs`).
+`scanner.rs`).
 Configuration is loaded from `./config.toml` in the working directory (`config.rs`; template in `config.toml.example`).
 
 Cargo features on `chibitv`:
