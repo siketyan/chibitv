@@ -11,17 +11,6 @@ use crate::cas::{self, CasClient, EcmReceptionResponse};
 use crate::multi2::Multi2;
 use crate::{CasModule, PendingResponses};
 
-#[derive(Copy, Clone, Debug)]
-pub struct NoDecryptionKeyError;
-
-impl Display for NoDecryptionKeyError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Decryption key is not provided yet")
-    }
-}
-
-impl Error for NoDecryptionKeyError {}
-
 /// The codes the ECM reception command answers with when it hands over a key
 /// that descrambles: the programme has been purchased, or it is being
 /// previewed.

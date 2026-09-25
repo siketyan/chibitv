@@ -5,7 +5,8 @@ mod descrambler;
 mod multi2;
 
 pub use cas::{EcmReceptionResponse, InitialSettingConditionResponse};
-pub use descrambler::{B25Descrambler, EcmRefusedError, NoDecryptionKeyError};
+pub use descrambler::{B25Descrambler, EcmRefusedError};
+pub use multi2::NoDecryptionKeyError;
 
 use std::sync::mpsc;
 
