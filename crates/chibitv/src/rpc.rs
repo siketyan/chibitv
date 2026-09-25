@@ -14,7 +14,7 @@ use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_stream::{Stream, StreamExt};
 use tracing::warn;
 
-use crate::channel::ChannelInner;
+use crate::channel::{self, ChannelInner};
 use crate::event;
 use crate::proto::chibitv::v1::*;
 use crate::scanner::{ScanDeliverySystem, ScanRequest};
@@ -608,10 +608,10 @@ fn channel(channel: &crate::channel::Channel) -> Channel {
 }
 
 fn delivery_system(inner: &ChannelInner) -> DeliverySystem {
-    match inner {
-        ChannelInner::IsdbT { .. } | ChannelInner::BonIsdbT { .. } => DeliverySystem::IsdbT,
-        ChannelInner::IsdbS { .. } | ChannelInner::BonIsdbS { .. } => DeliverySystem::IsdbS,
-        ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => DeliverySystem::IsdbS3,
+    match inner.delivery_system() {
+        channel::DeliverySystem::IsdbT => DeliverySystem::IsdbT,
+        channel::DeliverySystem::IsdbS => DeliverySystem::IsdbS,
+        channel::DeliverySystem::IsdbS3 => DeliverySystem::IsdbS3,
     }
 }
 
