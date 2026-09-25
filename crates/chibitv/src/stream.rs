@@ -19,7 +19,7 @@ use crate::mp4::{FragmentedMp4Muxer, WriteMp4Fragment};
 use crate::remux::Remuxer;
 use crate::service::ServiceKey;
 use crate::service_information::{ServiceInformationProcessor, ServiceInformationWriter, Signal};
-use crate::tuner::{AcquireError, TunerLease, Tuners};
+use crate::tuner::{AcquireError, TunerInput, Tuners};
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
 const BROADCAST_CAPACITY: usize = 8192;
@@ -170,7 +170,7 @@ impl StreamOutputs {
 ///
 /// The tuner stays occupied as long as at least one `Arc` of the stream is
 /// alive; dropping the last one signals the remuxer thread to stop, which
-/// closes the tuner device and releases the lease.
+/// gives the tuner back to tunelithd.
 pub struct Stream {
     key: ServiceKey,
     outputs: StreamOutputs,
@@ -293,20 +293,18 @@ impl Streams {
         let channel = channel.clone();
 
         move || {
-            let tuner = tuners
-                .try_acquire(channel.inner.delivery_system())
-                .map_err(|error| match error {
-                    AcquireError::Busy => SubscribeError::TunerBusy,
-                    AcquireError::Unsupported(system) => SubscribeError::NoTuner(system),
-                    AcquireError::NotConfigured => SubscribeError::Internal(error.into()),
-                })?;
+            let reader = tuners.tune(&channel).map_err(|error| match error {
+                AcquireError::Busy => SubscribeError::TunerBusy,
+                AcquireError::Unsupported(system) => SubscribeError::NoTuner(system),
+                AcquireError::Failed(error) => SubscribeError::Internal(error),
+            })?;
             info!(
-                tuner_id = tuner.id(),
+                tuner = reader.tuner(),
                 service_id = key.service_id,
                 "Acquired tuner"
             );
 
-            start_stream(writer, cas, cas_master_key, tuner, key, &channel)
+            start_stream(writer, cas, cas_master_key, reader, key, &channel)
                 .map_err(SubscribeError::Internal)
         }
     }
@@ -316,17 +314,14 @@ fn start_stream(
     writer: ServiceInformationWriter,
     cas: Arc<SharedCasModule>,
     cas_master_key: [u8; 32],
-    tuner: TunerLease,
+    reader: TunerInput,
     key: ServiceKey,
     channel: &Channel,
 ) -> anyhow::Result<Arc<Stream>> {
-    tuner.tune(channel.clone())?;
-    let reader = tuner.open()?;
-
     let outputs = StreamOutputs::new();
 
     let kill_tx = match &channel.inner {
-        ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
+        ChannelInner::IsdbS3 { .. } => {
             let descrambler = Descrambler::init(cas, cas_master_key, true)?;
             let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
             spawn_remuxer(
@@ -339,10 +334,7 @@ fn start_stream(
                 &outputs,
             )
         }
-        ChannelInner::IsdbT { .. }
-        | ChannelInner::IsdbS { .. }
-        | ChannelInner::BonIsdbT { .. }
-        | ChannelInner::BonIsdbS { .. } => {
+        ChannelInner::IsdbT { .. } | ChannelInner::IsdbS { .. } => {
             let descrambler = B25Descrambler::init(cas, true)?;
             // A service of zero streams the whole transport stream instead of
             // picking one service out of it.

@@ -19,7 +19,7 @@ use crate::mmt::MmtDemuxer;
 use crate::remux::{Mux, Remuxer};
 use crate::storage::{Storage, StorageObject};
 use crate::task::TaskHandle;
-use crate::tuner::{AcquireError, TunerLease, Tuners};
+use crate::tuner::{AcquireError, TunerInput, Tuners};
 
 const READ_BUFFER_SIZE: usize = 188 * 8192;
 
@@ -79,16 +79,13 @@ impl Recorder {
         &self,
         recording: &Recording,
         task: &TaskHandle,
-    ) -> anyhow::Result<TunerLease> {
+    ) -> anyhow::Result<TunerInput> {
         let deadline = Instant::now() + ACQUIRE_TIMEOUT;
 
         loop {
-            match self
-                .tuners
-                .try_acquire(recording.channel.inner.delivery_system())
-            {
+            match self.tuners.tune(&recording.channel) {
                 Ok(tuner) => return Ok(tuner),
-                Err(error @ (AcquireError::NotConfigured | AcquireError::Unsupported(_))) => {
+                Err(error @ (AcquireError::Failed(_) | AcquireError::Unsupported(_))) => {
                     return Err(error.into());
                 }
                 Err(error @ AcquireError::Busy) => {
@@ -112,21 +109,19 @@ impl Recorder {
     /// finished in the storage just like one that ran to its end.
     pub fn record(&self, recording: &Recording, task: &TaskHandle) -> anyhow::Result<()> {
         let name = object_name(recording);
-        let tuner = self.acquire_tuner(recording, task)?;
+        let reader = self.acquire_tuner(recording, task)?;
         info!(
-            tuner_id = tuner.id(),
+            tuner = reader.tuner(),
             service_id = recording.service_id,
             name,
             "Acquired tuner for recording"
         );
 
-        tuner.tune(recording.channel.clone())?;
-        let reader = tuner.open()?;
         let writer = SharedObject::new(self.storage.create(&name)?);
         let mux = M2tsMuxer::new(TsPacketWriter::new(writer.clone()));
 
         let result = match recording.channel.inner {
-            ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
+            ChannelInner::IsdbS3 { .. } => {
                 let descrambler = Descrambler::init(self.cas.clone(), self.cas_master_key, true)?;
                 let reader = BufReader::with_capacity(READ_BUFFER_SIZE, reader);
                 run(
@@ -135,10 +130,7 @@ impl Recorder {
                     task,
                 )
             }
-            ChannelInner::IsdbT { .. }
-            | ChannelInner::IsdbS { .. }
-            | ChannelInner::BonIsdbT { .. }
-            | ChannelInner::BonIsdbS { .. } => {
+            ChannelInner::IsdbT { .. } | ChannelInner::IsdbS { .. } => {
                 let descrambler = B25Descrambler::init(self.cas.clone(), true)?;
                 let demux = M2tsDemuxer::new_for_service(reader, descrambler, recording.service_id);
                 run(Remuxer::new(demux, mux)?, recording, task)

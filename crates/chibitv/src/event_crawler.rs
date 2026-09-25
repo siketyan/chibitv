@@ -44,9 +44,8 @@ impl EventCrawler {
     /// Tunes every channel in turn and stores the services and the events it
     /// announces.
     ///
-    /// The channels are walked a broadcast at a time, on a tuner receiving
-    /// it, which is held for the whole of them; a broadcast no tuner receives
-    /// is skipped with a warning. The task is asked to stop between packets,
+    /// The channels are walked a broadcast at a time; a broadcast no tuner
+    /// receives is skipped with a warning. The task is asked to stop between packets,
     /// so cancelling it keeps the events collected so far and gives the tuner
     /// back at once.
     pub fn crawl(
@@ -69,17 +68,8 @@ impl EventCrawler {
                 break;
             }
 
-            let tuner = match self.tuners.try_acquire(system) {
-                Ok(tuner) => tuner,
-                Err(error @ AcquireError::Unsupported(_)) => {
-                    warn!(%system, %error, "Skipping the channels of a broadcast no tuner receives");
-                    index += channels_of_system.len();
-                    continue;
-                }
-                Err(error) => return Err(error.into()),
-            };
-            info!(tuner_id = tuner.id(), %system, "Acquired tuner for event crawling");
-
+            // Where the next broadcast begins, however this one is left.
+            let end = index + channels_of_system.len();
             for channel in channels_of_system {
                 if task.is_cancelled() {
                     break;
@@ -92,29 +82,30 @@ impl EventCrawler {
                 );
                 index += 1;
 
-                if let Err(error) = tuner.tune(channel.clone()) {
-                    warn!(channel_id = channel.id, %error, "Could not tune while crawling events");
-                    continue;
-                }
-
-                let reader = match tuner.open_reader() {
+                let reader = match self.tuners.tune(channel) {
                     Ok(reader) => reader,
-                    Err(error) => {
-                        warn!(channel_id = channel.id, %error, "Could not open tuner input");
+                    Err(error @ AcquireError::Unsupported(_)) => {
+                        warn!(%system, %error, "Skipping the channels of a broadcast no tuner receives");
+                        break;
+                    }
+                    Err(error @ AcquireError::Busy) => return Err(error.into()),
+                    Err(AcquireError::Failed(error)) => {
+                        warn!(
+                            channel_id = channel.id,
+                            error = format!("{error:#}"),
+                            "Could not tune while crawling events"
+                        );
                         continue;
                     }
                 };
                 let deadline = Instant::now() + dwell_time;
                 match channel.inner {
-                    ChannelInner::IsdbT { .. }
-                    | ChannelInner::IsdbS { .. }
-                    | ChannelInner::BonIsdbT { .. }
-                    | ChannelInner::BonIsdbS { .. } => {
+                    ChannelInner::IsdbT { .. } | ChannelInner::IsdbS { .. } => {
                         let descrambler = B25Descrambler::init(self.cas.clone(), true)?;
                         let mut demux = M2tsDemuxer::new(reader, descrambler);
                         crawl_channel(&mut demux, channel, &self.writer, deadline, task)?;
                     }
-                    ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
+                    ChannelInner::IsdbS3 { .. } => {
                         let descrambler =
                             Descrambler::init(self.cas.clone(), self.cas_master_key, true)?;
                         let mut demux = MmtDemuxer::new(
@@ -125,6 +116,7 @@ impl EventCrawler {
                     }
                 }
             }
+            index = end;
         }
 
         Ok(())

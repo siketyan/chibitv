@@ -23,7 +23,7 @@ pub async fn record(options: &Options, config: &Config) -> anyhow::Result<()> {
     let channel = channel::find_channel(&*store, options.channel).await?;
     let tuner = super::tune(config, &channel)?;
 
-    let mut input = BufReader::new(tuner.open()?);
+    let mut input = BufReader::new(tuner);
     let mut output: Box<dyn Write> = match options.output.as_deref() {
         Some("-") | None => Box::new(stdout()),
         Some(path) => Box::new(File::create(path)?),

@@ -15,14 +15,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::ValueEnum;
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::cas::SharedCasModule;
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::config::Config;
 use crate::store::NewChannel;
 use crate::task::TaskHandle;
-use crate::tuner::{TunerLease, Tuners};
+use crate::tuner::{AcquireError, Tuners};
 
 pub const FIRST_UHF_CHANNEL: u8 = 13;
 pub const LAST_UHF_CHANNEL: u8 = 52;
@@ -139,7 +139,7 @@ impl Scanner {
     /// a running server.
     pub fn from_config(config: &Config) -> anyhow::Result<Self> {
         Ok(Self::new(
-            Arc::new(Tuners::from_config(&config.tuners)?),
+            Arc::new(Tuners::new(&config.tunelith)?),
             SharedCasModule::open()?,
             config.cas.master_key.into(),
         ))
@@ -147,9 +147,10 @@ impl Scanner {
 
     /// Walks what the request asks for and returns what was found.
     ///
-    /// One tuner is held for the whole scan, so that nothing takes it away
-    /// halfway through. A task, when there is one, is told how far the walk has
-    /// got and asked whether it should stop.
+    /// A tuner is had from tunelithd for each channel, and the scan is given up
+    /// when none is free rather than returning the channels it could reach. A
+    /// task, when there is one, is told how far the walk has got and asked
+    /// whether it should stop.
     pub fn scan(
         &self,
         request: &ScanRequest,
@@ -157,11 +158,8 @@ impl Scanner {
     ) -> anyhow::Result<Vec<NewChannel>> {
         request.validate()?;
 
-        let tuner = self.tuners.try_acquire(request.delivery_system.into())?;
-        info!(tuner_id = tuner.id(), "Acquired tuner for scanning");
-
         let scan = Scan {
-            tuner,
+            tuners: &self.tuners,
             cas: self.cas.clone(),
             master_key: self.cas_master_key,
             timeout: request.timeout,
@@ -181,7 +179,7 @@ impl Scanner {
 /// What every scan needs to hand a channel: a tuner to reach it with, the card
 /// that unscrambles it, and how long to wait on it.
 struct Scan<'a> {
-    tuner: TunerLease,
+    tuners: &'a Tuners,
     cas: Arc<SharedCasModule>,
     /// The key the 4K descrambler needs, which the terrestrial and 2K ones do
     /// without.
@@ -288,8 +286,8 @@ fn transponders_4k() -> impl Iterator<Item = Transponder> {
 }
 
 impl Scan<'_> {
-    /// Tunes the tuner held for the scan to the channel, reporting one it
-    /// cannot reach as nothing rather than as an error.
+    /// Tunes a tuner to the channel, reporting one it cannot reach as nothing
+    /// rather than as an error.
     fn tune(
         &self,
         label: &str,
@@ -302,12 +300,20 @@ impl Scan<'_> {
             stream_id: None,
         };
 
-        if let Err(error) = self.tuner.tune(channel) {
-            warn!(channel = label, error = %error, "Could not tune to the channel");
-            return Ok(None);
+        match self.tuners.tune(&channel) {
+            Ok(input) => Ok(Some(Box::new(input))),
+            Err(AcquireError::Failed(error)) => {
+                warn!(
+                    channel = label,
+                    error = format!("{error:#}"),
+                    "Could not tune to the channel"
+                );
+                Ok(None)
+            }
+            // A scan missing the channels it had no tuner for would replace
+            // the ones kept with fewer.
+            Err(error) => Err(error.into()),
         }
-
-        Ok(Some(self.tuner.open_reader()?))
     }
 }
 

@@ -38,10 +38,7 @@ pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     if !matches!(
         channel.inner,
-        ChannelInner::IsdbT { .. }
-            | ChannelInner::IsdbS { .. }
-            | ChannelInner::BonIsdbT { .. }
-            | ChannelInner::BonIsdbS { .. }
+        ChannelInner::IsdbT { .. } | ChannelInner::IsdbS { .. }
     ) {
         anyhow::bail!("Only ISDB-T and ISDB-S channels, which carry MPEG-2 TS, are supported");
     }
@@ -49,7 +46,7 @@ pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
     let tuner = super::tune(config, &channel)?;
 
     let descrambler = B25Descrambler::init(SharedCasModule::open()?, false)?;
-    let mut demux = M2tsDemuxer::new(tuner.open()?, descrambler);
+    let mut demux = M2tsDemuxer::new(tuner, descrambler);
     let mut state = StatusState::default();
 
     let deadline = Instant::now() + Duration::from_secs(options.timeout);

@@ -61,7 +61,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
 
     let cas = SharedCasModule::open()?;
 
-    let tuners = Arc::new(Tuners::from_config(&config.tuners)?);
+    let tuners = Arc::new(Tuners::new(&config.tunelith)?);
 
     // No channel is tuned yet: a tuner is occupied only while at least one
     // client keeps a stream open.
