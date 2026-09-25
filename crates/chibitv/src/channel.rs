@@ -10,8 +10,7 @@ use std::fmt::{Display, Formatter, Write as _};
 use anyhow::bail;
 use serde::Deserialize;
 
-use crate::config::Config;
-use crate::store::StoredChannel;
+use crate::store::{Store, StoredChannel};
 
 /// The broadcast a channel is carried on.
 ///
@@ -162,8 +161,7 @@ impl From<&StoredChannel> for Channel {
 ///
 /// This is what the `--channel` option of the commands names, and the
 /// `channels` command is what lists the identifiers to choose from.
-pub async fn find_channel(config: &Config, id: usize) -> anyhow::Result<Channel> {
-    let store = crate::store::open(&config.database.url).await?;
+pub async fn find_channel(store: &dyn Store, id: usize) -> anyhow::Result<Channel> {
     let channels = store.load_channels().await?;
 
     let Some(channel) = channels.iter().find(|channel| channel.id == id) else {

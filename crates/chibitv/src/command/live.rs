@@ -29,7 +29,8 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
         tuners.add_tuner_from_config(id as u32, tuner)?;
     }
 
-    let channel = channel::find_channel(config, options.channel).await?;
+    let store = crate::store::open(&config.database.url).await?;
+    let channel = channel::find_channel(&*store, options.channel).await?;
     let tuner = tuners.try_acquire(channel.inner.delivery_system())?;
 
     info!("Tuning to the channel: {:?}", channel);
