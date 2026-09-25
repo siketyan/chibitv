@@ -175,38 +175,22 @@ message NewChannel {
   string name = 1;
   DeliverySystem delivery_system = 2;
 
-  // How the channel is tuned to.
-  oneof tuning {
-    TuningParameters parameters = 3;
-    BonDriverChannel bondriver = 4;
-  }
-
-  // The stream the services of the channel are named under, as a scan read it.
-  optional uint32 transport_stream_id = 5;
-
-  // The service catalog of the channel, which the server wants before tuning.
-  repeated NewService services = 6;
-}
-
-// TuningParameters is what a tuner is given to reach a channel.
-message TuningParameters {
   // Hz for the terrestrial channels, kHz for the satellite ones.
-  uint32 frequency = 1;
+  uint32 frequency = 3;
 
   // Terrestrial only. Zero is the 6 MHz a terrestrial channel is.
-  uint32 bandwidth_hz = 2;
+  uint32 bandwidth_hz = 4;
 
   // Satellite only: the stream the channel is picked out of its transponder
   // by, which is the transport stream id on ISDB-S and the TLV stream id on
   // ISDB-S3.
-  optional uint32 stream_id = 3;
-}
+  optional uint32 stream_id = 5;
 
-// BonDriverChannel names a channel a BonDriver enumerates, which is how one is
-// reached on Windows: the driver holds the tuning parameters itself.
-message BonDriverChannel {
-  uint32 space = 1;
-  uint32 channel = 2;
+  // The stream the services of the channel are named under, as a scan read it.
+  optional uint32 transport_stream_id = 6;
+
+  // The service catalog of the channel, which the server wants before tuning.
+  repeated NewService services = 7;
 }
 
 // NewService is one service of the catalog of a channel.

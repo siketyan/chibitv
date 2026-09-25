@@ -9,8 +9,8 @@ cp config.toml.example config.toml
 ```
 
 The file is read into the types in `crates/chibitv/src/config.rs`. Only
-[`[cas]`](#cas) is required; every other table has a default, although a
-[tuner](#tuners) is needed before anything can be tuned.
+[`[cas]`](#cas) is required; every other table has a default, although
+[tunelithd](#tunelith) has to be running before anything can be tuned.
 
 The [channels](#channels) are not part of it: they are kept in the
 [`[database]`](#database), which a [scan](./cli#scan) writes.
@@ -37,143 +37,38 @@ The key is read by the ISDB-S3 (B61) descrambler only. ISDB-T and ISDB-S
 descrambling (B25) derives its keys from the card alone, so a setup without a
 4K channel still needs the key to be present, but never uses its value.
 
-## `[[tuners]]`
+## `[tunelith]`
 
-An array of tables, one per tuner. `type` picks the implementation, and the
-remaining keys belong to that variant, apart from `delivery_systems`, which
-every variant requires.
+tunelithd, the daemon of [Tunelith](https://github.com/siketyan/tunelith),
+which holds the tuners and shares them among programs: PLEX, Digibest and
+e-better tuners over USB, the PT4K, and any tuner with a Linux DVB driver. Its
+[README](https://github.com/siketyan/tunelith#readme) covers installing and
+running it.
 
-| Key                | Type     | Default | Description                                                                                       |
-| ------------------ | -------- | ------- | ------------------------------------------------------------------------------------------------- |
-| `delivery_systems` | string[] | _required_ | The broadcasts the tuner receives, out of `"ISDB-T"`, `"ISDB-S"` and `"ISDB-S3"` (BS/CS 4K). |
+| Key      | Type    | Default     | Description                                                               |
+| -------- | ------- | ----------- | ------------------------------------------------------------------------- |
+| `socket` | string  | _see below_ | Path to the socket of tunelithd.                                          |
+| `lnb`    | boolean | `false`     | Whether to power the dish's converter while a satellite channel is tuned. |
 
-A tuner is picked for the broadcast the channel is on: the first free one in
-the file that receives it. Naming only the broadcasts a tuner receives keeps a
-channel it cannot reach from being tuned on it, and keeps the tuner free for
-what it can, such as a 4K satellite tuner beside a terrestrial one:
+Without `socket`, chibitv connects to the socket of the user's tunelithd,
+`$XDG_RUNTIME_DIR/tunelith/tunelithd.sock`, if there is one, and to that of
+the system's, `/run/tunelith/tunelithd.sock`, otherwise. On Windows it is the
+named pipe `\\.\pipe\tunelith`. tunelithd grants the `video` group access to
+its socket by default, as
+[Device permissions on Linux](../guide/getting-started#device-permissions-on-linux)
+sets up.
 
-```toml
-[[tuners]]
-type = "dvb"
-adapter_num = 0
-frontend_num = 0
-delivery_systems = ["ISDB-S", "ISDB-S3"]
-
-[[tuners]]
-type = "px4"
-path = "/dev/pxmlt5video0"
-delivery_systems = ["ISDB-T", "ISDB-S"]
-```
-
-The `live`, `record`, `scan` and `status` subcommands take the first free
-tuner receiving the channel or the broadcast scanned; `serve` manages every
-configured tuner in its registry the same way.
-
-### `type = "dvb"`
-
-A Linux DVB device. Available on Linux with the default `dvb` Cargo feature.
-
-| Key            | Type    | Default    | Description                                                 |
-| -------------- | ------- | ---------- | ----------------------------------------------------------- |
-| `adapter_num`  | integer | _required_ | Adapter number, the _N_ of `/dev/dvb/adapterN`.              |
-| `frontend_num` | integer | _required_ | Frontend number, the _N_ of `/dev/dvb/adapterX/frontendN`.   |
+chibitv does not name the tuners itself. Each time a channel is tuned, it asks
+tunelithd for any free tuner receiving the channel's broadcast, which tunelithd
+picks, or shares with a program already receiving the same, and gets back once
+the stream is over. How many channels can be received at once is therefore how
+many tuners tunelithd has free. A `[[tuners]]` table left over from an older
+configuration is ignored.
 
 ```toml
-[[tuners]]
-type = "dvb"
-adapter_num = 0
-frontend_num = 0
-delivery_systems = ["ISDB-T"]
-```
-
-### `type = "px4"`
-
-A tuner driven by [px4_drv](https://github.com/tsukumijima/px4_drv), the
-driver of the PLEX and Digibest tuners (PX-W3U4, PX-MLT5PE, PX-M1UR,
-DTV02A-1T1S-U and the like). Available on Linux and Windows with the default
-`px4` Cargo feature.
-
-| Key           | Type    | Default              | Description                                                                                     |
-| ------------- | ------- | -------------------- | ----------------------------------------------------------------------------------------------- |
-| `path`        | string  | _required_           | Linux only. Path to the device file the driver makes, such as `/dev/pxmlt5video0`.              |
-| `receiver`    | string  | _none_               | Windows only. Name of the receiver in `DriverHost_PX4.ini` to open; any free one when left out. |
-| `driver_host` | string  | `DriverHost_PX4.exe` | Windows only. Path to `DriverHost_PX4.exe`, relative to the working directory.                  |
-| `lnb_voltage` | integer | `0`                  | Voltage fed to the dish's converter while a satellite channel is tuned: 0, 11 or 15.            |
-
-The driver takes the channel numbers of the PT1/PT3 drivers rather than a
-frequency, and chibitv works them out from the channel it is given, so the
-channels a [scan](./cli#scan) finds with any tuner can be tuned with this one.
-Only ISDB-T and ISDB-S are received: none of the tuners the driver supports
-takes ISDB-S3.
-
-The device is opened while the tuner is in use and closed once it is released,
-so other programs, `recpt1` for instance, can use it in between. A device the
-driver made for one broadcast only, such as the `px4video0` and `px4video1`
-of a PX-W3U4 which receive ISDB-S alone, refuses a channel of the other.
-
-Device files of the driver belong to the `video` group, as the
-[DVB ones](../guide/getting-started#device-permissions-on-linux) do.
-
-```toml
-[[tuners]]
-type = "px4"
-path = "/dev/pxmlt5video0"
-lnb_voltage = 15
-delivery_systems = ["ISDB-T", "ISDB-S"]
-```
-
-On Windows, chibitv talks to `DriverHost_PX4`, the user-mode driver of the
-WinUSB build of px4_drv, directly rather than through its BonDriver, so the
-channels are tuned by the frequency a scan found as on Linux. The driver is not
-a service: chibitv starts `driver_host` whenever it opens a receiver and the
-driver is not running, as the BonDriver does, so keep `DriverHost_PX4.ini` and
-the firmware beside it. Without `receiver`, a free receiver taking every
-broadcast in `delivery_systems` is opened each time the tuner is used, so list
-one broadcast per tuner for a device with separate receivers for each, such as
-a PX-W3U4.
-
-```toml
-[[tuners]]
-type = "px4"
-delivery_systems = ["ISDB-T"]
-
-[[tuners]]
-type = "px4"
-receiver = "PLEX PX-W3U4 ISDB-S Receiver #0"
-lnb_voltage = 15
-delivery_systems = ["ISDB-S"]
-```
-
-### `type = "bon"`
-
-A BonDriver DLL, which is how tuners are driven on Windows. Available on
-Windows with the default `bon` Cargo feature.
-
-| Key    | Type   | Default    | Description                  |
-| ------ | ------ | ---------- | ---------------------------- |
-| `path` | string | _required_ | Path to the BonDriver DLL.   |
-
-The DLL reads its own tuning parameters from the `.ini` file sitting next to
-it, which is why a [BonDriver channel](./cli#channels) names a channel number
-rather than a frequency.
-
-```toml
-[[tuners]]
-type = "bon"
-path = 'C:\BonDriver\BonDriver_BDA.dll'
-delivery_systems = ["ISDB-T"]
-```
-
-### `type = "stdin"`
-
-Reads the stream from standard input instead of a device, which is how a
-captured file is fed through the same pipeline. Takes no further keys than
-`delivery_systems`, the broadcast of the stream fed.
-
-```toml
-[[tuners]]
-type = "stdin"
-delivery_systems = ["ISDB-T"]
+[tunelith]
+socket = "/run/tunelith/tunelithd.sock"
+lnb = true
 ```
 
 ## Channels

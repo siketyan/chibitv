@@ -1,33 +1,15 @@
 [cas]
 master_key = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
 
-# Every tuner requires `delivery_systems`, the broadcasts it receives out of
-# "ISDB-T", "ISDB-S" and "ISDB-S3" (BS/CS 4K); a tuner is picked for the
-# broadcast a channel is on.
-[[tuners]]
-type = "dvb"
-adapter_num = 0
-frontend_num = 0
-delivery_systems = ["ISDB-S", "ISDB-S3"]
-
-# A tuner px4_drv drives, such as a PLEX PX-MLT5PE, by the device file the
-# driver makes for it on Linux. On Windows, `path` is left out and
-# `receiver = "..."` may name the DriverHost_PX4 receiver to open instead of any
-# free one; `driver_host` is the DriverHost_PX4.exe started when it is not
-# running, `DriverHost_PX4.exe` in the working directory by default. `lnb_voltage` (0, 11 or 15) is what the dish's converter is powered
-# with while a satellite channel is tuned; the default is 0, no power.
-[[tuners]]
-type = "px4"
-path = "/dev/pxmlt5video0"
-lnb_voltage = 0
-delivery_systems = ["ISDB-T", "ISDB-S"]
-
-# Windows only. The DLL reads its own tuning parameters from the .ini file
-# sitting next to it.
-[[tuners]]
-type = "bon"
-path = 'C:\BonDriver\BonDriver_BDA.dll'
-delivery_systems = ["ISDB-T"]
+[tunelith]
+# tunelithd, the daemon of Tunelith (https://github.com/siketyan/tunelith)
+# holding the tuners; every channel is tuned on a free one it picks. The whole
+# section may be left out.
+# The socket of tunelithd. Defaults to the user's if there is one, else the
+# system's.
+# socket = "/run/tunelith/tunelithd.sock"
+# Whether to power the dish's converter while a satellite channel is tuned.
+lnb = false
 
 [database]
 # Where the channels a scan found and the programme guide are kept. Defaults to

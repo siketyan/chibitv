@@ -10,7 +10,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file chibitv/v1/chibitv.proto.
  */
 export const file_chibitv_v1_chibitv: GenFile = /*@__PURE__*/
-  fileDesc("ChhjaGliaXR2L3YxL2NoaWJpdHYucHJvdG8SCmNoaWJpdHYudjEiFQoTTGlzdENoYW5uZWxzUmVxdWVzdCI9ChRMaXN0Q2hhbm5lbHNSZXNwb25zZRIlCghjaGFubmVscxgBIAMoCzITLmNoaWJpdHYudjEuQ2hhbm5lbCJYCgdDaGFubmVsEgoKAmlkGAEgASgNEgwKBG5hbWUYAiABKAkSMwoPZGVsaXZlcnlfc3lzdGVtGAMgASgOMhouY2hpYml0di52MS5EZWxpdmVyeVN5c3RlbSIVChNMaXN0U2VydmljZXNSZXF1ZXN0Ij0KFExpc3RTZXJ2aWNlc1Jlc3BvbnNlEiUKCHNlcnZpY2VzGAEgAygLMhMuY2hpYml0di52MS5TZXJ2aWNlIqMBCgdTZXJ2aWNlEiMKA2tleRgBIAEoCzIWLmNoaWJpdHYudjEuU2VydmljZUtleRIMCgRuYW1lGAIgASgJEhUKDXByb3ZpZGVyX25hbWUYAyABKAkSEgoKY2hhbm5lbF9pZBgEIAEoDRIQCghsb2dvX3VybBgFIAEoCRIoCg1jdXJyZW50X2V2ZW50GAYgASgLMhEuY2hpYml0di52MS5FdmVudCIzCgpTZXJ2aWNlS2V5EhEKCXN0cmVhbV9pZBgBIAEoDRISCgpzZXJ2aWNlX2lkGAIgASgNIoIBChFMaXN0RXZlbnRzUmVxdWVzdBIsCgdzZXJ2aWNlGAEgASgLMhYuY2hpYml0di52MS5TZXJ2aWNlS2V5SACIAQESMwoPZGVsaXZlcnlfc3lzdGVtGAIgASgOMhouY2hpYml0di52MS5EZWxpdmVyeVN5c3RlbUIKCghfc2VydmljZSI3ChJMaXN0RXZlbnRzUmVzcG9uc2USIQoGZXZlbnRzGAEgAygLMhEuY2hpYml0di52MS5FdmVudCIyChRSZWZyZXNoRXZlbnRzUmVxdWVzdBIaChJkd2VsbF90aW1lX3NlY29uZHMYASABKA0iNwoVUmVmcmVzaEV2ZW50c1Jlc3BvbnNlEh4KBHRhc2sYASABKAsyEC5jaGliaXR2LnYxLlRhc2sicQoTU2NhbkNoYW5uZWxzUmVxdWVzdBIzCg9kZWxpdmVyeV9zeXN0ZW0YASABKA4yGi5jaGliaXR2LnYxLkRlbGl2ZXJ5U3lzdGVtEgwKBGZhc3QYAiABKAgSFwoPdGltZW91dF9zZWNvbmRzGAMgASgNIjYKFFNjYW5DaGFubmVsc1Jlc3BvbnNlEh4KBHRhc2sYASABKAsyEC5jaGliaXR2LnYxLlRhc2siFgoUR2V0U2NhblJlc3VsdFJlcXVlc3QiQQoVR2V0U2NhblJlc3VsdFJlc3BvbnNlEigKCGNoYW5uZWxzGAEgAygLMhYuY2hpYml0di52MS5OZXdDaGFubmVsIkUKGUJ1bGtDcmVhdGVDaGFubmVsc1JlcXVlc3QSKAoIY2hhbm5lbHMYASADKAsyFi5jaGliaXR2LnYxLk5ld0NoYW5uZWwiQwoaQnVsa0NyZWF0ZUNoYW5uZWxzUmVzcG9uc2USJQoIY2hhbm5lbHMYASADKAsyEy5jaGliaXR2LnYxLkNoYW5uZWwipAIKCk5ld0NoYW5uZWwSDAoEbmFtZRgBIAEoCRIzCg9kZWxpdmVyeV9zeXN0ZW0YAiABKA4yGi5jaGliaXR2LnYxLkRlbGl2ZXJ5U3lzdGVtEjIKCnBhcmFtZXRlcnMYAyABKAsyHC5jaGliaXR2LnYxLlR1bmluZ1BhcmFtZXRlcnNIABIxCglib25kcml2ZXIYBCABKAsyHC5jaGliaXR2LnYxLkJvbkRyaXZlckNoYW5uZWxIABIgChN0cmFuc3BvcnRfc3RyZWFtX2lkGAUgASgNSAGIAQESKAoIc2VydmljZXMYBiADKAsyFi5jaGliaXR2LnYxLk5ld1NlcnZpY2VCCAoGdHVuaW5nQhYKFF90cmFuc3BvcnRfc3RyZWFtX2lkImEKEFR1bmluZ1BhcmFtZXRlcnMSEQoJZnJlcXVlbmN5GAEgASgNEhQKDGJhbmR3aWR0aF9oehgCIAEoDRIWCglzdHJlYW1faWQYAyABKA1IAIgBAUIMCgpfc3RyZWFtX2lkIjIKEEJvbkRyaXZlckNoYW5uZWwSDQoFc3BhY2UYASABKA0SDwoHY2hhbm5lbBgCIAEoDSI9CgpOZXdTZXJ2aWNlEgoKAmlkGAEgASgNEgwKBG5hbWUYAiABKAkSFQoNcHJvdmlkZXJfbmFtZRgDIAEoCSISChBMaXN0VGFza3NSZXF1ZXN0IjQKEUxpc3RUYXNrc1Jlc3BvbnNlEh8KBXRhc2tzGAEgAygLMhAuY2hpYml0di52MS5UYXNrIhMKEVdhdGNoVGFza3NSZXF1ZXN0IiQKEUNhbmNlbFRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAQiNAoSQ2FuY2VsVGFza1Jlc3BvbnNlEh4KBHRhc2sYASABKAsyEC5jaGliaXR2LnYxLlRhc2siJAoRRGVsZXRlVGFza1JlcXVlc3QSDwoHdGFza19pZBgBIAEoBCIUChJEZWxldGVUYXNrUmVzcG9uc2UiTgoJVGFza0V2ZW50EiMKB2NoYW5nZWQYASABKAsyEC5jaGliaXR2LnYxLlRhc2tIABIRCgdkZWxldGVkGAIgASgESABCCQoHcGF5bG9hZCJVChhTY2hlZHVsZVJlY29yZGluZ1JlcXVlc3QSJwoHc2VydmljZRgBIAEoCzIWLmNoaWJpdHYudjEuU2VydmljZUtleRIQCghldmVudF9pZBgCIAEoDSI7ChlTY2hlZHVsZVJlY29yZGluZ1Jlc3BvbnNlEh4KBHRhc2sYASABKAsyEC5jaGliaXR2LnYxLlRhc2siwgMKBFRhc2sSCgoCaWQYASABKAQSIgoEa2luZBgCIAEoDjIULmNoaWJpdHYudjEuVGFza0tpbmQSJAoFc3RhdGUYAyABKA4yFS5jaGliaXR2LnYxLlRhc2tTdGF0ZRINCgV0aXRsZRgEIAEoCRIPCgdtZXNzYWdlGAUgASgJEhUKCHByb2dyZXNzGAYgASgCSACIAQESEwoLY2FuY2VsbGFibGUYByABKAgSDQoFZXJyb3IYCCABKAkSLQoKY3JlYXRlZF9hdBgJIAEoCzIULmNoaWJpdHYudjEuRGF0ZVRpbWVIAYgBARIvCgxzY2hlZHVsZWRfYXQYDCABKAsyFC5jaGliaXR2LnYxLkRhdGVUaW1lSAKIAQESLQoKc3RhcnRlZF9hdBgKIAEoCzIULmNoaWJpdHYudjEuRGF0ZVRpbWVIA4gBARIuCgtmaW5pc2hlZF9hdBgLIAEoCzIULmNoaWJpdHYudjEuRGF0ZVRpbWVIBIgBAUILCglfcHJvZ3Jlc3NCDQoLX2NyZWF0ZWRfYXRCDwoNX3NjaGVkdWxlZF9hdEINCgtfc3RhcnRlZF9hdEIOCgxfZmluaXNoZWRfYXQiMQoQRXZlbnREZXNjcmlwdGlvbhIMCgRuYW1lGAEgASgJEg8KB2NvbnRlbnQYAiABKAkiKgoIRGF0ZVRpbWUSDwoHc2Vjb25kcxgBIAEoAxINCgVuYW5vcxgCIAEoDSL2AQoFRXZlbnQSCgoCaWQYASABKA0SDQoFdGl0bGUYAiABKAkSMQoLZGVzY3JpcHRpb24YAyADKAsyHC5jaGliaXR2LnYxLkV2ZW50RGVzY3JpcHRpb24SLQoKc3RhcnRfdGltZRgEIAEoCzIULmNoaWJpdHYudjEuRGF0ZVRpbWVIAIgBARIrCghlbmRfdGltZRgFIAEoCzIULmNoaWJpdHYudjEuRGF0ZVRpbWVIAYgBARInCgdzZXJ2aWNlGAYgASgLMhYuY2hpYml0di52MS5TZXJ2aWNlS2V5Qg0KC19zdGFydF90aW1lQgsKCV9lbmRfdGltZSI4Cg1TdHJlYW1SZXF1ZXN0EicKB3NlcnZpY2UYASABKAsyFi5jaGliaXR2LnYxLlNlcnZpY2VLZXkidQoLU3RyZWFtU3RhdGUSKQoHc2VydmljZRgBIAEoCzITLmNoaWJpdHYudjEuU2VydmljZUgAiAEBEiUKBWV2ZW50GAIgASgLMhEuY2hpYml0di52MS5FdmVudEgBiAEBQgoKCF9zZXJ2aWNlQggKBl9ldmVudCJ/Cg5TdHJlYW1SZXNwb25zZRIoCgVzdGF0ZRgBIAEoCzIXLmNoaWJpdHYudjEuU3RyZWFtU3RhdGVIABIOCgRmbXA0GAIgASgMSAASKAoFZXJyb3IYAyABKAsyFy5jaGliaXR2LnYxLlN0cmVhbUVycm9ySABCCQoHcGF5bG9hZCJJCgtTdHJlYW1FcnJvchIpCgRraW5kGAEgASgOMhsuY2hpYml0di52MS5TdHJlYW1FcnJvcktpbmQSDwoHbWVzc2FnZRgCIAEoCSqGAQoORGVsaXZlcnlTeXN0ZW0SHwobREVMSVZFUllfU1lTVEVNX1VOU1BFQ0lGSUVEEAASGgoWREVMSVZFUllfU1lTVEVNX0lTREJfVBABEhoKFkRFTElWRVJZX1NZU1RFTV9JU0RCX1MQAhIbChdERUxJVkVSWV9TWVNURU1fSVNEQl9TMxADKnYKCFRhc2tLaW5kEhkKFVRBU0tfS0lORF9VTlNQRUNJRklFRBAAEhwKGFRBU0tfS0lORF9SRUZSRVNIX0VWRU5UUxABEhQKEFRBU0tfS0lORF9SRUNPUkQQAhIbChdUQVNLX0tJTkRfU0NBTl9DSEFOTkVMUxADKrwBCglUYXNrU3RhdGUSGgoWVEFTS19TVEFURV9VTlNQRUNJRklFRBAAEhYKElRBU0tfU1RBVEVfUEVORElORxABEhYKElRBU0tfU1RBVEVfUlVOTklORxACEhgKFFRBU0tfU1RBVEVfU1VDQ0VFREVEEAMSFQoRVEFTS19TVEFURV9GQUlMRUQQBBIYChRUQVNLX1NUQVRFX0NBTkNFTExFRBAFEhgKFFRBU0tfU1RBVEVfU0NIRURVTEVEEAYqpgEKD1N0cmVhbUVycm9yS2luZBIhCh1TVFJFQU1fRVJST1JfS0lORF9VTlNQRUNJRklFRBAAEiQKIFNUUkVBTV9FUlJPUl9LSU5EX05PVF9DT05UUkFDVEVEEAESKgomU1RSRUFNX0VSUk9SX0tJTkRfREVTQ1JBTUJMSU5HX1JFRlVTRUQQAhIeChpTVFJFQU1fRVJST1JfS0lORF9JTlRFUk5BTBADMrYICg5DaGliaXR2U2VydmljZRJRCgxMaXN0Q2hhbm5lbHMSHy5jaGliaXR2LnYxLkxpc3RDaGFubmVsc1JlcXVlc3QaIC5jaGliaXR2LnYxLkxpc3RDaGFubmVsc1Jlc3BvbnNlElEKDExpc3RTZXJ2aWNlcxIfLmNoaWJpdHYudjEuTGlzdFNlcnZpY2VzUmVxdWVzdBogLmNoaWJpdHYudjEuTGlzdFNlcnZpY2VzUmVzcG9uc2USSwoKTGlzdEV2ZW50cxIdLmNoaWJpdHYudjEuTGlzdEV2ZW50c1JlcXVlc3QaHi5jaGliaXR2LnYxLkxpc3RFdmVudHNSZXNwb25zZRJUCg1SZWZyZXNoRXZlbnRzEiAuY2hpYml0di52MS5SZWZyZXNoRXZlbnRzUmVxdWVzdBohLmNoaWJpdHYudjEuUmVmcmVzaEV2ZW50c1Jlc3BvbnNlElEKDFNjYW5DaGFubmVscxIfLmNoaWJpdHYudjEuU2NhbkNoYW5uZWxzUmVxdWVzdBogLmNoaWJpdHYudjEuU2NhbkNoYW5uZWxzUmVzcG9uc2USVAoNR2V0U2NhblJlc3VsdBIgLmNoaWJpdHYudjEuR2V0U2NhblJlc3VsdFJlcXVlc3QaIS5jaGliaXR2LnYxLkdldFNjYW5SZXN1bHRSZXNwb25zZRJjChJCdWxrQ3JlYXRlQ2hhbm5lbHMSJS5jaGliaXR2LnYxLkJ1bGtDcmVhdGVDaGFubmVsc1JlcXVlc3QaJi5jaGliaXR2LnYxLkJ1bGtDcmVhdGVDaGFubmVsc1Jlc3BvbnNlEkgKCUxpc3RUYXNrcxIcLmNoaWJpdHYudjEuTGlzdFRhc2tzUmVxdWVzdBodLmNoaWJpdHYudjEuTGlzdFRhc2tzUmVzcG9uc2USRAoKV2F0Y2hUYXNrcxIdLmNoaWJpdHYudjEuV2F0Y2hUYXNrc1JlcXVlc3QaFS5jaGliaXR2LnYxLlRhc2tFdmVudDABEksKCkNhbmNlbFRhc2sSHS5jaGliaXR2LnYxLkNhbmNlbFRhc2tSZXF1ZXN0Gh4uY2hpYml0di52MS5DYW5jZWxUYXNrUmVzcG9uc2USSwoKRGVsZXRlVGFzaxIdLmNoaWJpdHYudjEuRGVsZXRlVGFza1JlcXVlc3QaHi5jaGliaXR2LnYxLkRlbGV0ZVRhc2tSZXNwb25zZRJgChFTY2hlZHVsZVJlY29yZGluZxIkLmNoaWJpdHYudjEuU2NoZWR1bGVSZWNvcmRpbmdSZXF1ZXN0GiUuY2hpYml0di52MS5TY2hlZHVsZVJlY29yZGluZ1Jlc3BvbnNlEkEKBlN0cmVhbRIZLmNoaWJpdHYudjEuU3RyZWFtUmVxdWVzdBoaLmNoaWJpdHYudjEuU3RyZWFtUmVzcG9uc2UwAWIGcHJvdG8z");
+  fileDesc("ChhjaGliaXR2L3YxL2NoaWJpdHYucHJvdG8SCmNoaWJpdHYudjEiFQoTTGlzdENoYW5uZWxzUmVxdWVzdCI9ChRMaXN0Q2hhbm5lbHNSZXNwb25zZRIlCghjaGFubmVscxgBIAMoCzITLmNoaWJpdHYudjEuQ2hhbm5lbCJYCgdDaGFubmVsEgoKAmlkGAEgASgNEgwKBG5hbWUYAiABKAkSMwoPZGVsaXZlcnlfc3lzdGVtGAMgASgOMhouY2hpYml0di52MS5EZWxpdmVyeVN5c3RlbSIVChNMaXN0U2VydmljZXNSZXF1ZXN0Ij0KFExpc3RTZXJ2aWNlc1Jlc3BvbnNlEiUKCHNlcnZpY2VzGAEgAygLMhMuY2hpYml0di52MS5TZXJ2aWNlIqMBCgdTZXJ2aWNlEiMKA2tleRgBIAEoCzIWLmNoaWJpdHYudjEuU2VydmljZUtleRIMCgRuYW1lGAIgASgJEhUKDXByb3ZpZGVyX25hbWUYAyABKAkSEgoKY2hhbm5lbF9pZBgEIAEoDRIQCghsb2dvX3VybBgFIAEoCRIoCg1jdXJyZW50X2V2ZW50GAYgASgLMhEuY2hpYml0di52MS5FdmVudCIzCgpTZXJ2aWNlS2V5EhEKCXN0cmVhbV9pZBgBIAEoDRISCgpzZXJ2aWNlX2lkGAIgASgNIoIBChFMaXN0RXZlbnRzUmVxdWVzdBIsCgdzZXJ2aWNlGAEgASgLMhYuY2hpYml0di52MS5TZXJ2aWNlS2V5SACIAQESMwoPZGVsaXZlcnlfc3lzdGVtGAIgASgOMhouY2hpYml0di52MS5EZWxpdmVyeVN5c3RlbUIKCghfc2VydmljZSI3ChJMaXN0RXZlbnRzUmVzcG9uc2USIQoGZXZlbnRzGAEgAygLMhEuY2hpYml0di52MS5FdmVudCIyChRSZWZyZXNoRXZlbnRzUmVxdWVzdBIaChJkd2VsbF90aW1lX3NlY29uZHMYASABKA0iNwoVUmVmcmVzaEV2ZW50c1Jlc3BvbnNlEh4KBHRhc2sYASABKAsyEC5jaGliaXR2LnYxLlRhc2sicQoTU2NhbkNoYW5uZWxzUmVxdWVzdBIzCg9kZWxpdmVyeV9zeXN0ZW0YASABKA4yGi5jaGliaXR2LnYxLkRlbGl2ZXJ5U3lzdGVtEgwKBGZhc3QYAiABKAgSFwoPdGltZW91dF9zZWNvbmRzGAMgASgNIjYKFFNjYW5DaGFubmVsc1Jlc3BvbnNlEh4KBHRhc2sYASABKAsyEC5jaGliaXR2LnYxLlRhc2siFgoUR2V0U2NhblJlc3VsdFJlcXVlc3QiQQoVR2V0U2NhblJlc3VsdFJlc3BvbnNlEigKCGNoYW5uZWxzGAEgAygLMhYuY2hpYml0di52MS5OZXdDaGFubmVsIkUKGUJ1bGtDcmVhdGVDaGFubmVsc1JlcXVlc3QSKAoIY2hhbm5lbHMYASADKAsyFi5jaGliaXR2LnYxLk5ld0NoYW5uZWwiQwoaQnVsa0NyZWF0ZUNoYW5uZWxzUmVzcG9uc2USJQoIY2hhbm5lbHMYASADKAsyEy5jaGliaXR2LnYxLkNoYW5uZWwiggIKCk5ld0NoYW5uZWwSDAoEbmFtZRgBIAEoCRIzCg9kZWxpdmVyeV9zeXN0ZW0YAiABKA4yGi5jaGliaXR2LnYxLkRlbGl2ZXJ5U3lzdGVtEhEKCWZyZXF1ZW5jeRgDIAEoDRIUCgxiYW5kd2lkdGhfaHoYBCABKA0SFgoJc3RyZWFtX2lkGAUgASgNSACIAQESIAoTdHJhbnNwb3J0X3N0cmVhbV9pZBgGIAEoDUgBiAEBEigKCHNlcnZpY2VzGAcgAygLMhYuY2hpYml0di52MS5OZXdTZXJ2aWNlQgwKCl9zdHJlYW1faWRCFgoUX3RyYW5zcG9ydF9zdHJlYW1faWQiPQoKTmV3U2VydmljZRIKCgJpZBgBIAEoDRIMCgRuYW1lGAIgASgJEhUKDXByb3ZpZGVyX25hbWUYAyABKAkiEgoQTGlzdFRhc2tzUmVxdWVzdCI0ChFMaXN0VGFza3NSZXNwb25zZRIfCgV0YXNrcxgBIAMoCzIQLmNoaWJpdHYudjEuVGFzayITChFXYXRjaFRhc2tzUmVxdWVzdCIkChFDYW5jZWxUYXNrUmVxdWVzdBIPCgd0YXNrX2lkGAEgASgEIjQKEkNhbmNlbFRhc2tSZXNwb25zZRIeCgR0YXNrGAEgASgLMhAuY2hpYml0di52MS5UYXNrIiQKEURlbGV0ZVRhc2tSZXF1ZXN0Eg8KB3Rhc2tfaWQYASABKAQiFAoSRGVsZXRlVGFza1Jlc3BvbnNlIk4KCVRhc2tFdmVudBIjCgdjaGFuZ2VkGAEgASgLMhAuY2hpYml0di52MS5UYXNrSAASEQoHZGVsZXRlZBgCIAEoBEgAQgkKB3BheWxvYWQiVQoYU2NoZWR1bGVSZWNvcmRpbmdSZXF1ZXN0EicKB3NlcnZpY2UYASABKAsyFi5jaGliaXR2LnYxLlNlcnZpY2VLZXkSEAoIZXZlbnRfaWQYAiABKA0iOwoZU2NoZWR1bGVSZWNvcmRpbmdSZXNwb25zZRIeCgR0YXNrGAEgASgLMhAuY2hpYml0di52MS5UYXNrIsIDCgRUYXNrEgoKAmlkGAEgASgEEiIKBGtpbmQYAiABKA4yFC5jaGliaXR2LnYxLlRhc2tLaW5kEiQKBXN0YXRlGAMgASgOMhUuY2hpYml0di52MS5UYXNrU3RhdGUSDQoFdGl0bGUYBCABKAkSDwoHbWVzc2FnZRgFIAEoCRIVCghwcm9ncmVzcxgGIAEoAkgAiAEBEhMKC2NhbmNlbGxhYmxlGAcgASgIEg0KBWVycm9yGAggASgJEi0KCmNyZWF0ZWRfYXQYCSABKAsyFC5jaGliaXR2LnYxLkRhdGVUaW1lSAGIAQESLwoMc2NoZWR1bGVkX2F0GAwgASgLMhQuY2hpYml0di52MS5EYXRlVGltZUgCiAEBEi0KCnN0YXJ0ZWRfYXQYCiABKAsyFC5jaGliaXR2LnYxLkRhdGVUaW1lSAOIAQESLgoLZmluaXNoZWRfYXQYCyABKAsyFC5jaGliaXR2LnYxLkRhdGVUaW1lSASIAQFCCwoJX3Byb2dyZXNzQg0KC19jcmVhdGVkX2F0Qg8KDV9zY2hlZHVsZWRfYXRCDQoLX3N0YXJ0ZWRfYXRCDgoMX2ZpbmlzaGVkX2F0IjEKEEV2ZW50RGVzY3JpcHRpb24SDAoEbmFtZRgBIAEoCRIPCgdjb250ZW50GAIgASgJIioKCERhdGVUaW1lEg8KB3NlY29uZHMYASABKAMSDQoFbmFub3MYAiABKA0i9gEKBUV2ZW50EgoKAmlkGAEgASgNEg0KBXRpdGxlGAIgASgJEjEKC2Rlc2NyaXB0aW9uGAMgAygLMhwuY2hpYml0di52MS5FdmVudERlc2NyaXB0aW9uEi0KCnN0YXJ0X3RpbWUYBCABKAsyFC5jaGliaXR2LnYxLkRhdGVUaW1lSACIAQESKwoIZW5kX3RpbWUYBSABKAsyFC5jaGliaXR2LnYxLkRhdGVUaW1lSAGIAQESJwoHc2VydmljZRgGIAEoCzIWLmNoaWJpdHYudjEuU2VydmljZUtleUINCgtfc3RhcnRfdGltZUILCglfZW5kX3RpbWUiOAoNU3RyZWFtUmVxdWVzdBInCgdzZXJ2aWNlGAEgASgLMhYuY2hpYml0di52MS5TZXJ2aWNlS2V5InUKC1N0cmVhbVN0YXRlEikKB3NlcnZpY2UYASABKAsyEy5jaGliaXR2LnYxLlNlcnZpY2VIAIgBARIlCgVldmVudBgCIAEoCzIRLmNoaWJpdHYudjEuRXZlbnRIAYgBAUIKCghfc2VydmljZUIICgZfZXZlbnQifwoOU3RyZWFtUmVzcG9uc2USKAoFc3RhdGUYASABKAsyFy5jaGliaXR2LnYxLlN0cmVhbVN0YXRlSAASDgoEZm1wNBgCIAEoDEgAEigKBWVycm9yGAMgASgLMhcuY2hpYml0di52MS5TdHJlYW1FcnJvckgAQgkKB3BheWxvYWQiSQoLU3RyZWFtRXJyb3ISKQoEa2luZBgBIAEoDjIbLmNoaWJpdHYudjEuU3RyZWFtRXJyb3JLaW5kEg8KB21lc3NhZ2UYAiABKAkqhgEKDkRlbGl2ZXJ5U3lzdGVtEh8KG0RFTElWRVJZX1NZU1RFTV9VTlNQRUNJRklFRBAAEhoKFkRFTElWRVJZX1NZU1RFTV9JU0RCX1QQARIaChZERUxJVkVSWV9TWVNURU1fSVNEQl9TEAISGwoXREVMSVZFUllfU1lTVEVNX0lTREJfUzMQAyp2CghUYXNrS2luZBIZChVUQVNLX0tJTkRfVU5TUEVDSUZJRUQQABIcChhUQVNLX0tJTkRfUkVGUkVTSF9FVkVOVFMQARIUChBUQVNLX0tJTkRfUkVDT1JEEAISGwoXVEFTS19LSU5EX1NDQU5fQ0hBTk5FTFMQAyq8AQoJVGFza1N0YXRlEhoKFlRBU0tfU1RBVEVfVU5TUEVDSUZJRUQQABIWChJUQVNLX1NUQVRFX1BFTkRJTkcQARIWChJUQVNLX1NUQVRFX1JVTk5JTkcQAhIYChRUQVNLX1NUQVRFX1NVQ0NFRURFRBADEhUKEVRBU0tfU1RBVEVfRkFJTEVEEAQSGAoUVEFTS19TVEFURV9DQU5DRUxMRUQQBRIYChRUQVNLX1NUQVRFX1NDSEVEVUxFRBAGKqYBCg9TdHJlYW1FcnJvcktpbmQSIQodU1RSRUFNX0VSUk9SX0tJTkRfVU5TUEVDSUZJRUQQABIkCiBTVFJFQU1fRVJST1JfS0lORF9OT1RfQ09OVFJBQ1RFRBABEioKJlNUUkVBTV9FUlJPUl9LSU5EX0RFU0NSQU1CTElOR19SRUZVU0VEEAISHgoaU1RSRUFNX0VSUk9SX0tJTkRfSU5URVJOQUwQAzK2CAoOQ2hpYml0dlNlcnZpY2USUQoMTGlzdENoYW5uZWxzEh8uY2hpYml0di52MS5MaXN0Q2hhbm5lbHNSZXF1ZXN0GiAuY2hpYml0di52MS5MaXN0Q2hhbm5lbHNSZXNwb25zZRJRCgxMaXN0U2VydmljZXMSHy5jaGliaXR2LnYxLkxpc3RTZXJ2aWNlc1JlcXVlc3QaIC5jaGliaXR2LnYxLkxpc3RTZXJ2aWNlc1Jlc3BvbnNlEksKCkxpc3RFdmVudHMSHS5jaGliaXR2LnYxLkxpc3RFdmVudHNSZXF1ZXN0Gh4uY2hpYml0di52MS5MaXN0RXZlbnRzUmVzcG9uc2USVAoNUmVmcmVzaEV2ZW50cxIgLmNoaWJpdHYudjEuUmVmcmVzaEV2ZW50c1JlcXVlc3QaIS5jaGliaXR2LnYxLlJlZnJlc2hFdmVudHNSZXNwb25zZRJRCgxTY2FuQ2hhbm5lbHMSHy5jaGliaXR2LnYxLlNjYW5DaGFubmVsc1JlcXVlc3QaIC5jaGliaXR2LnYxLlNjYW5DaGFubmVsc1Jlc3BvbnNlElQKDUdldFNjYW5SZXN1bHQSIC5jaGliaXR2LnYxLkdldFNjYW5SZXN1bHRSZXF1ZXN0GiEuY2hpYml0di52MS5HZXRTY2FuUmVzdWx0UmVzcG9uc2USYwoSQnVsa0NyZWF0ZUNoYW5uZWxzEiUuY2hpYml0di52MS5CdWxrQ3JlYXRlQ2hhbm5lbHNSZXF1ZXN0GiYuY2hpYml0di52MS5CdWxrQ3JlYXRlQ2hhbm5lbHNSZXNwb25zZRJICglMaXN0VGFza3MSHC5jaGliaXR2LnYxLkxpc3RUYXNrc1JlcXVlc3QaHS5jaGliaXR2LnYxLkxpc3RUYXNrc1Jlc3BvbnNlEkQKCldhdGNoVGFza3MSHS5jaGliaXR2LnYxLldhdGNoVGFza3NSZXF1ZXN0GhUuY2hpYml0di52MS5UYXNrRXZlbnQwARJLCgpDYW5jZWxUYXNrEh0uY2hpYml0di52MS5DYW5jZWxUYXNrUmVxdWVzdBoeLmNoaWJpdHYudjEuQ2FuY2VsVGFza1Jlc3BvbnNlEksKCkRlbGV0ZVRhc2sSHS5jaGliaXR2LnYxLkRlbGV0ZVRhc2tSZXF1ZXN0Gh4uY2hpYml0di52MS5EZWxldGVUYXNrUmVzcG9uc2USYAoRU2NoZWR1bGVSZWNvcmRpbmcSJC5jaGliaXR2LnYxLlNjaGVkdWxlUmVjb3JkaW5nUmVxdWVzdBolLmNoaWJpdHYudjEuU2NoZWR1bGVSZWNvcmRpbmdSZXNwb25zZRJBCgZTdHJlYW0SGS5jaGliaXR2LnYxLlN0cmVhbVJlcXVlc3QaGi5jaGliaXR2LnYxLlN0cmVhbVJlc3BvbnNlMAFiBnByb3RvMw");
 
 /**
  * @generated from message chibitv.v1.ListChannelsRequest
@@ -396,35 +396,39 @@ export type NewChannel = Message<"chibitv.v1.NewChannel"> & {
   deliverySystem: DeliverySystem;
 
   /**
-   * How the channel is tuned to.
+   * Hz for the terrestrial channels, kHz for the satellite ones.
    *
-   * @generated from oneof chibitv.v1.NewChannel.tuning
+   * @generated from field: uint32 frequency = 3;
    */
-  tuning: {
-    /**
-     * @generated from field: chibitv.v1.TuningParameters parameters = 3;
-     */
-    value: TuningParameters;
-    case: "parameters";
-  } | {
-    /**
-     * @generated from field: chibitv.v1.BonDriverChannel bondriver = 4;
-     */
-    value: BonDriverChannel;
-    case: "bondriver";
-  } | { case: undefined; value?: undefined };
+  frequency: number;
+
+  /**
+   * Terrestrial only. Zero is the 6 MHz a terrestrial channel is.
+   *
+   * @generated from field: uint32 bandwidth_hz = 4;
+   */
+  bandwidthHz: number;
+
+  /**
+   * Satellite only: the stream the channel is picked out of its transponder
+   * by, which is the transport stream id on ISDB-S and the TLV stream id on
+   * ISDB-S3.
+   *
+   * @generated from field: optional uint32 stream_id = 5;
+   */
+  streamId?: number | undefined;
 
   /**
    * The stream the services of the channel are named under, as a scan read it.
    *
-   * @generated from field: optional uint32 transport_stream_id = 5;
+   * @generated from field: optional uint32 transport_stream_id = 6;
    */
   transportStreamId?: number | undefined;
 
   /**
    * The service catalog of the channel, which the server wants before tuning.
    *
-   * @generated from field: repeated chibitv.v1.NewService services = 6;
+   * @generated from field: repeated chibitv.v1.NewService services = 7;
    */
   services: NewService[];
 };
@@ -435,68 +439,6 @@ export type NewChannel = Message<"chibitv.v1.NewChannel"> & {
  */
 export const NewChannelSchema: GenMessage<NewChannel> = /*@__PURE__*/
   messageDesc(file_chibitv_v1_chibitv, 17);
-
-/**
- * TuningParameters is what a tuner is given to reach a channel.
- *
- * @generated from message chibitv.v1.TuningParameters
- */
-export type TuningParameters = Message<"chibitv.v1.TuningParameters"> & {
-  /**
-   * Hz for the terrestrial channels, kHz for the satellite ones.
-   *
-   * @generated from field: uint32 frequency = 1;
-   */
-  frequency: number;
-
-  /**
-   * Terrestrial only. Zero is the 6 MHz a terrestrial channel is.
-   *
-   * @generated from field: uint32 bandwidth_hz = 2;
-   */
-  bandwidthHz: number;
-
-  /**
-   * Satellite only: the stream the channel is picked out of its transponder
-   * by, which is the transport stream id on ISDB-S and the TLV stream id on
-   * ISDB-S3.
-   *
-   * @generated from field: optional uint32 stream_id = 3;
-   */
-  streamId?: number | undefined;
-};
-
-/**
- * Describes the message chibitv.v1.TuningParameters.
- * Use `create(TuningParametersSchema)` to create a new message.
- */
-export const TuningParametersSchema: GenMessage<TuningParameters> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 18);
-
-/**
- * BonDriverChannel names a channel a BonDriver enumerates, which is how one is
- * reached on Windows: the driver holds the tuning parameters itself.
- *
- * @generated from message chibitv.v1.BonDriverChannel
- */
-export type BonDriverChannel = Message<"chibitv.v1.BonDriverChannel"> & {
-  /**
-   * @generated from field: uint32 space = 1;
-   */
-  space: number;
-
-  /**
-   * @generated from field: uint32 channel = 2;
-   */
-  channel: number;
-};
-
-/**
- * Describes the message chibitv.v1.BonDriverChannel.
- * Use `create(BonDriverChannelSchema)` to create a new message.
- */
-export const BonDriverChannelSchema: GenMessage<BonDriverChannel> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 19);
 
 /**
  * NewService is one service of the catalog of a channel.
@@ -525,7 +467,7 @@ export type NewService = Message<"chibitv.v1.NewService"> & {
  * Use `create(NewServiceSchema)` to create a new message.
  */
 export const NewServiceSchema: GenMessage<NewService> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 20);
+  messageDesc(file_chibitv_v1_chibitv, 18);
 
 /**
  * @generated from message chibitv.v1.ListTasksRequest
@@ -538,7 +480,7 @@ export type ListTasksRequest = Message<"chibitv.v1.ListTasksRequest"> & {
  * Use `create(ListTasksRequestSchema)` to create a new message.
  */
 export const ListTasksRequestSchema: GenMessage<ListTasksRequest> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 21);
+  messageDesc(file_chibitv_v1_chibitv, 19);
 
 /**
  * @generated from message chibitv.v1.ListTasksResponse
@@ -555,7 +497,7 @@ export type ListTasksResponse = Message<"chibitv.v1.ListTasksResponse"> & {
  * Use `create(ListTasksResponseSchema)` to create a new message.
  */
 export const ListTasksResponseSchema: GenMessage<ListTasksResponse> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 22);
+  messageDesc(file_chibitv_v1_chibitv, 20);
 
 /**
  * @generated from message chibitv.v1.WatchTasksRequest
@@ -568,7 +510,7 @@ export type WatchTasksRequest = Message<"chibitv.v1.WatchTasksRequest"> & {
  * Use `create(WatchTasksRequestSchema)` to create a new message.
  */
 export const WatchTasksRequestSchema: GenMessage<WatchTasksRequest> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 23);
+  messageDesc(file_chibitv_v1_chibitv, 21);
 
 /**
  * @generated from message chibitv.v1.CancelTaskRequest
@@ -585,7 +527,7 @@ export type CancelTaskRequest = Message<"chibitv.v1.CancelTaskRequest"> & {
  * Use `create(CancelTaskRequestSchema)` to create a new message.
  */
 export const CancelTaskRequestSchema: GenMessage<CancelTaskRequest> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 24);
+  messageDesc(file_chibitv_v1_chibitv, 22);
 
 /**
  * @generated from message chibitv.v1.CancelTaskResponse
@@ -604,7 +546,7 @@ export type CancelTaskResponse = Message<"chibitv.v1.CancelTaskResponse"> & {
  * Use `create(CancelTaskResponseSchema)` to create a new message.
  */
 export const CancelTaskResponseSchema: GenMessage<CancelTaskResponse> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 25);
+  messageDesc(file_chibitv_v1_chibitv, 23);
 
 /**
  * @generated from message chibitv.v1.DeleteTaskRequest
@@ -621,7 +563,7 @@ export type DeleteTaskRequest = Message<"chibitv.v1.DeleteTaskRequest"> & {
  * Use `create(DeleteTaskRequestSchema)` to create a new message.
  */
 export const DeleteTaskRequestSchema: GenMessage<DeleteTaskRequest> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 26);
+  messageDesc(file_chibitv_v1_chibitv, 24);
 
 /**
  * @generated from message chibitv.v1.DeleteTaskResponse
@@ -634,7 +576,7 @@ export type DeleteTaskResponse = Message<"chibitv.v1.DeleteTaskResponse"> & {
  * Use `create(DeleteTaskResponseSchema)` to create a new message.
  */
 export const DeleteTaskResponseSchema: GenMessage<DeleteTaskResponse> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 27);
+  messageDesc(file_chibitv_v1_chibitv, 25);
 
 /**
  * TaskEvent is what has happened to one task.
@@ -669,7 +611,7 @@ export type TaskEvent = Message<"chibitv.v1.TaskEvent"> & {
  * Use `create(TaskEventSchema)` to create a new message.
  */
 export const TaskEventSchema: GenMessage<TaskEvent> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 28);
+  messageDesc(file_chibitv_v1_chibitv, 26);
 
 /**
  * @generated from message chibitv.v1.ScheduleRecordingRequest
@@ -691,7 +633,7 @@ export type ScheduleRecordingRequest = Message<"chibitv.v1.ScheduleRecordingRequ
  * Use `create(ScheduleRecordingRequestSchema)` to create a new message.
  */
 export const ScheduleRecordingRequestSchema: GenMessage<ScheduleRecordingRequest> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 29);
+  messageDesc(file_chibitv_v1_chibitv, 27);
 
 /**
  * @generated from message chibitv.v1.ScheduleRecordingResponse
@@ -710,7 +652,7 @@ export type ScheduleRecordingResponse = Message<"chibitv.v1.ScheduleRecordingRes
  * Use `create(ScheduleRecordingResponseSchema)` to create a new message.
  */
 export const ScheduleRecordingResponseSchema: GenMessage<ScheduleRecordingResponse> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 30);
+  messageDesc(file_chibitv_v1_chibitv, 28);
 
 /**
  * Task is one unit of work running in the background of the server.
@@ -796,7 +738,7 @@ export type Task = Message<"chibitv.v1.Task"> & {
  * Use `create(TaskSchema)` to create a new message.
  */
 export const TaskSchema: GenMessage<Task> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 31);
+  messageDesc(file_chibitv_v1_chibitv, 29);
 
 /**
  * @generated from message chibitv.v1.EventDescription
@@ -818,7 +760,7 @@ export type EventDescription = Message<"chibitv.v1.EventDescription"> & {
  * Use `create(EventDescriptionSchema)` to create a new message.
  */
 export const EventDescriptionSchema: GenMessage<EventDescription> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 32);
+  messageDesc(file_chibitv_v1_chibitv, 30);
 
 /**
  * @generated from message chibitv.v1.DateTime
@@ -840,7 +782,7 @@ export type DateTime = Message<"chibitv.v1.DateTime"> & {
  * Use `create(DateTimeSchema)` to create a new message.
  */
 export const DateTimeSchema: GenMessage<DateTime> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 33);
+  messageDesc(file_chibitv_v1_chibitv, 31);
 
 /**
  * @generated from message chibitv.v1.Event
@@ -882,7 +824,7 @@ export type Event = Message<"chibitv.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 34);
+  messageDesc(file_chibitv_v1_chibitv, 32);
 
 /**
  * @generated from message chibitv.v1.StreamRequest
@@ -901,7 +843,7 @@ export type StreamRequest = Message<"chibitv.v1.StreamRequest"> & {
  * Use `create(StreamRequestSchema)` to create a new message.
  */
 export const StreamRequestSchema: GenMessage<StreamRequest> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 35);
+  messageDesc(file_chibitv_v1_chibitv, 33);
 
 /**
  * @generated from message chibitv.v1.StreamState
@@ -923,7 +865,7 @@ export type StreamState = Message<"chibitv.v1.StreamState"> & {
  * Use `create(StreamStateSchema)` to create a new message.
  */
 export const StreamStateSchema: GenMessage<StreamState> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 36);
+  messageDesc(file_chibitv_v1_chibitv, 34);
 
 /**
  * @generated from message chibitv.v1.StreamResponse
@@ -961,7 +903,7 @@ export type StreamResponse = Message<"chibitv.v1.StreamResponse"> & {
  * Use `create(StreamResponseSchema)` to create a new message.
  */
 export const StreamResponseSchema: GenMessage<StreamResponse> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 37);
+  messageDesc(file_chibitv_v1_chibitv, 35);
 
 /**
  * StreamError is what stopped a stream for good.
@@ -988,7 +930,7 @@ export type StreamError = Message<"chibitv.v1.StreamError"> & {
  * Use `create(StreamErrorSchema)` to create a new message.
  */
 export const StreamErrorSchema: GenMessage<StreamError> = /*@__PURE__*/
-  messageDesc(file_chibitv_v1_chibitv, 38);
+  messageDesc(file_chibitv_v1_chibitv, 36);
 
 /**
  * DeliverySystem is the broadcast wave a channel is carried on.

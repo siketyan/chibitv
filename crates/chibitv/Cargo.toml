@@ -28,9 +28,10 @@ serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 shiguredo_mp4 = "2026.5.0"
 sqlx = { version = "0.9.0", default-features = false, features = ["macros", "migrate", "runtime-tokio", "sqlite-bundled"] }
-tokio = { version = "1.52.3", features = ["macros", "net", "rt-multi-thread", "sync"] }
+tokio = { version = "1.52.3", features = ["io-util", "macros", "net", "rt-multi-thread", "sync"] }
 tokio-stream = { version = "0.1.18", features = ["sync"] }
 toml = "1.1.2"
+tunelith = "0.1.0"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
@@ -42,28 +43,7 @@ protoc-bin-vendored = "3"
 tempfile = "3.24.0"
 tower = { version = "0.5.3", features = ["util"] }
 
-[target.'cfg(windows)'.dependencies]
-chibitv_bon = { path = "../chibitv_bon", optional = true }
-windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Pipes"], optional = true }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-dvbv5-sys = { version = "0.2.1", optional = true }
-libc = { version = "0.2.186", optional = true }
-
 [features]
-default = ["dvb", "bon", "px4"]
-dvb = ["dep:dvbv5-sys", "dep:libc"]
-
-# px4_drv tuner support, the driver of the PLEX and Digibest tuners: its
-# character devices on Linux, and DriverHost_PX4 over its named pipes on
-# Windows. There is no system library to install for it on either.
-px4 = ["dep:libc", "dep:windows-sys"]
-
-# BonDriver tuner support. Both this and `dvb` are on by default and each only
-# takes effect on the platform it exists for, so a plain build is right either
-# way round.
-bon = ["dep:chibitv_bon"]
-
 # Embeds the GUI built into `gui/dist` in the binary and serves it from the
 # `serve` command. Development uses the rsbuild dev server instead, so this is
 # only enabled for deployment builds.

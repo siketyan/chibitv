@@ -152,7 +152,7 @@ function ScanResult({
       <ul className="flex max-h-48 flex-col gap-1 overflow-auto">
         {channels.map((channel) => (
           <li
-            key={`${channel.deliverySystem}-${channelKey(channel)}`}
+            key={`${channel.deliverySystem}-${channel.frequency}-${channel.streamId ?? 0}`}
             className="rounded-lg border border-white/10 bg-white/5 px-3 py-2"
           >
             <p className="truncate text-sm font-medium">{channel.name}</p>
@@ -164,16 +164,4 @@ function ScanResult({
       </ul>
     </div>
   );
-}
-
-/** What tells a channel a scan found apart from the others it found. */
-function channelKey(channel: NewChannel): string {
-  switch (channel.tuning.case) {
-    case "parameters":
-      return `${channel.tuning.value.frequency}-${channel.tuning.value.streamId ?? 0}`;
-    case "bondriver":
-      return `${channel.tuning.value.space}-${channel.tuning.value.channel}`;
-    default:
-      return channel.name;
-  }
 }

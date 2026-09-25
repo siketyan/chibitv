@@ -11,7 +11,7 @@ use tracing::info;
 
 use crate::channel::Channel;
 use crate::config::Config;
-use crate::tuner::{TunerLease, Tuners};
+use crate::tuner::{TunerInput, Tuners};
 
 #[derive(Clone, Debug, Parser)]
 pub(super) enum Command {
@@ -51,15 +51,9 @@ impl Command {
     }
 }
 
-/// Tunes a tuner that receives the channel, for a command that has the tuners
-/// to itself.
-fn tune(config: &Config, channel: &Channel) -> anyhow::Result<TunerLease> {
-    let tuner =
-        Tuners::from_config(&config.tuners)?.try_acquire(channel.inner.delivery_system())?;
-
+/// Tunes a tuner that receives the channel, for a command of its own.
+fn tune(config: &Config, channel: &Channel) -> anyhow::Result<TunerInput> {
     info!("Tuning to the channel: {:?}", channel);
 
-    tuner.tune(channel.clone())?;
-
-    Ok(tuner)
+    Ok(Tuners::new(&config.tunelith)?.tune(channel)?)
 }

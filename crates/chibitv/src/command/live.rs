@@ -25,11 +25,10 @@ pub struct Options {
 pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
     let store = crate::store::open(&config.database.url).await?;
     let channel = channel::find_channel(&*store, options.channel).await?;
-    let tuner = super::tune(config, &channel)?;
+    let input = super::tune(config, &channel)?;
 
     info!("Starting live stream. Press Ctrl+C to stop.");
 
-    let input = tuner.open()?;
     let output = stdout();
     let writer = TsPacketWriter::new(BufWriter::new(output));
     let mux = M2tsMuxer::new(writer);
@@ -53,15 +52,12 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     let service_information = ServiceInformationProcessor::new(None, Some(signal_tx));
     match channel.inner {
-        ChannelInner::IsdbS3 { .. } | ChannelInner::BonIsdbS3 { .. } => {
+        ChannelInner::IsdbS3 { .. } => {
             let descrambler = Descrambler::init(cas, config.cas.master_key.into(), true)?;
             let demux = MmtDemuxer::new(BufReader::new(input), descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)
         }
-        ChannelInner::IsdbT { .. }
-        | ChannelInner::IsdbS { .. }
-        | ChannelInner::BonIsdbT { .. }
-        | ChannelInner::BonIsdbS { .. } => {
+        ChannelInner::IsdbT { .. } | ChannelInner::IsdbS { .. } => {
             let descrambler = B25Descrambler::init(cas, true)?;
             let demux = M2tsDemuxer::new(input, descrambler);
             run_live_remuxer(Remuxer::new(demux, mux)?, service_information)

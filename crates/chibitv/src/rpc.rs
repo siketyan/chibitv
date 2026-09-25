@@ -620,15 +620,11 @@ const TERRESTRIAL_BANDWIDTH_HZ: u32 = 6_000_000;
 
 /// A channel a scan found, as the message that keeping it hands back.
 fn new_channel_message(channel: &store::NewChannel) -> NewChannel {
-    let tuning = match channel.inner {
+    let (frequency, bandwidth_hz, stream_id) = match channel.inner {
         ChannelInner::IsdbT {
             frequency,
             bandwidth_hz,
-        } => new_channel::Tuning::Parameters(Box::new(TuningParameters {
-            frequency,
-            bandwidth_hz,
-            ..Default::default()
-        })),
+        } => (frequency, bandwidth_hz, None),
         ChannelInner::IsdbS {
             frequency,
             stream_id,
@@ -636,27 +632,15 @@ fn new_channel_message(channel: &store::NewChannel) -> NewChannel {
         | ChannelInner::IsdbS3 {
             frequency,
             stream_id,
-        } => new_channel::Tuning::Parameters(Box::new(TuningParameters {
-            frequency,
-            stream_id: Some(stream_id),
-            ..Default::default()
-        })),
-        // A scan finds no BonDriver channel: the driver enumerates those.
-        ChannelInner::BonIsdbT { space, channel }
-        | ChannelInner::BonIsdbS { space, channel }
-        | ChannelInner::BonIsdbS3 { space, channel } => {
-            new_channel::Tuning::Bondriver(Box::new(BonDriverChannel {
-                space,
-                channel,
-                ..Default::default()
-            }))
-        }
+        } => (frequency, 0, Some(stream_id)),
     };
 
     NewChannel {
         name: channel.name.clone(),
         delivery_system: delivery_system(&channel.inner).into(),
-        tuning: Some(tuning),
+        frequency,
+        bandwidth_hz,
+        stream_id,
         transport_stream_id: channel.transport_stream_id.map(u32::from),
         services: channel
             .services
@@ -683,56 +667,27 @@ fn new_channel(channel: &NewChannelView<'_>) -> Result<store::NewChannel, Connec
             "delivery_system is not one this server knows",
         ));
     };
-    let inner = match (delivery_system, &channel.tuning) {
-        (_, None) => {
-            return Err(ConnectError::invalid_argument(
-                "a channel needs the tuning it is reached with",
-            ));
-        }
-        (DeliverySystem::Unspecified, _) => {
+    let inner = match delivery_system {
+        DeliverySystem::Unspecified => {
             return Err(ConnectError::invalid_argument(
                 "a channel needs the broadcast it is carried on",
             ));
         }
-        (DeliverySystem::IsdbT, Some(new_channel::TuningView::Parameters(parameters))) => {
-            ChannelInner::IsdbT {
-                frequency: frequency_of(parameters)?,
-                bandwidth_hz: match parameters.bandwidth_hz {
-                    0 => TERRESTRIAL_BANDWIDTH_HZ,
-                    bandwidth_hz => bandwidth_hz,
-                },
-            }
-        }
-        (DeliverySystem::IsdbS, Some(new_channel::TuningView::Parameters(parameters))) => {
-            ChannelInner::IsdbS {
-                frequency: frequency_of(parameters)?,
-                stream_id: stream_id_of(parameters)?,
-            }
-        }
-        (DeliverySystem::IsdbS3, Some(new_channel::TuningView::Parameters(parameters))) => {
-            ChannelInner::IsdbS3 {
-                frequency: frequency_of(parameters)?,
-                stream_id: stream_id_of(parameters)?,
-            }
-        }
-        (DeliverySystem::IsdbT, Some(new_channel::TuningView::Bondriver(bondriver))) => {
-            ChannelInner::BonIsdbT {
-                space: bondriver.space,
-                channel: bondriver.channel,
-            }
-        }
-        (DeliverySystem::IsdbS, Some(new_channel::TuningView::Bondriver(bondriver))) => {
-            ChannelInner::BonIsdbS {
-                space: bondriver.space,
-                channel: bondriver.channel,
-            }
-        }
-        (DeliverySystem::IsdbS3, Some(new_channel::TuningView::Bondriver(bondriver))) => {
-            ChannelInner::BonIsdbS3 {
-                space: bondriver.space,
-                channel: bondriver.channel,
-            }
-        }
+        DeliverySystem::IsdbT => ChannelInner::IsdbT {
+            frequency: frequency_of(channel)?,
+            bandwidth_hz: match channel.bandwidth_hz {
+                0 => TERRESTRIAL_BANDWIDTH_HZ,
+                bandwidth_hz => bandwidth_hz,
+            },
+        },
+        DeliverySystem::IsdbS => ChannelInner::IsdbS {
+            frequency: frequency_of(channel)?,
+            stream_id: stream_id_of(channel)?,
+        },
+        DeliverySystem::IsdbS3 => ChannelInner::IsdbS3 {
+            frequency: frequency_of(channel)?,
+            stream_id: stream_id_of(channel)?,
+        },
     };
 
     Ok(store::NewChannel {
@@ -762,20 +717,20 @@ fn new_channel(channel: &NewChannelView<'_>) -> Result<store::NewChannel, Connec
     })
 }
 
-/// The frequency of a tuning, which is no tuning at all without one.
-fn frequency_of(parameters: &TuningParametersView<'_>) -> Result<u32, ConnectError> {
-    match parameters.frequency {
+/// The frequency of a channel, which cannot be tuned to without one.
+fn frequency_of(channel: &NewChannelView<'_>) -> Result<u32, ConnectError> {
+    match channel.frequency {
         0 => Err(ConnectError::invalid_argument(
-            "a tuning needs the frequency to tune to",
+            "a channel needs the frequency to tune to",
         )),
         frequency => Ok(frequency),
     }
 }
 
 /// The stream a satellite channel is picked out of its transponder by, which
-/// the tuning of one has to name.
-fn stream_id_of(parameters: &TuningParametersView<'_>) -> Result<u32, ConnectError> {
-    parameters.stream_id.ok_or_else(|| {
+/// one has to name.
+fn stream_id_of(channel: &NewChannelView<'_>) -> Result<u32, ConnectError> {
+    channel.stream_id.ok_or_else(|| {
         ConnectError::invalid_argument("a satellite channel needs the stream it is picked by")
     })
 }
@@ -990,27 +945,6 @@ mod tests {
             of(ChannelInner::IsdbS3 {
                 frequency: 1_318_000,
                 stream_id: 0x40F1,
-            }),
-            DeliverySystem::IsdbS3,
-        );
-        assert_eq!(
-            of(ChannelInner::BonIsdbT {
-                space: 0,
-                channel: 0,
-            }),
-            DeliverySystem::IsdbT,
-        );
-        assert_eq!(
-            of(ChannelInner::BonIsdbS {
-                space: 0,
-                channel: 1,
-            }),
-            DeliverySystem::IsdbS,
-        );
-        assert_eq!(
-            of(ChannelInner::BonIsdbS3 {
-                space: 0,
-                channel: 2,
             }),
             DeliverySystem::IsdbS3,
         );

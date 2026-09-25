@@ -8,36 +8,28 @@
 use std::fmt::{Display, Formatter, Write as _};
 
 use anyhow::bail;
-use serde::Deserialize;
 
 use crate::store::{Store, StoredChannel};
 
 /// The broadcast a channel is carried on.
 ///
 /// This is what decides how the stream is demultiplexed and which descrambler
-/// reads it, so a channel a BonDriver tunes still names it. It is also what a
-/// tuner is picked for, as not every tuner receives every broadcast.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd)]
+/// reads it. It is also what a tuner is picked for, as not every tuner
+/// receives every broadcast.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum DeliverySystem {
     /// Terrestrial digital broadcasting, which carries MPEG-2 TS.
-    #[serde(rename = "ISDB-T")]
     IsdbT,
 
     /// Satellite 2K (BS/CS) broadcasting, which carries MPEG-2 TS.
-    #[serde(rename = "ISDB-S")]
     IsdbS,
 
     /// Satellite 4K (BS/CS) broadcasting, which carries MMT/TLV.
-    #[serde(rename = "ISDB-S3")]
     IsdbS3,
 }
 
 impl DeliverySystem {
-    /// Every broadcast there is.
-    #[cfg(test)]
-    pub const ALL: [Self; 3] = [Self::IsdbT, Self::IsdbS, Self::IsdbS3];
-
-    /// The name the configuration and the database call it by.
+    /// The name the database calls it by.
     pub fn as_str(self) -> &'static str {
         match self {
             Self::IsdbT => "ISDB-T",
@@ -67,69 +59,33 @@ impl Display for DeliverySystem {
 
 /// How a channel is tuned to, and what it delivers once tuned.
 ///
-/// The `Bon*` variants name a channel a BonDriver enumerates rather than
-/// tuning parameters, because a BonDriver holds those itself. They still say
-/// which delivery system it is, since that is what decides how the stream is
-/// demultiplexed: ISDB-T and ISDB-S carry MPEG-2 TS while ISDB-S3, the 4K
-/// satellite system, carries MMT/TLV.
+/// The frequency of a satellite channel is the one the dish hands the tuner,
+/// in kHz, and that of a terrestrial one is in Hz.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ChannelInner {
-    // Only the DVB and px4_drv tuners read the tuning parameters; a build
-    // without them keeps them purely to describe the channel.
-    #[cfg_attr(
-        not(any(
-            all(any(feature = "dvb", feature = "px4"), target_os = "linux"),
-            all(feature = "px4", windows),
-        )),
-        allow(dead_code)
-    )]
     IsdbT { frequency: u32, bandwidth_hz: u32 },
-    #[cfg_attr(
-        not(any(
-            all(any(feature = "dvb", feature = "px4"), target_os = "linux"),
-            all(feature = "px4", windows),
-        )),
-        allow(dead_code)
-    )]
     IsdbS { frequency: u32, stream_id: u32 },
-    #[cfg_attr(
-        not(any(
-            all(any(feature = "dvb", feature = "px4"), target_os = "linux"),
-            all(feature = "px4", windows),
-        )),
-        allow(dead_code)
-    )]
     IsdbS3 { frequency: u32, stream_id: u32 },
-
-    #[cfg_attr(not(all(feature = "bon", windows)), allow(dead_code))]
-    BonIsdbT { space: u32, channel: u32 },
-    #[cfg_attr(not(all(feature = "bon", windows)), allow(dead_code))]
-    BonIsdbS { space: u32, channel: u32 },
-    #[cfg_attr(not(all(feature = "bon", windows)), allow(dead_code))]
-    BonIsdbS3 { space: u32, channel: u32 },
 }
 
 impl ChannelInner {
     /// The broadcast the channel is carried on.
     pub fn delivery_system(&self) -> DeliverySystem {
         match self {
-            Self::IsdbT { .. } | Self::BonIsdbT { .. } => DeliverySystem::IsdbT,
-            Self::IsdbS { .. } | Self::BonIsdbS { .. } => DeliverySystem::IsdbS,
-            Self::IsdbS3 { .. } | Self::BonIsdbS3 { .. } => DeliverySystem::IsdbS3,
+            Self::IsdbT { .. } => DeliverySystem::IsdbT,
+            Self::IsdbS { .. } => DeliverySystem::IsdbS,
+            Self::IsdbS3 { .. } => DeliverySystem::IsdbS3,
         }
     }
 
     /// The stream the tuning picks out of a transponder, which only a
-    /// satellite channel tuned by its parameters names.
+    /// satellite channel names.
     pub fn stream_id(&self) -> Option<u16> {
         match *self {
             Self::IsdbS { stream_id, .. } | Self::IsdbS3 { stream_id, .. } => {
                 u16::try_from(stream_id).ok()
             }
-            Self::IsdbT { .. }
-            | Self::BonIsdbT { .. }
-            | Self::BonIsdbS { .. }
-            | Self::BonIsdbS3 { .. } => None,
+            Self::IsdbT { .. } => None,
         }
     }
 }
@@ -201,11 +157,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn names_the_delivery_system_of_a_bondriver_channel() {
+    fn names_the_delivery_system_of_a_channel() {
         assert_eq!(
-            ChannelInner::BonIsdbS3 {
-                space: 2,
-                channel: 0,
+            ChannelInner::IsdbS3 {
+                frequency: 1_318_000,
+                stream_id: 0xB110,
             }
             .delivery_system(),
             DeliverySystem::IsdbS3,
@@ -216,21 +172,6 @@ mod tests {
             DeliverySystem::IsdbS,
         );
         assert!(DeliverySystem::parse("ISDB-C").is_err());
-    }
-
-    #[test]
-    fn reads_a_delivery_system_from_the_configuration_by_the_same_name() {
-        for system in DeliverySystem::ALL {
-            let configured: DeliverySystem =
-                toml::from_str::<toml::Value>(&format!("system = \"{system}\""))
-                    .unwrap()
-                    .get("system")
-                    .cloned()
-                    .unwrap()
-                    .try_into()
-                    .unwrap();
-            assert_eq!(configured, system);
-        }
     }
 
     #[test]

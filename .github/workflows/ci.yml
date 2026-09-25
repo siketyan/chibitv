@@ -45,7 +45,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libdvbv5-dev libpcsclite-dev
+          sudo apt-get install --no-install-recommends -y libpcsclite-dev
       - name: Install Rust
         run: rustup toolchain install --no-self-update
       - name: Cache dependencies
@@ -112,7 +112,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --no-install-recommends -y libdvbv5-dev libpcsclite-dev
+          sudo apt-get install --no-install-recommends -y libpcsclite-dev
       - name: Install Rust
         run: rustup toolchain install --no-self-update
       - name: Cache dependencies

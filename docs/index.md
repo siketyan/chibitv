@@ -22,7 +22,7 @@ features:
     details: The server only tunes, descrambles and remuxes; the decoding happens in the browser, so nothing is transcoded on the way. One binary serves the RPC API, the live stream and the GUI, and the published image is distroless.
   - icon: 📦
     title: Out of the box
-    details: A Linux DVB device, a px4_drv one or a BonDriver on Windows, and a CAS card over PC/SC. A scan fills the channels in and the GUI is a browser away, with no external muxer, player or tuner daemon to install beside it.
+    details: A tuner shared by tunelithd — a USB one, a PT4K or any Linux DVB device — and a CAS card over PC/SC. A scan fills the channels in and the GUI is a browser away, with no external muxer or player to install beside it.
   - icon: 📘
     title: Written from the standards
     details: One crate per ARIB standard — the SI tables (B10), the character encoding (B24), the conditional access of 2K (B25) and of 4K (B61), and the MMT/TLV container (B60) — rather than a binding to an existing implementation.

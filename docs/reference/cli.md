@@ -38,8 +38,9 @@ from `RUST_LOG`, which `--verbose` only changes the default of.
 
 The `--channel` option of `live`, `record` and `status` is the identifier the
 [`[database]`](./configuration#database) gave the channel, which
-[`channels`](#channels) lists. Tuner commands take the first free entry in
-[`[[tuners]]`](./configuration#tuners) receiving the channel's broadcast.
+[`channels`](#channels) lists. Tuner commands ask
+[tunelithd](./configuration#tunelith) for any free tuner receiving the
+channel's broadcast.
 
 ## `channels`
 
@@ -65,10 +66,7 @@ stream is demultiplexed and descrambled: `ISDB-T` and `ISDB-S`, the 2K
 satellite broadcasting, carry MPEG-2 TS and are descrambled with B25, while
 `ISDB-S3`, the 4K one, carries MMT/TLV and is descrambled with B61.
 
-[`scan`](#scan) is what writes them, and it is the only thing that does: a
-channel a BonDriver tunes, which names the tuning space and channel numbers the
-driver enumerates rather than a frequency, is not something a scan can find, so
-one has to be written into the database by hand for now.
+[`scan`](#scan) is what writes them, and it is the only thing that does.
 
 ## `live`
 
@@ -234,8 +232,9 @@ A server that is already running holds the channels it started with, so it has
 to be restarted to serve what a scan wrote. Scanning from the app instead hands
 what was found back to be kept, which takes effect without a restart and keeps
 the channels picked from it beside the ones already kept rather than replacing
-a whole broadcast. Either way a running server is holding the tuner, which a
-scan needs for itself.
+a whole broadcast. Either way a scan needs a free tuner of tunelithd receiving
+the broadcast, and stops as soon as there is none rather than leaving channels
+out, so one run beside a server may find every tuner in use.
 
 ## `status`
 

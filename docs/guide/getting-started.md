@@ -6,19 +6,24 @@
 
 ## Prerequisites
 
-- A tuner: one with a Linux DVB driver, one driven by
-  [px4_drv](https://github.com/tsukumijima/px4_drv), or a BonDriver on Windows
+- A tuner shared by tunelithd, the daemon of
+  [Tunelith](https://github.com/siketyan/tunelith): PLEX, Digibest and
+  e-better tuners over USB, the PT4K, or any tuner with a Linux DVB driver.
+  Its [README](https://github.com/siketyan/tunelith#readme) covers installing
+  and running tunelithd, together with the firmware and udev rules the devices
+  need
 - A PC/SC compatible interface to the CAS module
 - The value of _Kd_ defined in Section 1.4 of the ARIB STD-B61 standard
 
 ### Device permissions on Linux
 
-chibitv needs access to both the PC/SC daemon and the tuner devices. The
+chibitv needs access to both the PC/SC daemon and the socket of tunelithd. The
 following setup allows the application to run without `sudo` on distributions
 using pcsc-lite, polkit, and udev, such as Ubuntu and Debian.
 
 Create a dedicated group for PC/SC access, then add the current user to both
-that group and the `video` group used by DVB devices and px4_drv alike:
+that group and the `video` group, which tunelithd grants access to its
+socket by default:
 
 ```shell
 sudo groupadd --force --system pcsc
@@ -53,7 +58,7 @@ Verify the setup with:
 ```shell
 id -nG
 pcsc_scan
-ls -l /dev/dvb /dev/*video*
+ls -l /run/tunelith/tunelithd.sock
 ```
 
 The output of `id -nG` should include both `pcsc` and `video`, and `pcsc_scan`
@@ -90,11 +95,11 @@ sudo pacman -U chibitv-<VERSION>-1-x86_64.pkg.tar.zst
 
 The packages above are built for arm64 as well, named with `arm64` or
 `aarch64` in place of `amd64` or `x86_64`. They install the binary as
-`/usr/bin/chibitv` and pull in libdvbv5 and libpcsclite.
+`/usr/bin/chibitv` and pull in libpcsclite.
 
 ### Other Linux distributions
 
-The `.tar.gz` archives hold the binary alone. Install libdvbv5 and libpcsclite
+The `.tar.gz` archives hold the binary alone. Install libpcsclite
 from your distribution, together with the PC/SC daemon, then extract the
 binary:
 
@@ -104,16 +109,16 @@ tar --extract --gzip --file chibitv-<VERSION>-x86_64-unknown-linux-gnu.tar.gz
 
 ### Windows
 
-The `.zip` archive holds `chibitv.exe`, which tunes through a BonDriver and
-reaches the CAS module through the smart card service of Windows.
+The `.zip` archive holds `chibitv.exe`, which tunes through tunelithd over its
+named pipe and reaches the CAS module through the smart card service of Windows.
 
 ### Building from source
 
-Install the Rust toolchain and, on Linux, the development packages of the
-libraries, then install the binary from a clone of the repository:
+Install the Rust toolchain and, on Linux, the development package of
+libpcsclite, then install the binary from a clone of the repository:
 
 ```shell
-sudo apt install libdvbv5-dev libpcsclite-dev
+sudo apt install libpcsclite-dev
 cargo install --locked --path crates/chibitv
 ```
 
@@ -125,9 +130,8 @@ server hosts instead, as [starting the server](#starting-the-server) describes.
 Every subcommand loads `./config.toml` from the current directory. Copy the
 example, which the packages install as
 `/usr/share/doc/chibitv/config.toml.example` and the repository holds as
-`config.toml.example`, and configure the CAS master key and the tuners before
-running chibitv;
-the channels are not part of the file — they are kept in the database, which
+`config.toml.example`, and configure the CAS master key before running
+chibitv; the channels are not part of the file — they are kept in the database, which
 [scanning](#scanning-channels) writes:
 
 ```shell
@@ -142,7 +146,7 @@ Every key of the file is described in the
 Run a subcommand with `chibitv <COMMAND>`. The channel arguments used by
 `live`, `record`, and `status` are the identifiers the database gave the
 channels, which [`channels`](../reference/cli#channels) lists. Tuner commands
-take the first free entry in `[[tuners]]` receiving the channel's broadcast.
+ask tunelithd for any free tuner receiving the channel's broadcast.
 Place the global `--verbose` option before the subcommand to enable trace
 logging:
 

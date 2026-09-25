@@ -28,7 +28,9 @@ The documentation is published at https://chibitv.p.s6n.jp/:
 ## Development
 
 The instructions below are for building chibitv from a checkout. Running it
-also needs a tuner, a CAS card and a `config.toml`, which the
+also needs a tuner shared by
+[tunelithd](https://github.com/siketyan/tunelith), a CAS card and a
+`config.toml`, which the
 [getting started guide](https://chibitv.p.s6n.jp/guide/getting-started)
 covers.
 
@@ -49,22 +51,14 @@ regenerate the RPC code.
 
 ### System libraries
 
-The default `dvb` feature builds against libdvbv5, and the CAS code talks to a
-card over PC/SC. On Debian and Ubuntu:
+The CAS code talks to a card over PC/SC, which is the only system library
+chibitv links against. On Debian and Ubuntu:
 
 ```shell
-sudo apt-get install --no-install-recommends libdvbv5-dev libpcsclite-dev
+sudo apt-get install --no-install-recommends libpcsclite-dev
 ```
 
-The Docker builder image also installs `libudev-dev`, which libdvbv5 links
-against; a desktop distribution normally has it already.
-
-`cargo build --no-default-features` drops libdvbv5, leaving the file and
-stdin inputs; PC/SC is not optional and is linked either way.
-
-On Windows neither package is needed: PC/SC is the system `winscard`, and the
-`bon` feature is a hand-written binding to BonDriver's vtable, so it needs no
-SDK.
+On Windows nothing is needed: PC/SC is the system `winscard`.
 
 ### Building the FFmpeg WebAssembly module
 
