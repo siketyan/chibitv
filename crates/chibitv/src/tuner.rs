@@ -166,7 +166,17 @@ impl Tuners {
         );
     }
 
-    pub fn add_tuner_from_config(&mut self, id: u32, config: &TunerConfig) -> anyhow::Result<()> {
+    /// The tuners the configuration lists, numbered in the order it lists them.
+    pub fn from_config(configs: &[TunerConfig]) -> anyhow::Result<Self> {
+        let mut tuners = Self::default();
+        for (id, config) in configs.iter().enumerate() {
+            tuners.add_tuner_from_config(id as u32, config)?;
+        }
+
+        Ok(tuners)
+    }
+
+    fn add_tuner_from_config(&mut self, id: u32, config: &TunerConfig) -> anyhow::Result<()> {
         let systems = config.delivery_systems.clone();
         match &config.kind {
             TunerKind::Stdin => {

@@ -14,7 +14,6 @@ use crate::m2ts::{M2tsDemuxer, M2tsMuxer};
 use crate::mmt::MmtDemuxer;
 use crate::remux::{Mux, Remuxer};
 use crate::service_information::{ServiceInformationProcessor, Signal};
-use crate::tuner::Tuners;
 
 #[derive(Clone, Debug, Parser)]
 pub struct Options {
@@ -24,18 +23,9 @@ pub struct Options {
 }
 
 pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
-    let mut tuners = Tuners::default();
-    for (id, tuner) in config.tuners.iter().enumerate() {
-        tuners.add_tuner_from_config(id as u32, tuner)?;
-    }
-
     let store = crate::store::open(&config.database.url).await?;
     let channel = channel::find_channel(&*store, options.channel).await?;
-    let tuner = tuners.try_acquire(channel.inner.delivery_system())?;
-
-    info!("Tuning to the channel: {:?}", channel);
-
-    tuner.tune(channel.clone())?;
+    let tuner = super::tune(config, &channel)?;
 
     info!("Starting live stream. Press Ctrl+C to stop.");
 

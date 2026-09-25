@@ -6,7 +6,6 @@ use tracing::info;
 
 use crate::channel;
 use crate::config::Config;
-use crate::tuner::Tuners;
 
 #[derive(Clone, Debug, Parser)]
 pub struct Options {
@@ -20,18 +19,9 @@ pub struct Options {
 }
 
 pub async fn record(options: &Options, config: &Config) -> anyhow::Result<()> {
-    let mut tuners = Tuners::default();
-    for (id, tuner) in config.tuners.iter().enumerate() {
-        tuners.add_tuner_from_config(id as u32, tuner)?;
-    }
-
     let store = crate::store::open(&config.database.url).await?;
     let channel = channel::find_channel(&*store, options.channel).await?;
-    let tuner = tuners.try_acquire(channel.inner.delivery_system())?;
-
-    info!("Tuning to the channel: {:?}", channel);
-
-    tuner.tune(channel)?;
+    let tuner = super::tune(config, &channel)?;
 
     let mut input = BufReader::new(tuner.open()?);
     let mut output: Box<dyn Write> = match options.output.as_deref() {
