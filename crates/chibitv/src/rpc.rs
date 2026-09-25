@@ -15,9 +15,9 @@ use tokio_stream::{Stream, StreamExt};
 use tracing::warn;
 
 use crate::channel::ChannelInner;
-use crate::channel_scanner::{ScanDeliverySystem, ScanRequest};
 use crate::event;
 use crate::proto::chibitv::v1::*;
+use crate::scanner::{ScanDeliverySystem, ScanRequest};
 use crate::service;
 use crate::service_information::Signal;
 use crate::store;
@@ -793,7 +793,7 @@ fn workspace_error(error: WorkspaceError) -> ConnectError {
         WorkspaceError::EventCrawlerUnavailable => {
             ConnectError::failed_precondition("event crawler is unavailable")
         }
-        WorkspaceError::ChannelScannerUnavailable => {
+        WorkspaceError::ScannerUnavailable => {
             ConnectError::failed_precondition("scanning is unavailable")
         }
         WorkspaceError::ScanNotPossible(error) => {

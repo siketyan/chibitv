@@ -150,13 +150,13 @@ impl Default for ScanRequest {
 
 /// Finds the channels on air, with a tuner and the cards that unscramble what
 /// it reaches.
-pub struct ChannelScanner {
+pub struct Scanner {
     tuners: Arc<Tuners>,
     cas: Arc<SharedCasModule>,
     cas_master_key: [u8; 32],
 }
 
-impl ChannelScanner {
+impl Scanner {
     pub fn new(tuners: Arc<Tuners>, cas: Arc<SharedCasModule>, cas_master_key: [u8; 32]) -> Self {
         Self {
             tuners,
@@ -195,7 +195,7 @@ impl ChannelScanner {
         let tuner = self.tuners.try_acquire(request.delivery_system.into())?;
         info!(tuner_id = tuner.id(), "Acquired tuner for scanning");
 
-        let scanner = Scanner {
+        let scan = Scan {
             tuner,
             cas: self.cas.clone(),
             master_key: self.cas_master_key,
@@ -204,18 +204,18 @@ impl ChannelScanner {
         };
 
         match (request.delivery_system, request.fast) {
-            (ScanDeliverySystem::IsdbT, _) => scan_terrestrial(&scanner, request),
-            (ScanDeliverySystem::IsdbS, false) => scan_satellite(&scanner),
-            (ScanDeliverySystem::IsdbS, true) => scan_satellite_fast(&scanner),
-            (ScanDeliverySystem::IsdbS3, false) => scan_satellite_4k(&scanner),
-            (ScanDeliverySystem::IsdbS3, true) => scan_satellite_4k_fast(&scanner),
+            (ScanDeliverySystem::IsdbT, _) => scan_terrestrial(&scan, request),
+            (ScanDeliverySystem::IsdbS, false) => scan_satellite(&scan),
+            (ScanDeliverySystem::IsdbS, true) => scan_satellite_fast(&scan),
+            (ScanDeliverySystem::IsdbS3, false) => scan_satellite_4k(&scan),
+            (ScanDeliverySystem::IsdbS3, true) => scan_satellite_4k_fast(&scan),
         }
     }
 }
 
 /// What every scan needs to hand a channel: a tuner to reach it with, the card
 /// that unscrambles it, and how long to wait on it.
-struct Scanner<'a> {
+struct Scan<'a> {
     tuner: TunerLease,
     cas: Arc<SharedCasModule>,
     /// The key the 4K descrambler needs, which the terrestrial and 2K ones do
@@ -226,7 +226,7 @@ struct Scanner<'a> {
     task: Option<&'a TaskHandle>,
 }
 
-impl Scanner<'_> {
+impl Scan<'_> {
     /// Says how far the walk has got, and whether it should stop.
     fn report(&self, done: usize, total: usize, message: impl Into<String>) -> bool {
         if let Some(task) = self.task {
@@ -240,7 +240,7 @@ impl Scanner<'_> {
 }
 
 /// Walks the terrestrial UHF band, one physical channel at a time.
-fn scan_terrestrial(scanner: &Scanner, request: &ScanRequest) -> anyhow::Result<Vec<NewChannel>> {
+fn scan_terrestrial(scan: &Scan, request: &ScanRequest) -> anyhow::Result<Vec<NewChannel>> {
     let channels_to_scan = request.uhf_channels.clone();
     let scanned = channels_to_scan.clone().count();
     let mut channels = Vec::new();
@@ -254,12 +254,12 @@ fn scan_terrestrial(scanner: &Scanner, request: &ScanRequest) -> anyhow::Result<
         info!(physical_channel, frequency, "Scanning UHF channel");
 
         let label = format!("UHF {physical_channel}");
-        if !scanner.report(index, scanned, format!("Scanning {label}")) {
+        if !scan.report(index, scanned, format!("Scanning {label}")) {
             break;
         }
 
         let Some(state) =
-            scanner.read_channel(&label, inner, ScanState::default(), ScanState::is_complete)?
+            scan.read_channel(&label, inner, ScanState::default(), ScanState::is_complete)?
         else {
             continue;
         };
@@ -289,8 +289,8 @@ fn scan_terrestrial(scanner: &Scanner, request: &ScanRequest) -> anyhow::Result<
 /// over its network's NIT, which names every transport stream of that network
 /// and the transponder each one sits on. What is left is to tune to the ones
 /// carrying television and read their service catalog.
-fn scan_satellite(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
-    let streams = discover_satellite_streams(scanner)?;
+fn scan_satellite(scan: &Scan) -> anyhow::Result<Vec<NewChannel>> {
+    let streams = discover_satellite_streams(scan)?;
     if streams.is_empty() {
         warn!("No satellite network answered: is the dish connected and its converter powered?");
     }
@@ -299,7 +299,7 @@ fn scan_satellite(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
     for (index, stream) in streams.values().enumerate() {
         let transport_stream_id = stream.transport_stream_id;
         let frequency = stream.frequency_khz;
-        if !scanner.report(
+        if !scan.report(
             index,
             streams.len(),
             format!("Scanning TSID {transport_stream_id:#06X}"),
@@ -318,7 +318,7 @@ fn scan_satellite(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
         );
 
         let label = format!("TSID {transport_stream_id:#06X}");
-        let Some(state) = scanner.read_channel(
+        let Some(state) = scan.read_channel(
             &label,
             inner,
             ScanState::default(),
@@ -352,13 +352,13 @@ fn scan_satellite(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
 /// is made of and the transponder each one sits on, and every stream carries
 /// the service description of the others beside its own. So one that answers is
 /// enough to write the lot down, without tuning to a single one of them.
-fn scan_satellite_fast(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
+fn scan_satellite_fast(scan: &Scan) -> anyhow::Result<Vec<NewChannel>> {
     let mut channels = Vec::new();
 
     for transponder in
         transponders().filter(|transponder| FAST_2K_TRANSPONDERS.contains(&transponder.number))
     {
-        let Some(state) = scanner.read_network(
+        let Some(state) = scan.read_network(
             &transponder,
             ScanState {
                 reads_other_streams: true,
@@ -396,13 +396,13 @@ fn scan_satellite_fast(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
 }
 
 /// The MMT/TLV counterpart of [`scan_satellite_fast`].
-fn scan_satellite_4k_fast(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
+fn scan_satellite_4k_fast(scan: &Scan) -> anyhow::Result<Vec<NewChannel>> {
     let mut channels = Vec::new();
 
     for transponder in
         transponders_4k().filter(|transponder| transponder.number == FAST_4K_TRANSPONDER)
     {
-        let Some(state) = scanner.read_tlv_network(&transponder, TlvScanState::has_every_stream)?
+        let Some(state) = scan.read_tlv_network(&transponder, TlvScanState::has_every_stream)?
         else {
             continue;
         };
@@ -433,7 +433,7 @@ fn scan_satellite_4k_fast(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> 
 }
 
 /// Finds every satellite transport stream worth tuning to, by its id.
-fn discover_satellite_streams(scanner: &Scanner) -> anyhow::Result<BTreeMap<u16, SatelliteStream>> {
+fn discover_satellite_streams(scan: &Scan) -> anyhow::Result<BTreeMap<u16, SatelliteStream>> {
     let mut discovered = BTreeMap::<u16, SatelliteStream>::new();
 
     for transponder in transponders() {
@@ -449,7 +449,7 @@ fn discover_satellite_streams(scanner: &Scanner) -> anyhow::Result<BTreeMap<u16,
 
         // Any transport stream of a transponder carries the NIT of the whole
         // network, so there is nothing else to wait for here.
-        let Some(state) = scanner.read_network(&transponder, ScanState::default(), |state| {
+        let Some(state) = scan.read_network(&transponder, ScanState::default(), |state| {
             state.nit.is_some()
         })?
         else {
@@ -533,8 +533,8 @@ fn carries_television(descriptors: &[Descriptor]) -> bool {
 /// network naming the rest, but over MMT/TLV: the transmission control signal
 /// of a TLV stream carries the TLV-NIT, which names every TLV stream of the
 /// network, and the services of one are named by its own MH-SDT.
-fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
-    let streams = discover_tlv_streams(scanner)?;
+fn scan_satellite_4k(scan: &Scan) -> anyhow::Result<Vec<NewChannel>> {
+    let streams = discover_tlv_streams(scan)?;
     if streams.is_empty() {
         warn!("No 4K network answered: is the dish connected and its converter powered?");
     }
@@ -543,7 +543,7 @@ fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
     for (index, stream) in streams.values().enumerate() {
         let tlv_stream_id = stream.tlv_stream_id;
         let frequency = stream.frequency_khz;
-        if !scanner.report(
+        if !scan.report(
             index,
             streams.len(),
             format!("Scanning TLV stream {tlv_stream_id:#06X}"),
@@ -559,7 +559,7 @@ fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
         info!(tlv_stream_id, frequency, "Scanning TLV stream");
 
         let label = format!("TLV stream {tlv_stream_id:#06X}");
-        let Some(state) = scanner.read_tlv_channel(
+        let Some(state) = scan.read_tlv_channel(
             &label,
             inner,
             Some(tlv_stream_id),
@@ -587,7 +587,7 @@ fn scan_satellite_4k(scanner: &Scanner) -> anyhow::Result<Vec<NewChannel>> {
 }
 
 /// Finds every TLV stream worth tuning to, by its id.
-fn discover_tlv_streams(scanner: &Scanner) -> anyhow::Result<BTreeMap<u16, TlvStream>> {
+fn discover_tlv_streams(scan: &Scan) -> anyhow::Result<BTreeMap<u16, TlvStream>> {
     let mut discovered = BTreeMap::<u16, TlvStream>::new();
 
     for transponder in transponders_4k() {
@@ -598,8 +598,7 @@ fn discover_tlv_streams(scanner: &Scanner) -> anyhow::Result<BTreeMap<u16, TlvSt
             continue;
         }
 
-        let Some(state) = scanner.read_tlv_network(&transponder, |state| state.nit.is_some())?
-        else {
+        let Some(state) = scan.read_tlv_network(&transponder, |state| state.nit.is_some())? else {
             continue;
         };
         let Some(nit) = state.nit else {
@@ -750,7 +749,7 @@ fn transponders_4k() -> impl Iterator<Item = Transponder> {
     bs_transponders(BS_4K_NETWORK_ID)
 }
 
-impl Scanner<'_> {
+impl Scan<'_> {
     /// Tunes to one channel and reads its tables until `is_done` is satisfied
     /// or the time runs out.
     ///
@@ -845,7 +844,7 @@ impl Scanner<'_> {
         Ok(None)
     }
 
-    /// The MMT/TLV counterpart of [`Scanner::read_network`].
+    /// The MMT/TLV counterpart of [`Scan::read_network`].
     fn read_tlv_network(
         &self,
         transponder: &Transponder,
@@ -879,7 +878,7 @@ impl Scanner<'_> {
         Ok(None)
     }
 
-    /// The MMT/TLV counterpart of [`Scanner::read_channel`].
+    /// The MMT/TLV counterpart of [`Scan::read_channel`].
     ///
     /// `watched_stream` is the TLV stream the services are collected of, which
     /// a probe that only wants the network leaves unset.
