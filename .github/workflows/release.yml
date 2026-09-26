@@ -79,6 +79,8 @@ jobs:
             arch: arm64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     permissions:
@@ -105,7 +107,7 @@ jobs:
       - name: Build
         run: cargo build --release --locked --features gui
       - name: Archive the binary
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
         run: |
           mkdir dist
           tar --create --gzip --file "$ARCHIVE.tar.gz" --directory target/release chibitv

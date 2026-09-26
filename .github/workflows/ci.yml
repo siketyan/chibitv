@@ -96,7 +96,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     # Windows builds the bundled SQLite and the rest from scratch more slowly
     # than Linux does, so this is not the 20 minutes the other jobs get.

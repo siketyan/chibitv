@@ -112,6 +112,18 @@ tar --extract --gzip --file chibitv-<VERSION>-x86_64-unknown-linux-gnu.tar.gz
 The `.zip` archive holds `chibitv.exe`, which tunes through tunelithd over its
 named pipe and reaches the CAS module through the smart card service of Windows.
 
+### macOS
+
+The `.tar.gz` archive for `aarch64-apple-darwin` holds the binary alone, for
+Apple silicon. It reaches the CAS module through the PC/SC framework built into
+macOS, so nothing else needs installing. The binary is not signed, so clear the
+quarantine Gatekeeper puts on it after extracting:
+
+```shell
+tar --extract --gzip --file chibitv-<VERSION>-aarch64-apple-darwin.tar.gz
+xattr -d com.apple.quarantine chibitv
+```
+
 ### Building from source
 
 Install the Rust toolchain and, on Linux, the development package of
