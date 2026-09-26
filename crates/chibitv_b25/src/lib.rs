@@ -8,15 +8,11 @@ pub use cas::{EcmReceptionResponse, InitialSettingConditionResponse};
 pub use descrambler::{B25Descrambler, EcmRefusedError};
 pub use multi2::NoDecryptionKeyError;
 
-use std::sync::mpsc;
-
-/// The responses to a run of commands, one for each, arriving once the CAS module has answered
-/// the last of them.
-pub type PendingResponses = mpsc::Receiver<anyhow::Result<Vec<Vec<u8>>>>;
-
 /// A physical CAS module capable of executing ARIB STD-B25 commands.
-pub trait CasModule: Send + Sync {
-    /// Sends the commands to the module one after another, with nothing else sent to it in
-    /// between, and returns without waiting for it to answer.
-    fn transmit(&self, commands: Vec<Vec<u8>>) -> PendingResponses;
+///
+/// The descramblers share one behind a mutex, each asking it from a thread of its own so that
+/// the stream goes on while it answers.
+pub trait CasModule: Send {
+    /// Sends the command to the module and waits for its response.
+    fn transmit(&mut self, command: &[u8]) -> anyhow::Result<Vec<u8>>;
 }

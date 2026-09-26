@@ -5,7 +5,7 @@ use chrono::{Local, Offset};
 use clap::Parser;
 use tracing::warn;
 
-use crate::cas::SharedCasModule;
+use crate::cas::PcscCasModule;
 use crate::channel::Channel;
 use crate::config::Config;
 use crate::event_crawler::EventCrawler;
@@ -59,7 +59,7 @@ pub async fn serve(_options: &Options, config: &Config) -> anyhow::Result<()> {
         .map(Channel::from)
         .collect::<Vec<_>>();
 
-    let cas = SharedCasModule::open()?;
+    let cas = PcscCasModule::open()?;
 
     let tuners = Arc::new(Tuners::new(&config.tunelith)?);
 

@@ -1,89 +1,59 @@
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex};
 
 use anyhow::bail;
 use pcsc::{Card, Context, Error, Protocols, Scope, ShareMode};
 use tracing::{debug, warn};
 
-/// A run of commands for the card, and where its responses go.
-type Job = (Vec<Vec<u8>>, mpsc::SyncSender<anyhow::Result<Vec<Vec<u8>>>>);
-
 /// The CAS module every descrambler shares, speaking both ARIB STD-B25 and STD-B61.
 ///
-/// One thread talks to the card and takes the commands in the order they come, so that a run of
-/// them is never interleaved with another, and whoever sent them goes on without waiting.
-pub struct SharedCasModule {
-    jobs: mpsc::Sender<Job>,
-}
-
-impl SharedCasModule {
-    pub fn open() -> anyhow::Result<Arc<Self>> {
-        let mut card = PcscCard {
-            card: Some(connect()?),
-        };
-        let (jobs, jobs_rx) = mpsc::channel::<Job>();
-
-        std::thread::spawn(move || {
-            for (commands, responses) in jobs_rx {
-                // Whoever sent them may have stopped waiting.
-                let _ = responses.send(card.transmit(&commands));
-            }
-        });
-
-        Ok(Arc::new(Self { jobs }))
-    }
-
-    fn transmit(&self, commands: Vec<Vec<u8>>) -> mpsc::Receiver<anyhow::Result<Vec<Vec<u8>>>> {
-        let (tx, rx) = mpsc::sync_channel(1);
-        // Should the thread have gone, the sender is dropped with the job, which the receiver
-        // tells as the module no longer running.
-        let _ = self.jobs.send((commands, tx));
-        rx
-    }
-}
-
-impl chibitv_b25::CasModule for SharedCasModule {
-    fn transmit(&self, commands: Vec<Vec<u8>>) -> chibitv_b25::PendingResponses {
-        SharedCasModule::transmit(self, commands)
-    }
-}
-
-impl chibitv_b61::CasModule for SharedCasModule {
-    fn transmit(&self, commands: Vec<Vec<u8>>) -> chibitv_b61::PendingResponses {
-        SharedCasModule::transmit(self, commands)
-    }
-}
+/// The mutex keeps the commands of one descrambler from being interleaved with another's.
+pub type SharedCasModule = Mutex<PcscCasModule>;
 
 /// The card, reached over PC/SC.
-struct PcscCard {
+pub struct PcscCasModule {
     /// The connection, or `None` while it has been lost and not reopened yet.
     card: Option<Card>,
 }
 
-impl PcscCard {
-    fn transmit(&mut self, commands: &[Vec<u8>]) -> anyhow::Result<Vec<Vec<u8>>> {
-        if let Some(card) = self.card.as_ref() {
-            match transmit_all(card, commands) {
-                Err(e) if is_connection_lost(&e) => {
+impl PcscCasModule {
+    pub fn open() -> anyhow::Result<Arc<SharedCasModule>> {
+        Ok(Arc::new(Mutex::new(Self {
+            card: Some(connect()?),
+        })))
+    }
+
+    fn transmit(&mut self, command: &[u8]) -> anyhow::Result<Vec<u8>> {
+        let card = match &mut self.card {
+            Some(card) => card,
+            None => self.card.insert(connect()?),
+        };
+
+        let mut buf = [0u8; 4096];
+        match card.transmit(command, &mut buf) {
+            Ok(response) => Ok(response.to_vec()),
+            Err(e) => {
+                // The command is not sent again on a new connection, as it may depend on the ones
+                // before it on the old one: the descrambler asks again with the next ECM.
+                if is_connection_lost(&e) {
                     warn!(error = %e, "CAS module connection lost, reopening");
                     self.card = None;
                 }
-                result => return Ok(result?),
+                Err(e.into())
             }
         }
-
-        // The whole run is sent again, as a command may depend on the ones before it on the same
-        // connection.
-        let card = self.card.insert(connect()?);
-        Ok(transmit_all(card, commands)?)
     }
 }
 
-fn transmit_all(card: &Card, commands: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, Error> {
-    let mut buf = [0u8; 4096];
-    commands
-        .iter()
-        .map(|command| Ok(card.transmit(command, &mut buf)?.to_vec()))
-        .collect()
+impl chibitv_b25::CasModule for PcscCasModule {
+    fn transmit(&mut self, command: &[u8]) -> anyhow::Result<Vec<u8>> {
+        PcscCasModule::transmit(self, command)
+    }
+}
+
+impl chibitv_b61::CasModule for PcscCasModule {
+    fn transmit(&mut self, command: &[u8]) -> anyhow::Result<Vec<u8>> {
+        PcscCasModule::transmit(self, command)
+    }
 }
 
 /// Whether the error means the card handle is no longer usable and the connection must be

@@ -6,7 +6,7 @@ use clap::Parser;
 use mpeg2ts::ts::TsPacketWriter;
 use tracing::info;
 
-use crate::cas::SharedCasModule;
+use crate::cas::PcscCasModule;
 use crate::channel::{self, ChannelInner};
 use crate::config::Config;
 use crate::demux::Demux;
@@ -32,7 +32,7 @@ pub async fn live(options: &Options, config: &Config) -> anyhow::Result<()> {
     let output = stdout();
     let writer = TsPacketWriter::new(BufWriter::new(output));
     let mux = M2tsMuxer::new(writer);
-    let cas = SharedCasModule::open()?;
+    let cas = PcscCasModule::open()?;
 
     let (signal_tx, mut signal_rx) = tokio::sync::broadcast::channel::<Signal>(1);
 
