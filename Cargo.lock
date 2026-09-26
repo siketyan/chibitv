@@ -2538,8 +2538,9 @@ dependencies = [
 
 [[package]]
 name = "tunelith"
-version = "0.1.0"
-source = "git+https://github.com/siketyan/tunelith.git?rev=8795523#879552358259ac823d7db0b5eb3999034a9f250f"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "259603cd29734904a6fde2912b32d0138ac21362bc16f12203328efd42397518"
 dependencies = [
  "tokio",
  "tokio-util",
@@ -2548,8 +2549,9 @@ dependencies = [
 
 [[package]]
 name = "tunelith-core"
-version = "0.1.0"
-source = "git+https://github.com/siketyan/tunelith.git?rev=8795523#879552358259ac823d7db0b5eb3999034a9f250f"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ff3b295feea8bc3147084f81055d88e2ba5d7ffd5dbc7da8d14e370bb59c011"
 dependencies = [
  "futures",
  "protobuf",

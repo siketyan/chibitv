@@ -5,7 +5,6 @@ members = ["crates/*"]
 [patch.crates-io]
 mpeg2ts = { git = "https://github.com/siketyan/mpeg2ts.git", rev = "ae33330" }
 shiguredo_mp4 = { git = "https://github.com/siketyan/mp4-rs.git", rev = "74b96a6" }
-tunelith = { git = "https://github.com/siketyan/tunelith.git", rev = "8795523" }
 
 [profile.release-with-debug]
 debug    = true
