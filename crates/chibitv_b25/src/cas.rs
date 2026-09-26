@@ -2,14 +2,14 @@
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, ErrorKind, Read, Result};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 
 use anyhow::anyhow;
 use apdu_core::{Command, Response};
 use byteorder::{BE, ReadBytesExt};
 use strum::FromRepr;
 
-use crate::{CasModule, PendingResponses};
+use crate::CasModule;
 
 trait ReadExt: Read {
     fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N]> {
@@ -143,7 +143,7 @@ impl EcmReceptionResponse {
 
 /// ARIB STD-B25 commands executed on a physical CAS module.
 pub(crate) struct CasClient {
-    module: Arc<dyn CasModule>,
+    worker: CasWorker,
     acas: bool,
 }
 
@@ -154,42 +154,113 @@ impl Debug for CasClient {
 }
 
 impl CasClient {
-    pub fn new(module: Arc<dyn CasModule>, acas: bool) -> Self {
-        Self { module, acas }
+    pub fn new(module: Arc<Mutex<dyn CasModule>>, acas: bool) -> Self {
+        Self {
+            worker: CasWorker::spawn(module),
+            acas,
+        }
     }
 
-    pub fn initial_setting_condition(&self) -> anyhow::Result<InitialSettingConditionResponse> {
+    pub fn initial_setting_condition(&mut self) -> anyhow::Result<InitialSettingConditionResponse> {
         let command = InitialSettingConditionCommand { acas: self.acas }.to_bytes();
-        let pending = self.module.transmit(vec![command]);
-        let responses = receive(&pending, true).expect("waited for the responses")?;
+        self.worker.send(vec![command]);
+        let responses = self.receive(true).expect("waited for the responses")?;
 
         Ok(InitialSettingConditionResponse::read(&responses[0])?)
     }
 
-    /// Sends the ECM to the module, whose answer is read with [`EcmReceptionResponse::read`].
-    pub fn ecm_reception(&self, ecm: &[u8]) -> PendingResponses {
+    /// Sends the ECM to the module, whose answer is taken with [`CasClient::receive`] and read
+    /// with [`EcmReceptionResponse::read`].
+    pub fn ecm_reception(&mut self, ecm: &[u8]) {
         let command = EcmReceptionCommand {
             ecm: ecm.to_vec(),
             acas: self.acas,
         };
-        self.module.transmit(vec![command.to_bytes()])
+        self.worker.send(vec![command.to_bytes()]);
+    }
+
+    /// Takes the responses to the commands sent last if they have arrived, waiting for them if
+    /// `wait` is set, or `None` if they are still on their way or nothing was sent.
+    pub fn receive(&mut self, wait: bool) -> Option<anyhow::Result<Vec<Vec<u8>>>> {
+        self.worker.receive(wait)
     }
 }
 
-/// Takes the responses if they have arrived, waiting for them if `wait` is set, or `None` if they
-/// are still on their way.
-pub(crate) fn receive(
-    pending: &PendingResponses,
-    wait: bool,
-) -> Option<anyhow::Result<Vec<Vec<u8>>>> {
-    let result = match wait {
-        true => pending.recv().map_err(|_| mpsc::TryRecvError::Disconnected),
-        false => pending.try_recv(),
-    };
+/// Talks to the CAS module on a thread of its own, so that whoever sends it commands goes on
+/// while it answers.
+struct CasWorker {
+    jobs: mpsc::Sender<Vec<Vec<u8>>>,
+    responses: mpsc::Receiver<anyhow::Result<Vec<Vec<u8>>>>,
+    /// How many runs of commands have been sent and not answered yet.
+    in_flight: usize,
+}
 
-    match result {
-        Ok(responses) => Some(responses),
-        Err(mpsc::TryRecvError::Empty) => None,
-        Err(mpsc::TryRecvError::Disconnected) => Some(Err(anyhow!("CAS module is not running"))),
+impl CasWorker {
+    fn spawn(module: Arc<Mutex<dyn CasModule>>) -> Self {
+        let (jobs, jobs_rx) = mpsc::channel::<Vec<Vec<u8>>>();
+        let (responses_tx, responses) = mpsc::channel();
+
+        // The thread ends once the worker is dropped along with its sender.
+        std::thread::spawn(move || {
+            for commands in jobs_rx {
+                if responses_tx.send(transmit_all(&module, &commands)).is_err() {
+                    break;
+                }
+            }
+        });
+
+        Self {
+            jobs,
+            responses,
+            in_flight: 0,
+        }
     }
+
+    fn send(&mut self, commands: Vec<Vec<u8>>) {
+        // Should the thread have gone, receiving tells so.
+        let _ = self.jobs.send(commands);
+        self.in_flight += 1;
+    }
+
+    /// Takes the responses to the run sent last, passing over those to the runs before it.
+    fn receive(&mut self, wait: bool) -> Option<anyhow::Result<Vec<Vec<u8>>>> {
+        while self.in_flight > 0 {
+            let result = match wait {
+                true => self
+                    .responses
+                    .recv()
+                    .map_err(|_| mpsc::TryRecvError::Disconnected),
+                false => self.responses.try_recv(),
+            };
+
+            match result {
+                Ok(responses) => {
+                    self.in_flight -= 1;
+                    if self.in_flight == 0 {
+                        return Some(responses);
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => return None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.in_flight = 0;
+                    return Some(Err(anyhow!("CAS module is not running")));
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// Sends the commands to the module one after another, with nothing else sent to it in between.
+fn transmit_all(
+    module: &Mutex<dyn CasModule>,
+    commands: &[Vec<u8>],
+) -> anyhow::Result<Vec<Vec<u8>>> {
+    let mut module = module.lock().map_err(|_| anyhow!("CAS module panicked"))?;
+
+    commands
+        .iter()
+        .map(|command| module.transmit(command))
+        .collect()
 }

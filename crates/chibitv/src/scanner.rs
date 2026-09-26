@@ -17,7 +17,7 @@ use std::time::Duration;
 use clap::ValueEnum;
 use tracing::warn;
 
-use crate::cas::SharedCasModule;
+use crate::cas::{PcscCasModule, SharedCasModule};
 use crate::channel::{Channel, ChannelInner, DeliverySystem};
 use crate::config::Config;
 use crate::store::NewChannel;
@@ -140,7 +140,7 @@ impl Scanner {
     pub fn from_config(config: &Config) -> anyhow::Result<Self> {
         Ok(Self::new(
             Arc::new(Tuners::new(&config.tunelith)?),
-            SharedCasModule::open()?,
+            PcscCasModule::open()?,
             config.cas.master_key.into(),
         ))
     }

@@ -1,6 +1,6 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use aes::Aes128;
 use anyhow::Result;
@@ -14,7 +14,7 @@ use sha2::{Digest, Sha256};
 use tracing::{debug, error, info};
 
 use crate::cas::{self, CasClient};
-use crate::{CasModule, EncryptionFlag, PendingResponses};
+use crate::{CasModule, EncryptionFlag};
 
 #[derive(Copy, Clone, Debug)]
 pub struct NoDecryptionKeyError;
@@ -82,7 +82,6 @@ struct DecryptionKey {
 struct PendingEcm {
     ecm: [u8; 148],
     a0_init: [u8; 8],
-    responses: PendingResponses,
 }
 
 fn decryption_key(
@@ -132,15 +131,19 @@ pub struct Descrambler {
     key: Option<DecryptionKey>,
     /// The ECM last handed to the card, so that the same one sent again is not asked about twice.
     last_ecm: Option<[u8; 148]>,
-    /// The card's answer to the last ECM, until it arrives.
+    /// The ECM last sent to the card, until its answer arrives.
     pending: Option<PendingEcm>,
     /// Whether the stream goes on while the card works on an ECM, rather than waiting for it.
     is_async: bool,
 }
 
 impl Descrambler {
-    pub fn init(module: Arc<dyn CasModule>, master_key: [u8; 32], is_async: bool) -> Result<Self> {
-        let cas = CasClient::new(module);
+    pub fn init(
+        module: Arc<Mutex<dyn CasModule>>,
+        master_key: [u8; 32],
+        is_async: bool,
+    ) -> Result<Self> {
+        let mut cas = CasClient::new(module);
         let response = cas.initial_setting_condition()?;
         debug!("CAS module initialized: {:?}", response.cas_module_id);
 
@@ -173,13 +176,9 @@ impl Descrambler {
         .concat();
 
         // Whatever the card has yet to answer about an older ECM is not waited for.
-        self.pending = Some(PendingEcm {
-            ecm,
-            a0_init,
-            responses: self
-                .cas
-                .scrambling_key_protection_setting_and_ecm_reception(&setting_data, &ecm),
-        });
+        self.cas
+            .scrambling_key_protection_setting_and_ecm_reception(&setting_data, &ecm);
+        self.pending = Some(PendingEcm { ecm, a0_init });
         self.last_ecm = Some(ecm);
         if self.is_async {
             return Ok(());
@@ -245,10 +244,10 @@ impl Descrambler {
 
     /// Takes the key the card has answered with, waiting for it if `wait` is set.
     fn recv_key(&mut self, wait: bool) -> Result<()> {
-        let Some(pending) = &self.pending else {
+        let Some(result) = self.cas.receive(wait) else {
             return Ok(());
         };
-        let Some(result) = cas::receive(&pending.responses, wait) else {
+        let Some(pending) = &self.pending else {
             return Ok(());
         };
         let result =

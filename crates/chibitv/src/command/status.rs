@@ -8,7 +8,7 @@ use chibitv_b10::table::{Eit, EventInformation, Nit, Sdt, ServiceInformation, Ta
 use chibitv_b24::decode as decode_b24;
 use chibitv_b25::B25Descrambler;
 
-use crate::cas::SharedCasModule;
+use crate::cas::PcscCasModule;
 use crate::channel::{self, ChannelInner};
 use crate::config::Config;
 use crate::demux::{Demux, Packet, SignalingEvent};
@@ -45,7 +45,7 @@ pub async fn status(options: &Options, config: &Config) -> anyhow::Result<()> {
 
     let tuner = super::tune(config, &channel)?;
 
-    let descrambler = B25Descrambler::init(SharedCasModule::open()?, false)?;
+    let descrambler = B25Descrambler::init(PcscCasModule::open()?, false)?;
     let mut demux = M2tsDemuxer::new(tuner, descrambler);
     let mut state = StatusState::default();
 

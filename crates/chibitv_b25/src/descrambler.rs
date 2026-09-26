@@ -1,15 +1,15 @@
 use std::error::Error;
 use std::fmt::{Debug, Display, Formatter};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::Result;
 use mpeg2ts::ts::payload::Bytes;
 use mpeg2ts::ts::{TransportScramblingControl, TsPacket, TsPayload};
 use tracing::error;
 
-use crate::cas::{self, CasClient, EcmReceptionResponse};
+use crate::CasModule;
+use crate::cas::{CasClient, EcmReceptionResponse};
 use crate::multi2::Multi2;
-use crate::{CasModule, PendingResponses};
 
 /// The codes the ECM reception command answers with when it hands over a key
 /// that descrambles: the programme has been purchased, or it is being
@@ -74,8 +74,6 @@ pub struct B25Descrambler {
     ca_system_id: u16,
     /// The ECM last handed to the card, so that the same one sent again is not asked about twice.
     last_ecm: Option<Vec<u8>>,
-    /// The card's answer to the last ECM, until it arrives.
-    pending: Option<PendingResponses>,
     /// Whether the stream goes on while the card works on an ECM, rather than waiting for it.
     is_async: bool,
 }
@@ -87,8 +85,8 @@ impl Debug for B25Descrambler {
 }
 
 impl B25Descrambler {
-    pub fn init(module: Arc<dyn CasModule>, is_async: bool) -> Result<Self> {
-        let cas = CasClient::new(module, true);
+    pub fn init(module: Arc<Mutex<dyn CasModule>>, is_async: bool) -> Result<Self> {
+        let mut cas = CasClient::new(module, true);
         let settings = cas.initial_setting_condition()?;
 
         Ok(Self {
@@ -96,7 +94,6 @@ impl B25Descrambler {
             multi2: Multi2::new(settings.system_key, settings.init_cbc),
             ca_system_id: settings.ca_system_id,
             last_ecm: None,
-            pending: None,
             is_async,
         })
     }
@@ -112,7 +109,7 @@ impl B25Descrambler {
         }
 
         // Whatever the card has yet to answer about an older ECM is not waited for.
-        self.pending = Some(self.cas.ecm_reception(ecm));
+        self.cas.ecm_reception(ecm);
         self.last_ecm = Some(ecm.to_vec());
         if self.is_async {
             return Ok(());
@@ -161,13 +158,9 @@ impl B25Descrambler {
 
     /// Takes the key the card has answered with, waiting for it if `wait` is set.
     fn recv_key(&mut self, wait: bool) -> Result<()> {
-        let Some(pending) = &self.pending else {
+        let Some(result) = self.cas.receive(wait) else {
             return Ok(());
         };
-        let Some(result) = cas::receive(pending, wait) else {
-            return Ok(());
-        };
-        self.pending = None;
 
         match result.and_then(|responses| scramble_key(&responses)) {
             Ok(key) => self.multi2.set_scramble_key(key),
@@ -190,25 +183,16 @@ impl B25Descrambler {
 mod tests {
     use super::*;
 
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::{Mutex, mpsc};
-
-    /// An answer to an ECM held back, and where it goes once let through.
-    type HeldAnswer = (mpsc::SyncSender<Result<Vec<Vec<u8>>>>, Vec<Vec<u8>>);
-
     /// A card that answers the ECM with whatever return code the test is about.
     #[derive(Default)]
     struct FakeCasModule {
         ecm_return_code: u16,
-        ecm_count: AtomicUsize,
-        /// Whether its answers to ECMs are held back until the test lets them through.
-        holds_ecm: bool,
-        held: Mutex<Vec<HeldAnswer>>,
+        ecm_count: usize,
     }
 
-    impl FakeCasModule {
-        fn answer(&self, command: &[u8]) -> Vec<u8> {
-            match command[..4] {
+    impl CasModule for FakeCasModule {
+        fn transmit(&mut self, command: &[u8]) -> Result<Vec<u8>> {
+            Ok(match command[..4] {
                 [0x90, 0x30, 0x00, 0x02] => [
                     &[0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34][..],
                     &[0x00; 6],
@@ -219,7 +203,7 @@ mod tests {
                 ]
                 .concat(),
                 [0x90, 0x34, 0x00, 0x02] => {
-                    self.ecm_count.fetch_add(1, Ordering::Relaxed);
+                    self.ecm_count += 1;
                     [
                         // protocol unit number, unit length, card instruction
                         &[0x00, 0x00, 0x00, 0x00][..],
@@ -232,41 +216,19 @@ mod tests {
                     .concat()
                 }
                 ref command => panic!("the card was sent {command:02X?}"),
-            }
-        }
-
-        fn let_ecm_answers_through(&self) {
-            for (tx, responses) in self.held.lock().unwrap().drain(..) {
-                tx.send(Ok(responses)).unwrap();
-            }
+            })
         }
     }
 
-    impl CasModule for FakeCasModule {
-        fn transmit(&self, commands: Vec<Vec<u8>>) -> PendingResponses {
-            let (tx, rx) = mpsc::sync_channel(1);
-            let responses = commands
-                .iter()
-                .map(|command| self.answer(command))
-                .collect();
-            if self.holds_ecm && commands[0][1] == 0x34 {
-                self.held.lock().unwrap().push((tx, responses));
-            } else {
-                tx.send(Ok(responses)).unwrap();
-            }
-            rx
-        }
+    fn module(ecm_return_code: u16) -> Arc<Mutex<FakeCasModule>> {
+        Arc::new(Mutex::new(FakeCasModule {
+            ecm_return_code,
+            ..Default::default()
+        }))
     }
 
     fn descrambler(ecm_return_code: u16) -> B25Descrambler {
-        B25Descrambler::init(
-            Arc::new(FakeCasModule {
-                ecm_return_code,
-                ..Default::default()
-            }),
-            false,
-        )
-        .unwrap()
+        B25Descrambler::init(module(ecm_return_code), false).unwrap()
     }
 
     fn refusal(ecm_return_code: u16) -> EcmRefusedError {
@@ -329,47 +291,54 @@ mod tests {
 
     #[test]
     fn asks_the_card_about_an_ecm_sent_again_only_once() {
-        let module = Arc::new(FakeCasModule {
-            ecm_return_code: 0x0800,
-            ..Default::default()
-        });
+        let module = module(0x0800);
         let mut descrambler = B25Descrambler::init(module.clone(), false).unwrap();
 
         descrambler.push_ecm(&[0u8; 8]).unwrap();
         descrambler.push_ecm(&[0u8; 8]).unwrap();
         descrambler.push_ecm(&[1u8; 8]).unwrap();
 
-        assert_eq!(module.ecm_count.load(Ordering::Relaxed), 2);
+        assert_eq!(module.lock().unwrap().ecm_count, 2);
     }
 
     #[test]
     fn goes_on_while_the_card_works_on_the_ecm_when_asynchronous() {
-        let module = Arc::new(FakeCasModule {
-            ecm_return_code: 0x0800,
-            holds_ecm: true,
-            ..Default::default()
-        });
+        let module = module(0x0800);
         let mut descrambler = B25Descrambler::init(module.clone(), true).unwrap();
 
+        // The card is busy with someone else until the guard is dropped.
+        let busy = module.lock().unwrap();
         descrambler.push_ecm(&[0u8; 8]).unwrap();
         descrambler.recv_key(false).unwrap();
         assert!(!descrambler.multi2.has_key());
 
-        module.let_ecm_answers_through();
-        descrambler.recv_key(false).unwrap();
+        drop(busy);
+        descrambler.recv_key(true).unwrap();
         assert!(descrambler.multi2.has_key());
     }
 
     #[test]
+    fn takes_only_the_answer_to_the_last_ecm_when_asynchronous() {
+        let module = module(0x0800);
+        let mut descrambler = B25Descrambler::init(module.clone(), true).unwrap();
+
+        let busy = module.lock().unwrap();
+        descrambler.push_ecm(&[0u8; 8]).unwrap();
+        descrambler.push_ecm(&[1u8; 8]).unwrap();
+        drop(busy);
+
+        descrambler.recv_key(true).unwrap();
+        assert_eq!(module.lock().unwrap().ecm_count, 2);
+        // Nothing is left on its way.
+        assert!(descrambler.cas.receive(true).is_none());
+    }
+
+    #[test]
     fn reports_a_refusal_after_the_fact_when_asynchronous() {
-        let module = Arc::new(FakeCasModule {
-            ecm_return_code: 0xA103,
-            ..Default::default()
-        });
-        let mut descrambler = B25Descrambler::init(module, true).unwrap();
+        let mut descrambler = B25Descrambler::init(module(0xA103), true).unwrap();
 
         descrambler.push_ecm(&[0u8; 8]).unwrap();
-        let error = descrambler.recv_key(false).unwrap_err();
+        let error = descrambler.recv_key(true).unwrap_err();
         assert!(error.is::<EcmRefusedError>());
     }
 }

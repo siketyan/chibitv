@@ -3,14 +3,14 @@
 
 use std::fmt::{Debug, Formatter};
 use std::io::{Cursor, ErrorKind, Read, Result};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, mpsc};
 
 use anyhow::anyhow;
 use apdu_core::{Command, Response};
 use byteorder::{BE, ReadBytesExt};
 use strum::FromRepr;
 
-use crate::{CasModule, PendingResponses};
+use crate::CasModule;
 
 trait ReadExt: Read {
     fn read_byte_array<const N: usize>(&mut self) -> Result<[u8; N]> {
@@ -189,7 +189,7 @@ impl ScramblingKeyProtectionSettingResponse {
 
 /// ARIB STD-B61 commands executed on a physical CAS module.
 pub(crate) struct CasClient {
-    module: Arc<dyn CasModule>,
+    worker: CasWorker,
 }
 
 impl Debug for CasClient {
@@ -199,34 +199,42 @@ impl Debug for CasClient {
 }
 
 impl CasClient {
-    pub fn new(module: Arc<dyn CasModule>) -> Self {
-        Self { module }
+    pub fn new(module: Arc<Mutex<dyn CasModule>>) -> Self {
+        Self {
+            worker: CasWorker::spawn(module),
+        }
     }
 
-    pub fn initial_setting_condition(&self) -> anyhow::Result<InitialSettingConditionResponse> {
-        let pending = self
-            .module
-            .transmit(vec![InitialSettingConditionCommand.to_bytes()]);
-        let responses = receive(&pending, true).expect("waited for the responses")?;
+    pub fn initial_setting_condition(&mut self) -> anyhow::Result<InitialSettingConditionResponse> {
+        self.worker
+            .send(vec![InitialSettingConditionCommand.to_bytes()]);
+        let responses = self.receive(true).expect("waited for the responses")?;
 
         Ok(InitialSettingConditionResponse::read(&responses[0])?)
     }
 
     /// Sends the two commands to the module back to back, so that nothing comes between the
-    /// setting and the ECM it protects the key of; their answers are read with
+    /// setting and the ECM it protects the key of; their answers are taken with
+    /// [`CasClient::receive`] and read with
     /// [`read_scrambling_key_protection_setting_and_ecm_reception`].
     pub fn scrambling_key_protection_setting_and_ecm_reception(
-        &self,
+        &mut self,
         setting_data: &[u8],
         ecm: &[u8],
-    ) -> PendingResponses {
+    ) {
         let setting_command = ScramblingKeyProtectionSettingCommand {
             setting_data: setting_data.to_vec(),
         };
         let ecm_command = EcmReceptionCommand { ecm: ecm.to_vec() };
 
-        self.module
-            .transmit(vec![setting_command.to_bytes(), ecm_command.to_bytes()])
+        self.worker
+            .send(vec![setting_command.to_bytes(), ecm_command.to_bytes()]);
+    }
+
+    /// Takes the responses to the commands sent last if they have arrived, waiting for them if
+    /// `wait` is set, or `None` if they are still on their way or nothing was sent.
+    pub fn receive(&mut self, wait: bool) -> Option<anyhow::Result<Vec<Vec<u8>>>> {
+        self.worker.receive(wait)
     }
 }
 
@@ -239,66 +247,116 @@ pub(crate) fn read_scrambling_key_protection_setting_and_ecm_reception(
     ))
 }
 
-/// Takes the responses if they have arrived, waiting for them if `wait` is set, or `None` if they
-/// are still on their way.
-pub(crate) fn receive(
-    pending: &PendingResponses,
-    wait: bool,
-) -> Option<anyhow::Result<Vec<Vec<u8>>>> {
-    let result = match wait {
-        true => pending.recv().map_err(|_| mpsc::TryRecvError::Disconnected),
-        false => pending.try_recv(),
-    };
+/// Talks to the CAS module on a thread of its own, so that whoever sends it commands goes on
+/// while it answers.
+struct CasWorker {
+    jobs: mpsc::Sender<Vec<Vec<u8>>>,
+    responses: mpsc::Receiver<anyhow::Result<Vec<Vec<u8>>>>,
+    /// How many runs of commands have been sent and not answered yet.
+    in_flight: usize,
+}
 
-    match result {
-        Ok(responses) => Some(responses),
-        Err(mpsc::TryRecvError::Empty) => None,
-        Err(mpsc::TryRecvError::Disconnected) => Some(Err(anyhow!("CAS module is not running"))),
+impl CasWorker {
+    fn spawn(module: Arc<Mutex<dyn CasModule>>) -> Self {
+        let (jobs, jobs_rx) = mpsc::channel::<Vec<Vec<u8>>>();
+        let (responses_tx, responses) = mpsc::channel();
+
+        // The thread ends once the worker is dropped along with its sender.
+        std::thread::spawn(move || {
+            for commands in jobs_rx {
+                if responses_tx.send(transmit_all(&module, &commands)).is_err() {
+                    break;
+                }
+            }
+        });
+
+        Self {
+            jobs,
+            responses,
+            in_flight: 0,
+        }
     }
+
+    fn send(&mut self, commands: Vec<Vec<u8>>) {
+        // Should the thread have gone, receiving tells so.
+        let _ = self.jobs.send(commands);
+        self.in_flight += 1;
+    }
+
+    /// Takes the responses to the run sent last, passing over those to the runs before it.
+    fn receive(&mut self, wait: bool) -> Option<anyhow::Result<Vec<Vec<u8>>>> {
+        while self.in_flight > 0 {
+            let result = match wait {
+                true => self
+                    .responses
+                    .recv()
+                    .map_err(|_| mpsc::TryRecvError::Disconnected),
+                false => self.responses.try_recv(),
+            };
+
+            match result {
+                Ok(responses) => {
+                    self.in_flight -= 1;
+                    if self.in_flight == 0 {
+                        return Some(responses);
+                    }
+                }
+                Err(mpsc::TryRecvError::Empty) => return None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    self.in_flight = 0;
+                    return Some(Err(anyhow!("CAS module is not running")));
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// Sends the commands to the module one after another, with nothing else sent to it in between.
+fn transmit_all(
+    module: &Mutex<dyn CasModule>,
+    commands: &[Vec<u8>],
+) -> anyhow::Result<Vec<Vec<u8>>> {
+    let mut module = module.lock().map_err(|_| anyhow!("CAS module panicked"))?;
+
+    commands
+        .iter()
+        .map(|command| module.transmit(command))
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Mutex;
-
     use super::*;
 
     #[derive(Default)]
     struct FakeCasModule {
-        transmitted: Mutex<Vec<Vec<Vec<u8>>>>,
+        transmitted: Vec<u8>,
     }
 
     impl CasModule for FakeCasModule {
-        fn transmit(&self, commands: Vec<Vec<u8>>) -> PendingResponses {
-            let responses = commands
-                .iter()
-                .map(|command| match command[1] {
-                    0xA0 => [&[0x00; 6][..], &[0x01, 0x02], &[0x90, 0x00]].concat(),
-                    0x34 => [&[0x00; 6][..], &[0x03; 32], &[0x00, 0x90, 0x00]].concat(),
-                    instruction => panic!("unexpected instruction: {instruction:#04x}"),
-                })
-                .collect();
-            self.transmitted.lock().unwrap().push(commands);
-
-            let (tx, rx) = mpsc::sync_channel(1);
-            tx.send(Ok(responses)).unwrap();
-            rx
+        fn transmit(&mut self, command: &[u8]) -> anyhow::Result<Vec<u8>> {
+            self.transmitted.push(command[1]);
+            Ok(match command[1] {
+                0xA0 => [&[0x00; 6][..], &[0x01, 0x02], &[0x90, 0x00]].concat(),
+                0x34 => [&[0x00; 6][..], &[0x03; 32], &[0x00, 0x90, 0x00]].concat(),
+                instruction => panic!("unexpected instruction: {instruction:#04x}"),
+            })
         }
     }
 
     #[test]
     fn sends_the_setting_and_ecm_commands_as_one_run() {
-        let module = Arc::new(FakeCasModule::default());
-        let client = CasClient::new(module.clone());
+        let module = Arc::new(Mutex::new(FakeCasModule::default()));
+        let mut client = CasClient::new(module.clone());
 
-        let pending = client.scrambling_key_protection_setting_and_ecm_reception(&[0x01], &[0x02]);
-        let responses = receive(&pending, true).unwrap().unwrap();
+        client.scrambling_key_protection_setting_and_ecm_reception(&[0x01], &[0x02]);
+        let responses = client.receive(true).unwrap().unwrap();
         let (setting, ecm) =
             read_scrambling_key_protection_setting_and_ecm_reception(&responses).unwrap();
 
-        let transmitted = module.transmitted.lock().unwrap();
-        assert_eq!(transmitted.len(), 1);
-        assert_eq!(transmitted[0].len(), 2);
+        assert_eq!(module.lock().unwrap().transmitted, [0xA0, 0x34]);
         assert_eq!(setting.setting_response_data, [0x01, 0x02]);
         assert_eq!(ecm.ks, [0x03; 32]);
     }
