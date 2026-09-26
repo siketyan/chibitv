@@ -19,7 +19,7 @@ runtime setup (tunelithd, PC/SC, `config.toml`), and for running the Docker imag
 Rust (workspace of `crates/*`, edition 2024):
 
 - Build: `cargo build`
-- Test all: `cargo test --all-targets` (CI runs exactly this, on Linux and Windows)
+- Test all: `cargo test --all-targets` (CI runs exactly this, on Linux, Windows and macOS)
 - Test one crate: `cargo test -p chibitv_b60`
 - Test one test: `cargo test -p chibitv_b60 <test_name>`
 - Lint: `cargo clippy --all-targets -- -D warnings` (warnings fail CI)
