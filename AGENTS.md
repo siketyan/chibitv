@@ -9,7 +9,7 @@ runtime setup (tunelithd, PC/SC, `config.toml`), and for running the Docker imag
 
 ## Setup
 
-- `[patch.crates-io]` in the workspace `Cargo.toml` replaces some crates.io dependencies (`mpeg2ts`, `shiguredo_mp4`, `tunelith`) with forks pinned to a Git revision. To try a local change to one of them, add a `[patch]` override to `.cargo/config.toml` instead of editing the manifest.
+- `[patch.crates-io]` in the workspace `Cargo.toml` replaces some crates.io dependencies (`mpeg2ts`, `shiguredo_mp4`) with forks pinned to a Git revision. To try a local change to one of them, add a `[patch]` override to `.cargo/config.toml` instead of editing the manifest.
 - System library for PC/SC: `libpcsclite-dev`.
 - The Rust toolchain is pinned in `rust-toolchain.toml`, so rustup picks it up on its own. Bumping it means editing that file and the builder image the `Dockerfile` starts its Rust stage from, which never sees it.
 - JS tooling: Node 24 with pnpm (via corepack); run `pnpm install` at the repo root.
