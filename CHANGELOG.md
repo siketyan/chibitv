@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0](https://github.com/siketyan/chibitv/compare/v0.2.1...v0.3.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cas:** let a CAS module answer one command at a time, synchronously ([#135](https://github.com/siketyan/chibitv/issues/135))
+* tune through tunelithd and drop BonDriver ([#131](https://github.com/siketyan/chibitv/issues/131))
+
+### Features
+
+* support macOS ([#134](https://github.com/siketyan/chibitv/issues/134)) ([4b11338](https://github.com/siketyan/chibitv/commit/4b11338c5469af00b11d8b153c92898cc6669594))
+* tune through tunelithd and drop BonDriver ([#131](https://github.com/siketyan/chibitv/issues/131)) ([331645c](https://github.com/siketyan/chibitv/commit/331645c238f138949f6a70f11489fc2747a5c80c))
+
+
+### Code Refactoring
+
+* **cas:** let a CAS module answer one command at a time, synchronously ([#135](https://github.com/siketyan/chibitv/issues/135)) ([340971e](https://github.com/siketyan/chibitv/commit/340971ef0f7102e2f3ff90829a74d5e6a9677fa8))
+
 ## [0.2.1](https://github.com/siketyan/chibitv/compare/v0.2.0...v0.2.1) (2026-09-24)
 
 
